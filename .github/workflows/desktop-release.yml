@@ -139,6 +139,9 @@ jobs:
         run: node --test desktop/scripts/portable-windows.test.mjs
       - name: Verify native driver build
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features native-ble,native-spp --lib
+      - name: Verify Windows test activation manifest
+        if: success() && runner.os == 'Windows'
+        run: python desktop/scripts/windows-loader-diagnostics.py --verify-manifests
       - name: Diagnose Windows test loader
         if: failure() && runner.os == 'Windows'
         run: python desktop/scripts/windows-loader-diagnostics.py
@@ -161,6 +164,9 @@ jobs:
           [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           [ -n "$TAURI_UPDATER_PUBLIC_KEY" ] || unset TAURI_UPDATER_PUBLIC_KEY
           npm run build -- --features native-ble,native-spp --target ${{ matrix.target }}
+      - name: Verify Windows application activation manifest
+        if: success() && runner.os == 'Windows'
+        run: python desktop/scripts/windows-loader-diagnostics.py --verify-manifests
       - name: Verify portable update artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash

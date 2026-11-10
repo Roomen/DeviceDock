@@ -24,6 +24,9 @@ jobs:
       - run: npm test
       - run: node --test desktop/scripts/*.test.mjs
       - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --all-features
+      - name: Verify Windows test activation manifest
+        if: success() && runner.os == 'Windows'
+        run: python desktop/scripts/windows-loader-diagnostics.py --verify-manifests
       - name: Diagnose Windows test loader
         if: failure() && runner.os == 'Windows'
         run: python desktop/scripts/windows-loader-diagnostics.py
@@ -32,3 +35,6 @@ jobs:
         working-directory: desktop
       - run: npm run build -- --no-bundle --features native-ble,native-spp
         working-directory: desktop
+      - name: Verify Windows application activation manifest
+        if: success() && runner.os == 'Windows'
+        run: python desktop/scripts/windows-loader-diagnostics.py --verify-manifests

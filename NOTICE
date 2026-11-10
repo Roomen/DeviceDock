@@ -22,3 +22,7 @@ xterm.js 5.5.0 and addon-fit 0.10.0 (MIT), Copyright xterm.js authors.
 Licenses: vendor/xterm-LICENSE and vendor/xterm-fit-LICENSE.
 ansi_up 5.1.0 (MIT), Copyright drudru; license: vendor/ansi_up-LICENSE.
 Vendored distributions are unmodified; application integration is in src/log-display.js.
+
+Windows Common Controls v6 manifest follows tauri-build 2.7.4's default
+windows-app-manifest.xml (Tauri Project, Apache-2.0/MIT); all-target linker wiring
+is host-owned and retains the existing Tauri icon/version resource producer.
