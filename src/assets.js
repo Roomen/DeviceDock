@@ -20,6 +20,8 @@ export function packageAssets(manifest, entryUrl, { native, active = () => {}, d
   active();if(!WorkerClass)throw Error('当前平台不支持 Worker')
   const url=URLClass.createObjectURL(new Blob([bytes],{type:'text/javascript'}));let worker
   try {worker=new WorkerClass(url,options)}catch(e){URLClass.revokeObjectURL(url);throw e}
-  dispose(()=>{worker.terminate();URLClass.revokeObjectURL(url)});return worker
+  const terminate=worker.terminate.bind(worker);let live=true,remove=()=>{}
+  const release=()=>{if(!live)return;live=false;try{terminate()}finally{URLClass.revokeObjectURL(url);remove()}}
+  worker.terminate=release;const unregister=dispose(release);remove=typeof unregister==='function'?unregister:()=>{};return worker
  }}
 }

@@ -22,7 +22,7 @@ fn host_capabilities() -> serde_json::Value {
 pub fn run() {
  let builder = tauri::Builder::default().manage(serial::SerialState::default()).manage(updater::UpdateState::default()).manage(extensions::ExtensionState::default())
  .register_uri_scheme_protocol("devicedock-extension",|context,request| {
-  match context.app_handle().path().app_cache_dir() {Ok(root)=>extensions::response(&root.join("extensions-v1"),request.uri().path()),Err(_)=>tauri::http::Response::builder().status(404).body(Vec::new()).unwrap()}
+  match context.app_handle().path().app_data_dir() {Ok(root)=>extensions::response(&root.join("extensions-v1"),request.uri().path()),Err(_)=>tauri::http::Response::builder().status(404).body(Vec::new()).unwrap()}
  });
  #[cfg(feature = "native-ble")]
  let builder = builder.manage(ble::BleState::default());
@@ -35,9 +35,12 @@ pub fn run() {
   Ok(())
  }).on_page_load(|webview,payload| {
   if matches!(payload.event(),tauri::webview::PageLoadEvent::Finished) {
+   use sha2::Digest;
+   let fixture=std::env::var("DEVICEDOCK_SMOKE_BUNDLE").ok().and_then(|path|std::fs::read_to_string(path).ok()).unwrap_or_else(||include_str!("../../../tests/fixtures/trusted-package.json").to_string());
+   let hash=format!("{:x}",sha2::Sha256::digest(fixture.as_bytes()));
    let script=include_str!("../../../tests/native-cache-smoke.js")
-    .replace("__FIXTURE_JSON__",&serde_json::to_string(include_str!("../../../tests/fixtures/trusted-package.json")).unwrap())
-    .replace("__FIXTURE_HASH__",&serde_json::to_string(include_str!("../../../tests/fixtures/trusted-package.sha256")).unwrap());
+    .replace("__FIXTURE_JSON__",&serde_json::to_string(&fixture).unwrap())
+    .replace("__FIXTURE_HASH__",&serde_json::to_string(&hash).unwrap());
    let _=webview.eval(&script);
   }
  });

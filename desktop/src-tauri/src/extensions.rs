@@ -67,7 +67,7 @@ fn install(root:&Path,json:&str,expected:&str)->Result<(),String> {
 }
 #[tauri::command]
 pub async fn extension_install(app:tauri::AppHandle,state:State<'_,ExtensionState>,bundle_json:String,expected_hash:String)->Result<Installed,String> {
- let root=app.path().app_cache_dir().map_err(|e|e.to_string())?.join("extensions-v1");let gate=state.0.clone();let id=expected_hash.clone();
+ let root=app.path().app_data_dir().map_err(|e|e.to_string())?.join("extensions-v1");let gate=state.0.clone();let id=expected_hash.clone();
  tauri::async_runtime::spawn_blocking(move||{let _guard=gate.lock().map_err(|_|"缓存锁无效")?;install(&root,&bundle_json,&id)}).await.map_err(|e|e.to_string())??;
  let base_url=if cfg!(windows){format!("http://devicedock-extension.localhost/{expected_hash}/")}else{format!("devicedock-extension://localhost/{expected_hash}/")};
  Ok(Installed{hash:expected_hash,base_url})
@@ -88,7 +88,7 @@ pub async fn extension_download(url:String,sha256:String)->Result<String,String>
 #[tauri::command]
 pub async fn extension_read_asset(app:tauri::AppHandle,hash:String,path:String)->Result<Vec<u8>,String> {
  if !valid_hash(&hash) || !safe_path(&path) {return Err("资源路径无效".into())}
- let root=app.path().app_cache_dir().map_err(|e|e.to_string())?.join("extensions-v1");
+ let root=app.path().app_data_dir().map_err(|e|e.to_string())?.join("extensions-v1");
  tauri::async_runtime::spawn_blocking(move||{let response=response(&root,&format!("/{hash}/{path}"));if response.status()!=200{return Err("已验证资源不可用".into())}Ok(response.into_body())}).await.map_err(|e|e.to_string())?
 }
 pub fn response(root:&Path,path:&str)->tauri::http::Response<Vec<u8>> {

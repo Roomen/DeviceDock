@@ -27,8 +27,8 @@ SERVE_DIST=dist-core node tools/serve.mjs
 SDK 和规范见 [扩展契约](docs/extension-contract.md)。独立仓库各自生成完整目录与 base64 JSON 包；宿主安装只消费发布产物，不在运行时读取源码仓库。由另两仓库执行各自 README 中的构建后，显式集成：
 
 ```sh
-node tools/integrate-release.mjs protocol /path/to/protocol-artifacts
-node tools/integrate-release.mjs plugin /path/to/plugin-artifacts
+node tools/integrate-release.mjs protocol /path/to/protocol-artifacts --replace
+node tools/integrate-release.mjs plugin /path/to/plugin-artifacts --replace
 npm run build
 ```
 
@@ -54,7 +54,7 @@ npx tauri build --no-bundle --features native-ble,native-spp
 
 ```sh
 npm test
-node tests/integration.mjs       # 需先集成冻结的 8 协议 + 4 插件产物
+node tests/integration.mjs       # 需先集成两个冻结目录，包含独立 patch provider
 SERVE_DIST=dist node tests/browser-smoke.mjs
 cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib --all-features
 ```
@@ -70,4 +70,4 @@ node tools/build.mjs --core
 TAURI_CONFIG='{"build":{"frontendDist":"../../dist-core","devUrl":null}}' cargo run --manifest-path desktop/src-tauri/Cargo.toml --bin devicedock --features native-smoke,native-ble,native-spp
 ```
 
-该测试只安装合成包，验证原生缓存 ESM、WASM MIME/CORS 和 Blob Worker 中实际 WASM 加法结果，并自动退出。结果位于系统临时目录 `devicedock-host-native-smoke.json`。它不扫描或连接真实硬件。
+该测试默认安装合成包；设置 DEVICEDOCK_SMOKE_BUNDLE 为经宿主 verifyPackage 生成的规范包 JSON，可验证实际 org.devicedock.patch 包。它验证原生缓存 ESM、WASM MIME/CORS 和 Blob Worker 中实际 WASM 加法结果，并自动退出。结果位于系统临时目录 `devicedock-host-native-smoke.json`。它不扫描或连接真实硬件。

@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { resolve,join } from 'node:path'
 import { ExtensionHost } from '../src/extensions.js'
 import { Session } from '../src/session.js'
 import { verifyPackage } from '../src/package.js'
 import { pack } from '../tools/integrate.mjs'
 const root=resolve(import.meta.dirname,'..'), index=JSON.parse(await readFile(join(root,'extensions/installed.json')))
-if(index.length!==12)throw Error('Integrate frozen 8 protocol + 4 plugin packages first')
+if(!index.some(e=>e.manifest.id==='org.devicedock.patch'))throw Error('Integrate final protocol/plugin catalogs including patch provider first')
+const realFetch=globalThis.fetch;globalThis.fetch=async(input,options)=>new URL(input).protocol==='file:' ? new Response(await readFile(fileURLToPath(input))) : realFetch(input,options)
+const {Worker:NodeWorker}=await import('node:worker_threads')
+globalThis.Worker=class {
+ constructor(url){this.pending=[];this.closed=false;fetch(url).then(r=>r.text()).then(source=>{if(this.closed)return;this.worker=new NodeWorker("const {parentPort}=require('node:worker_threads');globalThis.self=globalThis;globalThis.location={href:'blob:node-worker'};globalThis.postMessage=(value,transfer)=>parentPort.postMessage(value,transfer);parentPort.on('message',data=>globalThis.onmessage({data}));\n"+source,{eval:true});this.worker.on('message',data=>this.onmessage?.({data}));this.worker.on('error',error=>this.onerror?.(error));for(const [value,transfer] of this.pending)this.worker.postMessage(value,transfer);this.pending=[]}).catch(error=>this.onerror?.(error))}
+ postMessage(value,transfer){if(this.worker)this.worker.postMessage(value,transfer);else this.pending.push([value,transfer])}
+ terminate(){this.closed=true;this.worker?.terminate();this.pending=[]}
+}
 const sek=index.find(e=>e.manifest.id==='org.devicedock.sek')
 const { PCP, PCPMessageCode: codes } = await import(pathToFileURL(join(root,'extensions',sek.hash,'modules/packages/sek/pcp.js')))
 class Element extends EventTarget {
@@ -50,6 +57,7 @@ const serial = port(bytes => {
 })
 await host.sessions.A.open(serial, { baudRate: 115200 })
 const command=host.services.get('plugin.org.devicedock.cjt188.commands'); await command.send('A',{id:'read',values:{addr:'AAAAAAAAAAAAAA'}})
+const patch=host.services.get('org.devicedock.firmware.patch.v1');assert.equal(patch.apiVersion,1);const beforeDisposers=host.extensions.get('org.devicedock.patch').disposers.length;const oldPatchInput=new Uint8Array(4096).fill(1),newPatchInput=oldPatchInput.slice();newPatchInput[88]=2;const delta=await patch.createPatch(oldPatchInput,newPatchInput);assert.ok(delta.length>0);assert.equal(host.extensions.get('org.devicedock.patch').disposers.length,beforeDisposers)
 const raw = new Uint8Array(0x4020); raw.set(new TextEncoder().encode('V1.2.3'), 0x4004)
 const packageBytes = await firmware.package('origin', raw)
 const result = await firmware.upgrade('A', packageBytes, { chunkSize: 512, replyDelayMs: 0 })
@@ -76,4 +84,4 @@ await bridge.controller.run('scan_stop'); await bridge.controller.run('close')
 await host.disable('org.devicedock.bridge'); await host.disable('org.devicedock.wireless')
 for(const id of [...host.extensions.keys()])await host.disable(id)
 assert.equal(host.extensions.size, 0); assert.equal(host.resources.size, 0); assert.equal(host.mount.children.length, 0)
-console.log('PASS: actual host verifies all twelve frozen packaged bundles; real host close recovers power; real SEK PCP transfer/cancellation ownership and full lifecycle use exact SDK')
+console.log('PASS: actual host verifies all frozen catalog-derived packaged bundles including actual HPatch Worker/WASM; real host close recovers power; real SEK PCP transfer/cancellation ownership and full lifecycle use exact SDK')

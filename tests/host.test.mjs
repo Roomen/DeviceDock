@@ -154,3 +154,23 @@ test('update preflights all extensions before teardown and rejects new work whil
  // Remove intentionally busy preflight for normal fixture cleanup.
  host.extensions.get(manifest.id).preflight=[];await host.disable(manifest.id);await sessions.A.close()
 })
+test('completed worker termination revokes URL and removes retained host disposer immediately',async () => {
+ const {packageAssets}=await import('../src/assets.js'),code='self.onmessage=e=>self.postMessage(e.data)',bytes=new TextEncoder().encode(code),integrity={'worker.js':await digest(bytes),'index.js':manifest.integrity['index.js']},disposers=new Set(),revoked=[]
+ let terminations=0
+ const assets=packageAssets({...manifest,integrity},'https://app.test/pkg/index.js',{fetcher:async()=>new Response(bytes),dispose:off=>{disposers.add(off);return ()=>disposers.delete(off)},WorkerClass:class{terminate(){terminations++}},URLClass:{createObjectURL:()=> 'blob:job',revokeObjectURL:url=>revoked.push(url)}})
+ for(let job=0;job<4;job++){const worker=await assets.createWorker('worker.js');assert.equal(disposers.size,1);worker.terminate();worker.terminate();assert.equal(disposers.size,0)}
+ assert.equal(terminations,4);assert.equal(revoked.length,4)
+})
+test('actual ExtensionHost disables a long-lived Worker without skipping adjacent contributions, twice',async () => {
+ const previousWorker=globalThis.Worker,previousFetch=globalThis.fetch;let terminated=0
+ const bytes=new TextEncoder().encode('self.onmessage=()=>{}'),m={...manifest,integrity:{...manifest.integrity,'worker.js':await digest(bytes)}}
+ globalThis.Worker=class{terminate(){terminated++}};globalThis.fetch=async()=>new Response(bytes)
+ const {host,sessions}=fixture(),hw=hardware();await sessions.A.open(hw.port,{baudRate:9600})
+ try{
+  for(let cycle=0;cycle<2;cycle++){
+   await host.enable(m,'https://app.test/package/index.js',true,async()=>({async activate(h){h.session('A').claim('worker');h.session('A').subscribe(()=>{});h.registerService('plugin.org.test.extension.hold',{});h.registerTransport({id:'worker-test',title:'worker',requestPort:async()=>hw.port});h.registerProtocol({id:'worker-test',title:'worker',create:()=>({feed:()=>[],reset(){}})});await h.assets.createWorker('worker.js')}}))
+   await host.disable(m.id);assert.equal(host.services.size,0);assert.equal(host.transports.size,0);assert.equal(host.protocols.size,0);assert.equal(sessions.A.owner,null);assert.equal(sessions.A.listeners.size,0)
+  }
+  assert.equal(terminated,2)
+ }finally{globalThis.Worker=previousWorker;globalThis.fetch=previousFetch;await sessions.A.close()}
+})

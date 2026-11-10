@@ -32,7 +32,7 @@ export class ExtensionHost {
    }
   }
   const api = {
-   assets: packageAssets(manifest,url,{native:this.native,active:activeIO,dispose:off=>disposers.push(off)}),
+   assets: packageAssets(manifest,url,{native:this.native,active:activeIO,dispose:off=>{disposers.push(off);return ()=>{const index=disposers.indexOf(off);if(index>=0)disposers.splice(index,1)}}}),
    apiVersion: 1, capabilities: this.capabilities, mount: element, signal: controller.signal,
    registerProtocol: definition => { const off = register(this.protocols, definition.id, definition); disposers.push(() => { for (const session of this.allSessions()) if (session.protocol === definition) session.setProtocol(null) }); return off },
    registerTransport: provider => register(this.transports, provider.id, {...provider, requestPort: async (...args) => {active();const port=await provider.requestPort(...args);this.portProviders.set(port,owner);return port}}),
@@ -72,7 +72,7 @@ export class ExtensionHost {
     await Promise.all([...state.used].map(s => s.drainOwner(state.owner)))
     if (!state.cleanupDone) { state.cleanupRunning = true; try { await state.cleanup?.(); state.cleanupDone = true } finally { state.cleanupRunning = false } }
     for (const s of state.ownResources.keys()) { await s.close(); this.resources.delete(`${id}.${state.ownResources.get(s)}`) }
-    for (const off of state.disposers.reverse()) off()
+    for (const off of [...state.disposers].reverse()) off()
     state.element.remove(); this.extensions.delete(id); this.changed()
    } catch (e) { if (!e.preflightRejected) state.status = 'cleanup-error'; this.changed(); throw e }
    finally { state.stopping = null }

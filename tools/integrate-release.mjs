@@ -1,11 +1,11 @@
 // Explicit artifact roots, supplied by user/coordinator. Never run a producer build here.
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, writeFile, rename } from 'node:fs/promises'
 import { resolve,join,dirname } from 'node:path'
 import { createHash } from 'node:crypto'
 import { validateCatalog } from '../src/sources.js'
 import { verifyPackage } from '../src/package.js'
 import { integrate } from './integrate.mjs'
-const [kind,directory] = process.argv.slice(2)
+const [kind,directory] = process.argv.slice(2), replaceCatalog=process.argv.includes('--replace'), selected=new Map()
 if (!kind || !directory) throw Error('Usage: node tools/integrate-release.mjs protocol|plugin <artifact-directory>')
 const root=resolve(directory), catalog=validateCatalog(JSON.parse(await readFile(join(root,'catalog.json'),'utf8')),kind), files=await readdir(root)
 for (const entry of catalog.packages) {
@@ -18,5 +18,8 @@ for (const entry of catalog.packages) {
  const packageDir = kind === 'protocol' ? join(root,entry.id,entry.version) : join(root,entry.id)
  const installed=await integrate(packageDir)
  if(installed.hash !== verified.hash) throw Error('Directory and pinned bundle differ')
+ selected.set(entry.id,installed.hash)
  console.log(`${entry.id}@${entry.version} ${verified.hash}`)
 }
+
+if(replaceCatalog){const registry=resolve(import.meta.dirname,'../extensions/installed.json'),index=JSON.parse(await readFile(registry,'utf8')),filtered=index.filter(item=>!selected.has(item.manifest.id)||selected.get(item.manifest.id)===item.hash),temporary=registry+'.next';await writeFile(temporary,JSON.stringify(filtered,null,2));await rename(temporary,registry)}
