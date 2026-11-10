@@ -141,7 +141,7 @@ jobs:
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features native-ble,native-spp --lib
       - name: Verify Windows test activation manifest
         if: success() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py --verify-manifests
+        run: python desktop/scripts/windows-loader-diagnostics.py --verify-test-manifests
       - name: Diagnose Windows test loader
         if: failure() && runner.os == 'Windows'
         run: python desktop/scripts/windows-loader-diagnostics.py
@@ -166,7 +166,7 @@ jobs:
           npm run build -- --features native-ble,native-spp --target ${{ matrix.target }}
       - name: Verify Windows application activation manifest
         if: success() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py --verify-manifests
+        run: python desktop/scripts/windows-loader-diagnostics.py --verify-app-manifests
       - name: Verify portable update artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash

@@ -202,24 +202,40 @@ def copied_test_manifest_probe(test_paths,desktop):
             shutil.copy2(original,copied)
             try:
                 subprocess.run([str(tools[-1]),'-nologo','-manifest',str(manifest_path),'-outputresource:'+str(copied)+';#1'],check=True)
-                assert imported_symbols(copied.read_bytes())==imported_symbols(original.read_bytes())
+                if imported_symbols(copied.read_bytes())!=imported_symbols(original.read_bytes()): raise RuntimeError('Controlled copy import table changed')
                 result=subprocess.run([str(copied),'--list'],capture_output=True,text=True,timeout=30)
                 print(json.dumps({'controlledCopiedTest':original.name,'originalSha256':before,'originalUnchanged':hashlib.sha256(original.read_bytes()).hexdigest()==before,'sameDirectoryAndImports':True,'injectedDesktopManifest':True,'listExitCode':result.returncode,'testHarnessReached':result.returncode==0 and ': test' in result.stdout,'listedTests':sum(line.endswith(': test') for line in result.stdout.splitlines()),'originalSidecars':[p.name for p in [Path(str(original)+'.manifest'),Path(str(original)+'.local')] if p.exists()]}),flush=True)
             finally:
                 copied.unlink(missing_ok=True)
 
 
+def verify_activation_manifests(test_paths, application_paths, phase):
+    if phase == 'test':
+        selected = test_paths
+        if not selected: raise RuntimeError('No compiled host test PE found')
+    elif phase == 'application':
+        selected = application_paths
+        if not selected: raise RuntimeError('No release application PE found; application verification cannot be empty')
+    else:
+        raise ValueError('Unknown manifest verification phase')
+    for path in selected:
+        manifests = pe_manifests(path.read_bytes())
+        if len(manifests) != 1 or not manifests[0]['commonControlsV6']:
+            raise RuntimeError('Missing or duplicate Common Controls v6 manifest in '+path.name)
+        print(json.dumps({'phase':phase,'binary':path.name,'singleV6Manifest':True}),flush=True)
+
+
 if __name__ == '__main__':
     if sys.platform!='win32': raise SystemExit('Run on the affected Windows runner')
     paths=[Path(filename) for filename in sorted(glob.glob('desktop/src-tauri/target/debug/deps/devicedock_lib-*.exe'))[:4]]
-    if not paths: raise SystemExit('No compiled host test executable found')
-    if '--verify-manifests' in sys.argv:
-        applications=[Path(filename) for filename in glob.glob('desktop/src-tauri/target/**/release/devicedock.exe',recursive=True)]
-        for path in paths+applications:
-            manifests=pe_manifests(path.read_bytes())
-            assert len(manifests)==1 and manifests[0]['commonControlsV6'], 'Missing or duplicate Common Controls v6 manifest in '+path.name
-            print(json.dumps({'binary':path.name,'singleV6Manifest':True}),flush=True)
+    if '--verify-test-manifests' in sys.argv:
+        verify_activation_manifests(paths, [], 'test')
         raise SystemExit(0)
+    if '--verify-app-manifests' in sys.argv:
+        applications=[Path(filename) for filename in glob.glob('desktop/src-tauri/target/**/release/devicedock.exe',recursive=True)]
+        verify_activation_manifests([], applications, 'application')
+        raise SystemExit(0)
+    if not paths: raise SystemExit('No compiled host test executable found')
     for path in paths: print(json.dumps(inspect(path)),flush=True)
     print(json.dumps({'pythonExecutable':Path(sys.executable).name,'pythonManifests':pe_manifests(Path(sys.executable).read_bytes())}),flush=True)
     activation_context_evidence(paths)
