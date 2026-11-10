@@ -98,7 +98,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RUSTUP_TOOLCHAIN: stable
-      npm_config_cache: ${{ runner.temp }}/devicedock-npm-cache
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
       TAURI_UPDATER_PUBLIC_KEY: ${{ needs.prepare.outputs.updater == 'true' && vars.TAURI_UPDATER_PUBLIC_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
@@ -111,7 +110,7 @@ jobs:
         with:
           node-version: 22
       - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
-      - name: Inspect public compiler cache identity
+      - name: Configure npm cache and inspect public compiler identity
         id: compiler
         run: node desktop/scripts/cache-key.mjs
       - name: Restore npm cache
