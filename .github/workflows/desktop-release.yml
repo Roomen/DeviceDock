@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: node --test desktop/scripts/updater-manifest.test.mjs desktop/scripts/prune-dev-releases.test.mjs desktop/scripts/portable-windows.test.mjs
+      - run: node --test desktop/scripts/desktop-resources.test.mjs desktop/scripts/updater-manifest.test.mjs desktop/scripts/prune-dev-releases.test.mjs desktop/scripts/portable-windows.test.mjs
       - id: meta
         env:
           GH_TOKEN: ${{ github.token }}
