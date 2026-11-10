@@ -67,18 +67,16 @@ def inspect(path):
                 buffer = ctypes.create_string_buffer(symbol.encode()) if isinstance(symbol, str) else None
                 address = ctypes.cast(buffer, ctypes.c_void_p) if buffer is not None else ctypes.c_void_p(symbol)
                 if not kernel.GetProcAddress(handle, address): missing.append(symbol)
-            records.append({'dll': dll, 'imports': len(symbols), 'missingExports': missing})
+            record={'dll':dll,'imports':len(symbols),'missingExports':missing}
+            if dll.lower()=='comctl32.dll':
+                kernel.GetModuleFileNameW.argtypes=[ctypes.c_void_p,ctypes.c_wchar_p,ctypes.c_uint32]
+                path_buffer=ctypes.create_unicode_buffer(32768);kernel.GetModuleFileNameW(handle,path_buffer,len(path_buffer));record.update(importedNames=symbols,modulePath=path_buffer.value,fileVersion=file_version(path_buffer.value))
+            records.append(record)
         finally:
             kernel.FreeLibrary(handle)
     return {'binary': path.name, 'dlls': records}
 
 
-if __name__ == '__main__':
-    if sys.platform != 'win32': raise SystemExit('Run on the affected Windows runner')
-    paths = sorted(glob.glob('desktop/src-tauri/target/debug/deps/devicedock_lib-*.exe'))
-    if not paths: raise SystemExit('No compiled host test executable found')
-    for filename in paths[:4]:
-        print(json.dumps(inspect(Path(filename))), flush=True)
 
 
 def pe_manifests(data):
@@ -179,7 +177,42 @@ fn main(){unsafe{
     subprocess.run(['cargo', 'build', '--manifest-path', 'desktop/src-tauri/Cargo.toml', '--all-features', '--bin', 'devicedock'], check=True)
     desktop = Path('desktop/src-tauri/target/debug/devicedock.exe')
     print(json.dumps({'binary': desktop.name, 'embeddedManifests': pe_manifests(desktop.read_bytes())}), flush=True)
+    copied_test_manifest_probe(test_paths,desktop)
+
+
+def copied_test_manifest_probe(test_paths,desktop):
+    import hashlib
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    import uuid
+    manifests=pe_manifests(desktop.read_bytes())
+    manifest=next((m['xml'] for m in manifests if m['commonControlsV6']),None)
+    if manifest is None: raise RuntimeError('Normal desktop binary has no v6 manifest to use as control')
+    kits=Path(os.environ['ProgramFiles(x86)'])/'Windows Kits'/'10'/'bin'
+    tools=sorted(kits.glob('*/x64/mt.exe'))
+    if not tools: raise RuntimeError('Installed Windows SDK mt.exe not found')
+    with tempfile.TemporaryDirectory(prefix='devicedock-manifest-',dir=os.environ.get('RUNNER_TEMP')) as temporary:
+        manifest_path=Path(temporary)/'desktop.manifest';manifest_path.write_text(manifest.rstrip('\x00'),encoding='utf-8')
+        for original in test_paths:
+            before=hashlib.sha256(original.read_bytes()).hexdigest()
+            # Same directory preserves DLL search context; only the copied PE manifest is changed.
+            copied=original.with_name(original.stem+'-manifest-probe-'+uuid.uuid4().hex+'.exe')
+            shutil.copy2(original,copied)
+            try:
+                subprocess.run([str(tools[-1]),'-nologo','-manifest',str(manifest_path),'-outputresource:'+str(copied)+';#1'],check=True)
+                assert imported_symbols(copied.read_bytes())==imported_symbols(original.read_bytes())
+                result=subprocess.run([str(copied),'--list'],capture_output=True,text=True,timeout=30)
+                print(json.dumps({'controlledCopiedTest':original.name,'originalSha256':before,'originalUnchanged':hashlib.sha256(original.read_bytes()).hexdigest()==before,'sameDirectoryAndImports':True,'injectedDesktopManifest':True,'listExitCode':result.returncode,'testHarnessReached':result.returncode==0 and ': test' in result.stdout,'listedTests':sum(line.endswith(': test') for line in result.stdout.splitlines()),'originalSidecars':[p.name for p in [Path(str(original)+'.manifest'),Path(str(original)+'.local')] if p.exists()]}),flush=True)
+            finally:
+                copied.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':
-    activation_context_evidence([Path(filename) for filename in paths[:4]])
+    if sys.platform!='win32': raise SystemExit('Run on the affected Windows runner')
+    paths=[Path(filename) for filename in sorted(glob.glob('desktop/src-tauri/target/debug/deps/devicedock_lib-*.exe'))[:4]]
+    if not paths: raise SystemExit('No compiled host test executable found')
+    for path in paths: print(json.dumps(inspect(path)),flush=True)
+    print(json.dumps({'pythonExecutable':Path(sys.executable).name,'pythonManifests':pe_manifests(Path(sys.executable).read_bytes())}),flush=True)
+    activation_context_evidence(paths)
