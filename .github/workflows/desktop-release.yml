@@ -139,6 +139,9 @@ jobs:
         run: node --test desktop/scripts/portable-windows.test.mjs
       - name: Verify native driver build
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features native-ble,native-spp --lib
+      - name: Diagnose Windows test loader
+        if: failure() && runner.os == 'Windows'
+        run: python desktop/scripts/windows-loader-diagnostics.py
       - name: Build desktop artifacts
         working-directory: desktop
         shell: bash

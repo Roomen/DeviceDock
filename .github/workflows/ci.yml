@@ -24,6 +24,9 @@ jobs:
       - run: npm test
       - run: node --test desktop/scripts/*.test.mjs
       - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --all-features
+      - name: Diagnose Windows test loader
+        if: failure() && runner.os == 'Windows'
+        run: python desktop/scripts/windows-loader-diagnostics.py
       - run: node tools/build.mjs --core
       - run: npm ci
         working-directory: desktop
