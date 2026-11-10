@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { macSigningConfig, releaseChannel, updaterConfig } from './release-config.mjs'
+import { macSigningConfig, releaseChannel, updaterConfig, verifyMacReleaseJobs } from './release-config.mjs'
 import { buildTarget, cargoTargetDir, packageWindows } from './portable-windows.mjs'
 
 const desktop = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -37,7 +37,7 @@ if (sub === 'build' && windows && !skipPackage) args.push('--no-bundle')
 if (sub === 'dev' || sub === 'build') {
 	const updater = updaterConfig(channel, process.env, windows ? 'win32' : process.platform)
 	const mac = macSigningConfig()
-	args.push('--config', JSON.stringify({ version,build:{frontendDist:distribution==='core'?'../../dist-core':'../../dist'}, ...updater, bundle: { active: !windows && !skipPackage, targets:['dmg'], ...updater.bundle, ...mac.bundle } }))
+	args.push('--config', JSON.stringify({ version,build:{frontendDist:distribution==='core'?'../../dist-core':'../../dist'}, ...updater, bundle: { active: !windows && !skipPackage, ...updater.bundle, ...mac.bundle } }))
 }
 const bin = join(desktop, 'node_modules', '@tauri-apps', 'cli', 'tauri.js')
 const started = Date.now()
@@ -109,6 +109,7 @@ function collect() {
 		list(join(dir, 'dmg'), '.dmg').forEach((f) => jobs.push({ from: f, name: base + 'macos_' + arch + '.dmg' }))
 		list(join(dir, 'macos'), '.app.tar.gz').forEach((f) => jobs.push({ from: f, name: base + 'macos_' + arch + '.app.tar.gz', signature: true }))
 	}
+	verifyMacReleaseJobs(jobs,updaterConfig(channel,process.env,'darwin').bundle.createUpdaterArtifacts)
 	if (!jobs.length) {
 		console.warn('release: 没找到本次构建的安装包，desktop/release/' + channel + ' 保持不变')
 		return

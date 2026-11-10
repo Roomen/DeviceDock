@@ -97,6 +97,8 @@ jobs:
             name: windows-x64
     runs-on: ${{ matrix.os }}
     env:
+      RUSTUP_TOOLCHAIN: stable
+      npm_config_cache: ${{ runner.temp }}/devicedock-npm-cache
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
       TAURI_UPDATER_PUBLIC_KEY: ${{ needs.prepare.outputs.updater == 'true' && vars.TAURI_UPDATER_PUBLIC_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
@@ -109,6 +111,61 @@ jobs:
         with:
           node-version: 22
       - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+      - name: Inspect public compiler cache identity
+        id: compiler
+        run: node desktop/scripts/cache-key.mjs
+      - name: Restore npm cache
+        id: npm-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
+        continue-on-error: true
+        with:
+          path: |
+            ${{ runner.temp }}/devicedock-npm-cache/_cacache
+          key: npm-download-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'desktop/package-lock.json') }}
+          restore-keys: |
+            npm-download-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore cargo-source cache
+        id: cargo-source-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/registry/src/
+            ~/.cargo/git/db/
+          key: cargo-source-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}
+          restore-keys: |
+            cargo-source-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.rust }}-
+      - name: Restore cargo-target cache
+        id: cargo-target-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
+        continue-on-error: true
+        with:
+          path: |
+            desktop/src-tauri/target/
+            !desktop/src-tauri/target/**/bundle/**
+            !desktop/src-tauri/target/**/*.app/**
+            !desktop/src-tauri/target/**/*.dmg
+            !desktop/src-tauri/target/**/*.tar.gz
+            !desktop/src-tauri/target/**/*.zip
+            !desktop/src-tauri/target/**/*.sig
+            !desktop/src-tauri/target/**/devicedock
+            !desktop/src-tauri/target/**/devicedock.exe
+            !desktop/src-tauri/target/**/devicedock-updater
+            !desktop/src-tauri/target/**/devicedock-updater.exe
+            !desktop/src-tauri/target/**/deps/*devicedock*
+            !desktop/src-tauri/target/**/deps/*portable_updater*
+            !desktop/src-tauri/target/**/build/devicedock-*/**
+            !desktop/src-tauri/target/**/build/portable-updater-*/**
+            !desktop/src-tauri/target/**/.fingerprint/devicedock-*/**
+            !desktop/src-tauri/target/**/.fingerprint/portable-updater-*/**
+            !desktop/src-tauri/target/**/incremental/devicedock*/**
+            !desktop/src-tauri/target/**/incremental/portable_updater*/**
+          key: cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}-
+            cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-
       - run: npm ci
       - name: Import Developer ID certificate into temporary keychain
         if: runner.os == 'macOS' && needs.prepare.outputs.apple == 'true'
