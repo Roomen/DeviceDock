@@ -1,9 +1,10 @@
+import { validateSchema, validateArguments } from './schema.js'
 import { Session } from './session.js'
 import { packageAssets } from './assets.js'
 import { validateManifest } from './manifest.js'
 export class ExtensionHost {
  constructor({ sessions, mount, storage, platform = 'web', capabilities = {}, native, changed = () => {} }) {
-  Object.assign(this, { sessions, mount, storage, platform, native, changed }); this.capabilities = Object.freeze({ ...capabilities }); this.protocols = new Map(); this.transports = new Map(); this.services = new Map(); this.extensions = new Map(); this.resources = new Map(); this.diagnostics = []; this.shellLifecycle = []; this.portProviders = new WeakMap(); this.updating = false
+  Object.assign(this, { sessions, mount, storage, platform, native, changed }); this.capabilities = Object.freeze({ ...capabilities }); this.protocols = new Map(); this.transports = new Map(); this.services = new Map(); this.mcpTools = new Map(); this.mcpAliases = new Map(); this.nativeTransportBindings = new WeakMap(); this.extensions = new Map(); this.resources = new Map(); this.diagnostics = []; this.shellLifecycle = []; this.portProviders = new WeakMap(); this.updating = false
  }
  allSessions() { return [...Object.values(this.sessions), ...this.resources.values()] }
  register(map, id, value) { if (map.has(id)) throw Error(`重复注册：${id}`); map.set(id, value); this.changed(); let registered = true; return () => { if (!registered) return; registered = false; if(map.get(id) === value) map.delete(id); this.changed() } }
@@ -15,16 +16,17 @@ export class ExtensionHost {
   if (manifest.capabilities.some(c => !this.capabilities[c])) throw Error('缺少所需原生或平台能力')
   const id = manifest.id, controller = new AbortController(), disposers = [], preflight = [], used = new Set(), ownResources = new Map(), owner = `extension:${sourceIdentity}:${id}`
   const element = this.mount.ownerDocument.createElement('section'); this.mount.append(element)
-  const state = { manifest, url, importer, sourceIdentity, controller, disposers, preflight, used, ownResources, owner, element, status: 'enabling', cleanup: null, cleanupDone: false }; this.extensions.set(id, state)
+  const state = { manifest, url, importer, sourceIdentity, controller, disposers, preflight, used, ownResources, nativeBindings:new Set(), owner, element, status: 'enabling', cleanup: null, cleanupDone: false }; this.extensions.set(id, state)
   const activeIO = () => { if (!state.cleanupRunning) active() }
   const active = () => { if (this.updating) throw Error('应用正在准备更新'); if (state.status !== 'enabled' && state.status !== 'enabling') throw Error('扩展正在停止') }
   const register = (map, key, value) => { active(); const off = this.register(map,key,value); disposers.push(off); return off }
   const sessionFacade = session => {
    used.add(session)
    return {
-    get generation() { return session.generation }, get state() { return session.state }, get connected() { return session.connected }, get deviceInfo() { return session.deviceInfo }, get busy() { return session.busy },
+    get messageBoundary() { return session.messageBoundary }, get generation() { return session.generation }, get state() { return session.state }, get connected() { return session.connected }, get deviceInfo() { return session.deviceInfo }, get busy() { return session.busy },
     open: (...args) => { active(); if (!ownResources.has(session)) throw Error('通信路由核心打开；插件请创建专属资源'); return session.open(...args) },
     close: () => { activeIO(); if (!ownResources.has(session)) throw Error('插件不可关闭通信路'); return session.close() },
+    setSignals: (signals,options={}) => {activeIO();if(!ownResources.has(session))throw Error('插件不可控制通信路信号');return session.setSignals(signals,{owner,beforeWrite:async()=>{activeIO();await options.beforeWrite?.();activeIO()}})},
     subscribe: fn => { active(); const off = session.subscribe(fn); disposers.push(off); return off },
     claim: () => { active(); const off = session.claim(owner); disposers.push(off); return off },
     send: (bytes, options = {}) => { activeIO(); return session.send(bytes, { ...options, owner }) },
@@ -35,7 +37,27 @@ export class ExtensionHost {
    assets: packageAssets(manifest,url,{native:this.native,active:activeIO,dispose:off=>{disposers.push(off);return ()=>{const index=disposers.indexOf(off);if(index>=0)disposers.splice(index,1)}}}),
    apiVersion: 1, capabilities: this.capabilities, mount: element, signal: controller.signal,
    registerProtocol: definition => { const off = register(this.protocols, definition.id, definition); disposers.push(() => { for (const session of this.allSessions()) if (session.protocol === definition) session.setProtocol(null) }); return off },
-   registerTransport: provider => register(this.transports, provider.id, {...provider, requestPort: async (...args) => {active();const port=await provider.requestPort(...args);this.portProviders.set(port,owner);return port}}),
+   registerTransport: provider => {
+    const offTransport=register(this.transports,provider.id,{...provider,requestPort:async(...args)=>{active();const port=await provider.requestPort(...args);this.portProviders.set(port,owner);return port}})
+    const binding=this.nativeTransportBindings.get(provider),offs=[]
+    if(binding?.kind==='classic'){
+     const allowed=new Set(['classic_state','classic_devices','classic_discover','classic_pair','classic_connect','classic_close','classic_read','classic_write'])
+     state.nativeBindings.add(binding);preflight.push(binding.preflight)
+     for(const tool of binding.tools){if(!allowed.has(tool.definition.name))throw Error('Unknown native Classic tool');const target=id+'.'+tool.definition.name;offs.push(api.registerMcpTool({...tool.definition,name:target},tool.call));offs.push(register(this.mcpAliases,tool.definition.name,{target,owner}))}
+    }
+    return ()=>{binding?.preflight();for(const off of offs.reverse())off();offTransport()}
+   },
+   registerMcpTool: (definition, handler) => {
+    if (!definition || !definition.name?.startsWith(id + '.') || !/^[a-zA-Z0-9_.-]{1,128}$/.test(definition.name) || typeof definition.description !== 'string' || definition.inputSchema?.type !== 'object' || typeof handler !== 'function') throw Error('无效 MCP 工具契约')
+    if(definition.timeoutMs !== undefined && (!Number.isInteger(definition.timeoutMs) || definition.timeoutMs < 1000 || definition.timeoutMs > 1800000)) throw Error('无效 MCP 超时')
+    validateSchema(definition.inputSchema)
+    const frozen = JSON.parse(JSON.stringify(definition))
+    return register(this.mcpTools,definition.name,{definition:frozen,call:async (args,context) => {
+     active(); validateArguments(args,frozen.inputSchema); const signal=AbortSignal.any([controller.signal,context.signal]); const check=()=>{active();if(signal.aborted)throw Error('Request cancelled')}; const commit=async()=>{check();await context.commit();check()}; const work = Promise.resolve().then(() => {check();return handler(args,{...context,signal,commit})}); work.owner=owner
+     state.toolCalls ||= new Set(); state.toolCalls.add(work)
+     try { return await work } finally { state.toolCalls.delete(work) }
+    }})
+   },
    registerService: (key, value) => { if (!/^org\.devicedock\.[a-z0-9.-]+\.v[1-9][0-9]*$/.test(key) && !key.startsWith(`plugin.${id}.`)) throw Error('业务服务必须使用版本化命名空间'); return register(this.services,key,value) },
    getService: key => key.startsWith('protocol.') ? this.protocols.get(key.slice(9)) : this.services.get(key),
    session: lane => { active(); if (!this.sessions[lane]) throw Error('通信路不存在'); return sessionFacade(this.sessions[lane]) },
@@ -69,8 +91,10 @@ export class ExtensionHost {
     }
     state.controller.abort()
     for (const s of state.used) { for (const task of s.transactions) if (task.owner === state.owner) task.abort() }
+    await Promise.allSettled([...(state.toolCalls || [])]);
     await Promise.all([...state.used].map(s => s.drainOwner(state.owner)))
     if (!state.cleanupDone) { state.cleanupRunning = true; try { await state.cleanup?.(); state.cleanupDone = true } finally { state.cleanupRunning = false } }
+    for(const binding of state.nativeBindings)await binding.release()
     for (const s of state.ownResources.keys()) { await s.close(); this.resources.delete(`${id}.${state.ownResources.get(s)}`) }
     for (const off of [...state.disposers].reverse()) off()
     state.element.remove(); this.extensions.delete(id); this.changed()
@@ -93,6 +117,7 @@ export class ExtensionHost {
  }
  async prepareForUpdate() {
   if (this.updating) throw Error('应用已在准备更新')
+  if (this.allSessions().some(s=>s.busy)) throw Error('设备任务尚未完成')
   if (this.shellLifecycle.some(service => service.isBusy?.())) throw Error('原生设备操作或系统选择器仍在使用中')
   this.updating = true; for (const s of this.allSessions()) s.frozen = true
   try {

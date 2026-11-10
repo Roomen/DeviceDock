@@ -1,3 +1,4 @@
+import {createMcpTools} from '../src/mcp.js'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -32,9 +33,10 @@ for (const entry of index) {
  await host.enable(bundle.manifest,pathToFileURL(join(directory,bundle.manifest.entry)).href,true,undefined,entry.source)
 }
 assert.equal(host.protocols.size,8)
+const mcp=createMcpTools({host,sessions:host.sessions,serial:{getPorts:async()=>[]}});assert(mcp.definitions.length<=512,'final MCP catalog exceeds native bound');assert.equal(mcp.definitions.find(d=>d.name==='org.devicedock.firmware.upgrade_library_original')?.timeoutMs,1260000);console.log(`Final real-host MCP catalog: ${mcp.definitions.length} typed tools`);mcp.dispose()
 function port(write = () => {}) {
  let rx
- return { readable: null, writable: null, async open() { this.readable = new ReadableStream({ start(c) { rx = c } }); this.writable = new WritableStream({ write }) }, push(bytes) { rx.enqueue(bytes) }, async close() {} }
+ return {signals:[],async setSignals(value){this.signals.push(value)}, readable: null, writable: null, async open() { this.readable = new ReadableStream({ start(c) { rx = c } }); this.writable = new WritableStream({ write }) }, push(bytes) { rx.enqueue(bytes) }, async close() {} }
 }
 // Actual host Session close records release power capture only after physical drain.
 const power = host.services.get('org.devicedock.power.v1'), instrument = port()
@@ -78,7 +80,7 @@ const usb = port(bytes => {
  if (command.op === 'scan.start') usb.push(new TextEncoder().encode('{"t":"evt","e":"scan","state":"scanning"}\n'))
 })
 const bridgeId = bridge.selectPort(usb); await bridge.controller.run('open', { deviceId: bridgeId })
-await bridge.controller.run('scan_start'); assert.equal(bridge.controller.state().scanning, true)
+assert.deepEqual(usb.signals[0],{dataTerminalReady:false,requestToSend:false});await bridge.controller.run('scan_start'); assert.equal(bridge.controller.state().scanning, true)
 await assert.rejects(host.disable('org.devicedock.bridge'), /Stop scanning/)
 await bridge.controller.run('scan_stop'); await bridge.controller.run('close')
 await host.disable('org.devicedock.bridge'); await host.disable('org.devicedock.wireless')

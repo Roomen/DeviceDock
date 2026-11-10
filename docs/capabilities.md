@@ -1,27 +1,17 @@
-# 能力与验证边界
+# Capabilities and verification boundaries
 
-宿主与扩展分开发布。下表描述本地实现，不代表已公开发布，也不代表连接真实设备验证。
-
-| 能力 | 当前实现 | 验证 / 限制 |
+| Surface | Implemented behavior | Verification / boundary |
 | --- | --- | --- |
-| 零插件核心 | 串口选择/完整参数、真实流打开/关闭、HEX/TEXT TX/RX、有界日志、导出 | 合成流和无头 Chrome 双路验证；未接串口实机 |
-| 会话与事务 | 独立 A/B、移动单路、代次、独占 claim、顺序写、取消、失败保留资源 | 取消、阻塞 I/O、跨扩展隔离、旧 claim/晚到回调测试 |
-| 协议与重放 | 按连接和路创建实例；独立顺序重放；纯文本结构视图 | 由独立协议包提供命令/解码；STS-CIU 独立流无帧长，需显式 datagram 边界，当前串口不猜边界 |
-| 扩展生命周期 | 安装/信任/启用分离、预检、异步清理、失败重试、版本回退、命名空间存储 | 同源代码是可信代码；能力声明不形成沙箱；模块自身不能真正卸载 |
-| 仓库来源 | 多协议源/多插件源、URL 规范化、目录刷新与离线缓存、固定版本/摘要 | 自动目录发现现支持 GitHub；其他 HTTPS 仓库可保存但明确提示不支持发现；发布 URL 需真实存在 |
-| 浏览器运行时安装 | 完整包图/资产验证、Service Worker 不可变缓存、原子完成标记 | 浏览器真实目录下载/安装/启用/篡改测试；需 HTTPS 或 localhost |
-| 桌面运行时安装 | HTTPS 下载、持久应用数据目录、独立原生缓存、原子目录切换、受限 URI、读时复核 | 原生缓存/路径/完整性测试；真实 WKWebView ESM/Worker/WASM 与最终打包 HPatch 生成 24 字节差分通过，Worker 零保留 |
-| 原生串口 | 复用已验证 serialport/lease、IPC 接收确认、回收屏障、流错误恢复 | macOS 编译与生命周期测试；Windows/移动原生串口未测试 |
-| 原生 BLE/SPP | 编译时可选驱动；规范 shell transport service；设备/GATT 或系统配对选择 | macOS 可选 feature 编译/单元测试，合成 IPC/流回归；未连接真实蓝牙设备 |
-| 功耗插件 | 专属仪表会话、控制/校准/有界采样/离线分析 | 需独立插件包；保留块存储，有界保留而非旧版无限磁盘流；高级触发/全部旧 UI 未迁移 |
-| 设备固件插件 | 包创建/校验、SEK PCP 事务、库与升级服务、Worker 资产边界 | 独立 HPatchLite v0.4.3 provider、真实 Worker/WASM、压缩/差分、自动升级拒绝应答后压缩回退、IndexedDB 原子库；执行命令发送不等于已验证烧录 |
-| 无线/USB 桥插件 | Web BLE 与 shell BLE/SPP；真实 USB 桥 NDJSON/GATT/Profile 服务 | 无原生驱动时显示不可用；未做硬件/系统权限实测 |
-| MCP | UI 使用同一版本化服务注册表，预留 shell 接入 | 新宿主没有启动 MCP HTTP 服务；旧登录耦合 MCP 未移植，不能声称已可通过 MCP 控制 |
-| 应用自身更新 | JS 与原生设备操作屏障 | 未配置 DeviceDock 的签名与发布源，更新下载/安装明确不可用 |
-| 移动端 | 响应式单路核心与按 manifest 过滤的扩展 | iOS 无 Web Serial；原生 iOS BLE/Android 打包未验证，不能视为移动交付完成 |
+| Core serial/log workbench | Per-lane settings, authorized port selection, strong aliases/session reconnect, HEX/TEXT byte escapes and suffixes, grouped editable/importable quick commands, send history, file/timed sends, signals, presets and labels | Synthetic streams, ownership/cancellation regressions and packaged Chrome workflows; no physical device tests |
+| Log/terminal | Independent raw ring, per-lane UTF-8/ANSI state, original xterm, time/newline display grouping, search/filter/pause/selection/text+JSONL export/import, isolated replay, session-only refresh recovery | Real xterm keyboard/RX/export browser test, safe untrusted ANSI text, dual-lane and mobile simulation; raw protocol boundaries never inferred from presentation grouping |
+| Session/extension lifecycle | Generations, claims, serialized writes/signals, owner-specific drain, async preflight/finalizer, failed-close retention, immutable installation, source-owned settings and activation rollback | Real ExtensionHost and native lease/serial regressions, including hung I/O and cancellation |
+| Protocol/power/firmware/bridge | Separate public packages with typed commands and workflow UI; full package graphs/assets retained in immutable caches | Frozen producer logic/simulator/browser evidence and assembled 13-package actual-host/Chrome tests; see producer migration checklists for exact bounded storage/model choices |
+| Native BLE/SPP | Compiled optional drivers, BLE scan/GATT mapping and interactive SPP pairing, canonical host lane picker | Native all-feature tests and synthetic driver tests; official macOS/Windows builds explicitly include both features; no physical radios used |
+| Optional Classic MCP | Original eight independent SPP operations/cursors through the actual native queue, only owned by an enabled extension registering the attested provider; namespaced tools plus allowlisted compatibility aliases | Exact packaged wireless1.0.0 + actual host/service tests: absent without plugin/capability, busy disable refusal, expired queued writes zero, removal after idle cleanup |
+| MCP HTTP | Explicit start, persistent bearer/regenerate, Host/Origin/body limits, per-window document registrations, automatic per-window catalog refresh, explicit typed tools, bounded declared timeouts, queue-level commit fence and structured execution outcome | Real HTTP router tests, disabled/expired/stale commit tests; native WebKit HTTP/channel and multi-window update-failure smoke |
+| Application updater | Independent signed trust root, Tauri version-bound signatures, Windows portable helper lock/process/byte checks/rollback, multi-window freeze/drain/handoff, signed channel pointer promotion | Real new-key sign/verify and wrong-key/version/tamper rejection; native preparation/failure-resume smoke; release scripts/portable regressions. Desktop tag/release awaits separate gate |
+| Sources | Two public defaults, immutable protocol raw URLs and plugin Release URLs, browser same-hash raw mirrors, full artifact/graph validation, explicit trust, offline reactivation | Genuine public browser install/activation/offline smoke and native original-URL download/install/activation. Mirrors retain exactly the canonical digest |
+| Distribution | Zero-plugin core by default; explicit integrated frozen bundle mode; no runtime original-project/CDN/sibling dependency | Standalone core/integrated web builds and local native release build; fixed-runner macOS/Windows CI checks are separate from local verification |
+| Mobile | Single lane, manifest-gated SEK/firmware/wireless capability and responsive workbench | Browser mobile simulation; inherited lack of iOS Web Serial and original absence of new Android/iOS native drivers are not migration gaps. No unsupported driver is advertised |
 
-协议/功耗/固件等高级旧流程的精确缺口，请同时阅读对应独立仓库报告；这些包被宿主集成不等于所有旧工作流迁移完成。
-
-最终消费产物：协议 `305ae441bf411e2579fb56c65886d6a71480be52`，插件 `cf7aa7e2b4c2ef54415b51b48d7b5f89899fb80e`。8 个协议 + 5 个插件/provider；宿主 `dist` 清单按目录生成，旧基线的同名包不进入最终输出。宿主没有重新执行生产者已完成且未改变的测试或构建。
-
-非阻塞限制：原生资源逐文件请求仍会复核完整包，较大包有重复解码成本；崩溃遗留暂存目录不自动回收；损坏的同摘要原生安装当前需要清理对应应用数据后重新导入；源不支持的自动发现明确报错，不静默回退默认仓库。固件重试间迟到帧与设备容忍补丁生成间隔仍需硬件验证。
+Trusted extensions execute in the page realm; capability declarations and namespaces are lifecycle contracts, not a JavaScript security sandbox. Native library download/loading is unsupported. Corrupt immutable caches fail closed; manual cache repair and full-bundle read-time verification costs remain explicit operational limitations. Physical-device testing is excluded from this delivery by instruction. No local test is represented as Windows CI or Apple notarization.

@@ -29,7 +29,7 @@ try {
  await page.waitForFunction(() => window.testDevices[0]?.writes.length === 1)
  await page.evaluate(() => window.testDevices[0].push([0x68,0x02,0x16])); await page.waitForFunction(() => document.querySelector('.logs').textContent.includes('68 02 16'))
  assert.deepEqual(await page.evaluate(() => testDevices[0].writes[0]),[0x68,1,0x16])
- await page.locator('#dual').check(); await page.locator('.connect').nth(1).click(); await page.evaluate(() => testDevices[1].push([0xAB])); await page.waitForFunction(() => document.querySelectorAll('.logs')[1].textContent.includes('AB'))
+ await page.locator('#dual').check(); await page.locator('.connect').nth(1).click();await page.waitForFunction(()=>window.testDevices[1]?.readable); await page.evaluate(() => testDevices[1].push([0xAB])); await page.waitForFunction(() => document.querySelectorAll('.logs')[1].textContent.includes('AB'))
  assert.ok(!(await page.locator('.logs').first().textContent()).includes(' AB'))
  await page.locator('.connect').first().click(); await page.locator('.connect').nth(1).click()
  await page.locator('[data-page="extensions"]').click(); const count = await page.locator('.package-row').count();assert.equal(count,expectedPackages.length)
@@ -60,7 +60,7 @@ try {
   const catalog={schemaVersion:1,packages:[{id:bundle.manifest.id,version:bundle.manifest.version,apiVersion:1,kind:'protocol',platforms:bundle.manifest.platforms,sha256:createHash('sha256').update(body).digest('hex'),url:'https://packages.test/cjt.json'}]}
   await page.route('https://raw.githubusercontent.com/test/extensions/HEAD/catalog.json',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(catalog)}))
   await page.route('https://packages.test/cjt.json',route=>route.fulfill({status:200,contentType:'application/json',body}))
-  await page.locator('[data-page="sources"]').click();await page.locator('#source-url').fill('https://github.com/test/extensions');await page.locator('#source-form button').click();await page.getByRole('button',{name:'刷新目录',exact:true}).click();await page.getByRole('button',{name:'下载并安装',exact:true}).waitFor();await page.getByRole('button',{name:'下载并安装',exact:true}).click()
+  await page.locator('[data-page="sources"]').click();await page.locator('#source-url').fill('https://github.com/test/extensions');await page.locator('#source-form button').click();const testSource=page.locator('.source-row').filter({hasText:'https://github.com/test/extensions'});await testSource.getByRole('button',{name:'刷新目录',exact:true}).click();await testSource.getByRole('button',{name:'下载并安装',exact:true}).waitFor();await testSource.getByRole('button',{name:'下载并安装',exact:true}).click()
   await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('已安装'))
   const runtime=await page.evaluate(async bundle=>{
    const {Installer}=await import('./src/installer.js'),{application}=await import('./src/app.js'),installer=new Installer(localStorage,'web')

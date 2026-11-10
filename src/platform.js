@@ -10,7 +10,7 @@ export async function platformServices(root = globalThis) {
  return { platform, mobile, native, capabilities }
 }
 export function serialProvider(platform, chooseNative) {
- if (!platform.native || !platform.capabilities['native.serial']) return { id: 'serial', title: '串口', requestPort: options => adapter.requestPort(options) }
+ if (!platform.native || !platform.capabilities['native.serial']) return { id: 'serial', title: '串口', getPorts: () => adapter.getPorts(), getUsbDevices:()=>adapter.getUsbDevices(), addEventListener:(...args)=>adapter.addEventListener(...args), requestPort: options => adapter.requestPort(options) }
  const invoke = platform.native.invoke
  const released = invoke('serial_release_owned')
  released.catch(() => {})
@@ -21,5 +21,5 @@ export function serialProvider(platform, chooseNative) {
  })
  adapter.register(backend); adapter.use('native')
  globalThis.addEventListener?.('pagehide',() => { backend._stop(); invoke('serial_release_owned').catch(() => {}) },{ once: true })
- return { id: 'serial', title: '原生串口', requestPort: options => adapter.requestPort(options) }
+ return { id: 'serial', title: '原生串口', getPorts: () => adapter.getPorts(), getUsbDevices:()=>adapter.getUsbDevices(), addEventListener:(...args)=>adapter.addEventListener(...args), requestPort: options => adapter.requestPort(options) }
 }

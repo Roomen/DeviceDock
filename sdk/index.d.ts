@@ -6,6 +6,7 @@ export type Decoded = { protocol: string; address?: string; command?: string | n
 export type Frame = { bytes: Uint8Array; view?: View; decoded?: Decoded; metadata?: Record<string, unknown> }
 export interface ProtocolContext { lane: LaneId; mode: 'live' | 'replay'; generation: number }
 export interface ProtocolInstance {
+ feedDatagram?(bytes: Uint8Array): Frame[]
  feed(bytes: Uint8Array): Frame[]
  decode?(bytes: Uint8Array): Frame
  configure?(options: Record<string, unknown>): void
@@ -20,8 +21,9 @@ export interface ProtocolDefinition {
  id: string; title: string; commands?: Command[]
  create(context: ProtocolContext): ProtocolInstance
 }
-export interface SerialOptions { baudRate: number; dataBits?: 7 | 8; stopBits?: 1 | 2; parity?: 'none' | 'even' | 'odd'; flowControl?: 'none' | 'hardware' }
+export interface SerialOptions { baudRate: number; bufferSize?: number; dataBits?: 7 | 8; stopBits?: 1 | 2; parity?: 'none' | 'even' | 'odd'; flowControl?: 'none' | 'hardware' }
 export interface StreamPort {
+ readonly messageBoundary?: 'datagram'
  getInfo?(): Record<string, unknown>
  open(options: SerialOptions): Promise<void>
  readable: ReadableStream<Uint8Array> | null
@@ -29,8 +31,9 @@ export interface StreamPort {
  close(): Promise<void>
 }
 export interface TransportProvider { id: string; title: string; requestPort(options?: unknown): Promise<StreamPort> }
-export interface LogRecord { sequence: number; lane: LaneId; generation: number; time: number; direction: 'rx' | 'tx' | 'system'; bytes: Uint8Array; frames?: Frame[]; views?: View[]; text?: string }
+export interface LogRecord { boundary?: 'datagram'; sequence: number; lane: LaneId; generation: number; time: number; direction: 'rx' | 'tx' | 'system'; bytes: Uint8Array; frames?: Frame[]; views?: View[]; text?: string }
 export interface SessionService {
+ readonly messageBoundary?: 'datagram'
  readonly generation: number
  readonly state: string
  readonly connected: boolean
@@ -38,10 +41,12 @@ export interface SessionService {
  readonly busy: boolean
  open(port: StreamPort, options: SerialOptions): Promise<void>
  close(): Promise<void>
- send(bytes: Uint8Array, options?: { owner?: string; generation?: number }): Promise<void>
+ /** Owned resources only. Core lane signal control remains host-owned. */
+ setSignals(signals: {dataTerminalReady?: boolean; requestToSend?: boolean; break?: boolean}, options?: {beforeWrite?: () => Promise<void>}): Promise<void>
+ send(bytes: Uint8Array, options?: { owner?: string; generation?: number; beforeWrite?: () => Promise<void> }): Promise<void>
  subscribe(fn: (record: LogRecord) => void): () => void
  claim(owner: string): () => void
- transaction<T>(owner: string, run: (scope: { signal: AbortSignal; send(bytes: Uint8Array): Promise<void>; subscribe(fn: (record: LogRecord) => void): () => void }) => Promise<T>, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<T>
+ transaction<T>(owner: string, run: (scope: { signal: AbortSignal; send(bytes: Uint8Array, options?: {beforeWrite?: () => Promise<void>}): Promise<void>; subscribe(fn: (record: LogRecord) => void): () => void }) => Promise<T>, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<T>
 }
 export interface HostServices {
  assets: { read(packagePath: string): Promise<Uint8Array>; url(packagePath: string): string; createWorker(packagePath: string, options?: WorkerOptions): Promise<Worker> }
@@ -50,6 +55,7 @@ export interface HostServices {
  registerProtocol(definition: ProtocolDefinition): () => void
  registerTransport(provider: TransportProvider): () => void
 /** Versioned org.devicedock.*.v1 services, or plugin.<manifest-id>.<name>; collisions rejected. */
+ registerMcpTool(definition: {name: string; description: string; timeoutMs?: number; inputSchema: Record<string,unknown>}, handler: (args: Record<string,unknown>, context: {signal: AbortSignal; commit(): Promise<void>; snapshot: {document:string; lanes:Record<string,{generation:number;state:string}>}}) => unknown | Promise<unknown>): () => void
  registerService(id: string, service: unknown): () => void
  getService(id: string): unknown
  session(lane: LaneId): SessionService

@@ -1,3 +1,4 @@
+import {validateWebUrl} from './sources.js'
 import { verifyPackage } from './package.js'
 import { digest } from './manifest.js'
 export class Installer {
@@ -29,7 +30,7 @@ export class Installer {
     if(bundle.manifest.id !== entry.id || bundle.manifest.version !== entry.version || bundle.manifest.kind !== entry.kind || bundle.manifest.apiVersion !== entry.apiVersion || JSON.stringify([...bundle.manifest.platforms].sort()) !== JSON.stringify([...entry.platforms].sort())) throw Error('目录与包身份不一致')
     return this.install(bundle,`${source.kind}:${source.url}`)
    }
-   const response = await fetch(entry.url,{ credentials:'omit', referrerPolicy:'no-referrer', signal:controller.signal })
+   const response = await fetch(entry.webUrl===undefined?entry.url:validateWebUrl(entry.webUrl),{ credentials:'omit', referrerPolicy:'no-referrer', signal:controller.signal })
    if (!response.ok || !response.url.startsWith('https://')) throw Error('扩展下载失败')
    const reader = response.body.getReader(), chunks = []; let size = 0
    try { while (true) { const {done,value} = await reader.read(); if (done) break; size += value.length; if (size > 44 * 1024 * 1024) throw Error('下载超过上限'); chunks.push(value) } } finally { await reader.cancel(); reader.releaseLock() }

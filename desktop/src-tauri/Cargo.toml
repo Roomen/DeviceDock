@@ -9,8 +9,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 native-smoke = []
-native-ble = ["dep:bluest", "dep:uuid", "dep:tokio", "dep:tokio-util"]
-native-spp = ["dep:tokio"]
+native-ble = ["dep:bluest", "dep:uuid", "dep:tokio-util"]
+native-spp = []
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 cc = "1"
@@ -25,7 +25,14 @@ futures-util = "0.3"
 serialport = "4"
 bluest = { version = "0.6.9", optional = true }
 uuid = { version = "1", features = ["serde"], optional = true }
-tokio = { version = "1", features = ["time", "sync", "rt", "macros"], optional = true }
+tokio = { version = "1", features = ["net", "time", "sync", "rt", "macros"] }
+axum = "0.8"
+tauri-plugin-updater = "2"
+portable-update-common = { path = "../portable-update-common" }
+getrandom = "0.4"
 tokio-util = { version = "0.7", optional = true }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Foundation", "Win32_System_Registry", "Win32_Devices_Communication", "Win32_Devices_Bluetooth", "Win32_Networking_WinSock"] }
+
+[dev-dependencies]
+zip = { version = "4.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }

@@ -1,3 +1,4 @@
+import {classicTools} from './classic-mcp.js'
 // Shell capability providers. Native drivers are compiled into the app, never downloaded.
 import { create as createBle, mapping } from './native-ble.js'
 import { create as createClassic } from './native-classic.js'
@@ -53,6 +54,7 @@ export function nativeProviders(platform, host, doc = document) {
    if (!device) throw Error('请先在系统选择器中配对并选择 SPP 设备')
    return service.createPort(device.deviceId)
   }}
+  host.nativeTransportBindings.set(provider,{kind:'classic',tools:classicTools(host,service),preflight:()=>{const state=service.state();if(service.isBusyForUpdate()||state.laneOwned||state.phase!=='idle')throw Error('Close Classic SPP or complete the system dialog before disabling wireless')},release:()=>service.release()})
   result.push(['org.devicedock.native.spp.v1',provider])
  }
  globalThis.addEventListener?.('pagehide',() => {for(const [,provider] of result) provider.release().catch(() => {})},{once:true})

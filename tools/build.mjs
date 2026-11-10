@@ -2,6 +2,10 @@ import { cp, mkdir, rm, readFile, writeFile, readdir } from 'node:fs/promises'
 import { resolve,join } from 'node:path'
 import { pack } from './integrate.mjs'
 const root = resolve(import.meta.dirname,'..'), core = process.argv.includes('--core'), dist = join(root,core ? 'dist-core' : 'dist')
+for(const [source,target]of [
+ ['@xterm/xterm/lib/xterm.js','xterm.js'],['@xterm/xterm/css/xterm.css','xterm.css'],['@xterm/xterm/LICENSE','xterm-LICENSE'],
+ ['@xterm/addon-fit/lib/addon-fit.js','xterm-fit.js'],['@xterm/addon-fit/LICENSE','xterm-fit-LICENSE'],
+ ['ansi_up/ansi_up.js','ansi_up.js'],['ansi_up/LICENSE','ansi_up-LICENSE']])await cp(join(root,'node_modules',source),join(root,'vendor',target))
 let index = []
 if (!core) { try { index = JSON.parse(await readFile(join(root,'extensions/installed.json'),'utf8')) } catch (e) { if (e.code !== 'ENOENT') throw e } }
 for (const entry of index) await pack(join(root,'extensions',entry.hash))

@@ -46,7 +46,7 @@ cd desktop
 npx tauri build --no-bundle --features native-ble,native-spp
 ```
 
-需要 Rust、当前系统原生开发工具。默认构建提供真实原生串口；可选 feature 才编译和提供 BLE/SPP。无线插件通过相同会话访问这些 shell 驱动；BLE 需扫描、选择设备并确认 TX/RX GATT 特征，SPP 使用系统配对选择。动态安装原生驱动不受支持。应用自己的自动更新暂未配置新签名和发布源，明确不可用；设备固件扩展是独立功能。
+需要 Rust、当前系统原生开发工具。默认构建提供真实原生串口；可选 feature 才编译和提供 BLE/SPP。无线插件通过相同会话访问这些 shell 驱动；BLE 需扫描、选择设备并确认 TX/RX GATT 特征，SPP 使用系统配对选择。动态安装原生驱动不受支持。应用更新沿用签名、版本绑定与便携 helper 回滚机制，使用独立 DeviceDock 信任根；正式发布须由受保护工作流签名，配置与默认零插件分发见 [发布说明](docs/release.md)。MCP 通过客户端页明确启动，保留持久 bearer 与窗口执行围栏，见 [MCP](docs/mcp.md)。设备固件扩展是独立功能。
 
 桌面扩展源下载有 HTTPS、重定向、大小、时限和摘要检查；安装再次验证每个文件。原生缓存请求逐次核对摘要、路径和符号链接。缓存损坏拒绝执行并保留旧版本，不静默改源。
 
@@ -61,7 +61,7 @@ cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib --all-features
 
 浏览器烟测使用隔离临时配置的本机 Chrome，不使用个人配置、不生成截图。集成测试导入宿主自己的已打包目录，模拟真实流与协议字节，覆盖业务服务和所有权，不伪造业务服务成功。
 
-当前能力与未迁移范围见 [能力矩阵](docs/capabilities.md)。原项目归属及第三方许可见 LICENSE、NOTICE 和 vendor/。尚未发布或推送任何仓库。
+当前能力与验证边界见 [能力矩阵](docs/capabilities.md) 和 [逐项迁移清单](docs/migration-status.md)。原项目归属及第三方许可见 LICENSE、NOTICE 和 vendor/。协议与插件已有公开源；宿主提交/发布仍遵循独立验收门。
 
 原生 WebKit 缓存/Worker 烟测使用独立测试 feature（普通构建不暴露测试命令）：
 

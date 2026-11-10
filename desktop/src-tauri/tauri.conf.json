@@ -9,18 +9,9 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "DeviceDock",
-        "width": 1320,
-        "height": 860,
-        "minWidth": 700,
-        "minHeight": 540
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' devicedock-extension: http://devicedock-extension.localhost; style-src 'self' devicedock-extension: http://devicedock-extension.localhost; connect-src 'self' devicedock-extension: http://devicedock-extension.localhost https: ipc: http://ipc.localhost; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' devicedock-extension: http://devicedock-extension.localhost; style-src 'self' 'unsafe-inline' devicedock-extension: http://devicedock-extension.localhost; connect-src 'self' devicedock-extension: http://devicedock-extension.localhost https: ipc: http://ipc.localhost; img-src 'self' data:; worker-src 'self' blob:; object-src 'none'"
     }
   },
   "bundle": {
@@ -29,6 +20,13 @@
     "macOS": {
       "infoPlist": "Info.plist",
       "minimumSystemVersion": "11.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [],
+      "requireSignedVersion": true
     }
   }
 }

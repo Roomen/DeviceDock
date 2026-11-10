@@ -15,3 +15,6 @@ plugin namespace 也接受 kind=firmware/transport。API、平台、版本、产
 启用独立于安装。来源加包 ID 是设置命名空间；同 ID 不允许同时激活，用户明确选择来源和版本。原生模块加载与浏览器模块加载都不能真正卸载 ESM 代码，扩展必须清理资源。切换版本前先安全停用；失败恢复之前的激活版本。回退不会删除旧产物。删除安装记录保留缓存，方便离线恢复；磁盘空间回收当前需要用户清理应用缓存，不在活动扩展运行时删除。
 
 参考实现：router-for-me/CLIProxyAPI revision `6db7d4b839d86c5b24e17bbe73bcd4db18ef1b1a` 的源/版本/清单/摘要/暂存机制。DeviceDock 使用浏览器 ESM 与独立 Rust shell，没有复制其 Go 原生动态库安装器、未验证备用下载或默认源回退。
+
+
+Public default sources are Roomen/DeviceDock-Protocols and Roomen/DeviceDock-Plugins. Protocol artifacts use immutable commit-pinned raw URLs; plugin canonical URLs use immutable release assets. GitHub Release downloads do not provide browser CORS, so an optional webUrl may name a canonical HTTPS raw.githubusercontent.com/owner/repository/<40 lowercase hex commit>/path/file.json mirror. It rejects credentials, query, fragment, port, traversal, mutable refs and non-raw hosts. The mirror MUST contain the exact canonical JSON bytes and uses the SAME sha256/full package verifier. Browser selects webUrl; native always selects canonical url. Catalog caches preserve the mirror field. Published release assets are never overwritten to add delivery metadata.
