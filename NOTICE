@@ -1,0 +1,15 @@
+DeviceDock
+
+Includes serial-adapter.js, transport-native-serial.js, their synthetic regression tests,
+and Rust serial.rs/lease.rs adapted from Roomen/web-serial-debug (Apache-2.0).
+Original copyright and author notices are retained in LICENSE.
+Changes: native ESM exports and explicit dependency injection instead of global registration;
+independent DeviceDock shell configuration, no legacy authentication or update destinations.
+
+es-module-lexer 1.7.0, Copyright Guy Bedford, MIT.
+License: vendor/es-module-lexer-LICENSE. Unmodified asm.js distribution in vendor/lexer.js.
+
+Native optional BLE and Classic SPP drivers, native-ble.js/native-classic.js,
+and their regression suites are adapted from the same Apache-2.0 project.
+Changes: explicit module exports, shell capability registration and DeviceDock lifecycle.
+No original update URLs, login implementation or account configuration was copied.

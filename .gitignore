@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.staging/
+desktop/src-tauri/target/
+.DS_Store
+/extensions/*/
+/extensions/installed.json
+/dist-core/
+/desktop/node_modules/
+/desktop/src-tauri/gen/
