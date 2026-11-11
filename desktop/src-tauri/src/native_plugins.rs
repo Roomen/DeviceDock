@@ -21,7 +21,14 @@ const MAX_MESSAGE: usize = 64 * 1024;
 const DEADLINE: Duration = Duration::from_secs(5);
 type Result<T> = std::result::Result<T, String>;
 fn io<T>(r: std::io::Result<T>) -> Result<T> {
-    r.map_err(|_| "Native plugin storage/process operation failed".into())
+    r.map_err(|e| {
+        // The user-facing message stays generic; a debug build also reports the OS cause on stderr
+        // so a platform-specific storage failure can be diagnosed from the test log.
+        if cfg!(debug_assertions) {
+            eprintln!("native plugin storage error: {e}");
+        }
+        "Native plugin storage/process operation failed".into()
+    })
 }
 fn digest(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
@@ -147,16 +154,20 @@ fn parse(raw: &str, hash: &str) -> Result<(Manifest, BTreeMap<String, Vec<u8>>)>
     Ok((m, files))
 }
 // Check every existing ancestor as well as the leaf; never follow a package/store symlink.
+// Ancestors are walked from the leaf upwards: rebuilding the path component by component would
+// query a bare Windows verbatim prefix such as `\\?\C:` (what canonicalize returns on Windows),
+// which is not a valid path and made every install/trust operation fail there.
 fn checked(path: &Path) -> Result<PathBuf> {
-    let mut p = PathBuf::new();
-    for c in path.components() {
-        p.push(c);
-        let meta = io(fs::symlink_metadata(&p))?;
+    for ancestor in path.ancestors() {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        let meta = io(fs::symlink_metadata(ancestor))?;
         if meta.file_type().is_symlink() {
             return Err("Native store symlink rejected".into());
         }
     }
-    Ok(p)
+    Ok(path.to_path_buf())
 }
 fn load(root: &Path, hash: &str) -> Result<(Manifest, BTreeMap<String, Vec<u8>>)> {
     if !valid_hash(hash) {
