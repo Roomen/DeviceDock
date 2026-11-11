@@ -2,9 +2,10 @@ import { validateSchema, validateArguments } from './schema.js'
 import { Session } from './session.js'
 import { packageAssets } from './assets.js'
 import { validateManifest } from './manifest.js'
+import { pageTitle } from './pages.js'
 export class ExtensionHost {
- constructor({ sessions, mount, storage, platform = 'web', capabilities = {}, native, changed = () => {} }) {
-  Object.assign(this, { sessions, mount, storage, platform, native, changed }); this.capabilities = Object.freeze({ ...capabilities }); this.protocols = new Map(); this.transports = new Map(); this.services = new Map(); this.mcpTools = new Map(); this.mcpAliases = new Map(); this.nativeTransportBindings = new WeakMap(); this.extensions = new Map(); this.resources = new Map(); this.diagnostics = []; this.shellLifecycle = []; this.portProviders = new WeakMap(); this.updating = false
+ constructor({ sessions, mount, pageHost = null, storage, platform = 'web', capabilities = {}, native, changed = () => {} }) {
+  Object.assign(this, { sessions, mount, pageHost, storage, platform, native, changed }); this.capabilities = Object.freeze({ ...capabilities }); this.protocols = new Map(); this.transports = new Map(); this.services = new Map(); this.mcpTools = new Map(); this.mcpAliases = new Map(); this.nativeTransportBindings = new WeakMap(); this.extensions = new Map(); this.resources = new Map(); this.diagnostics = []; this.shellLifecycle = []; this.portProviders = new WeakMap(); this.updating = false
  }
  allSessions() { return [...Object.values(this.sessions), ...this.resources.values()] }
  register(map, id, value) { if (map.has(id)) throw Error(`重复注册：${id}`); map.set(id, value); this.changed(); let registered = true; return () => { if (!registered) return; registered = false; if(map.get(id) === value) map.delete(id); this.changed() } }
@@ -15,8 +16,13 @@ export class ExtensionHost {
   if (this.updating || this.extensions.has(manifest.id)) throw Error('扩展正在使用，切换版本前请停用并重载')
   if (manifest.capabilities.some(c => !this.capabilities[c])) throw Error('缺少所需原生或平台能力')
   const id = manifest.id, controller = new AbortController(), disposers = [], preflight = [], used = new Set(), ownResources = new Map(), owner = `extension:${sourceIdentity}:${id}`
-  const element = this.mount.ownerDocument.createElement('section'); this.mount.append(element)
-  const state = { manifest, url, importer, sourceIdentity, controller, disposers, preflight, used, ownResources, nativeBindings:new Set(), owner, element, status: 'enabling', cleanup: null, cleanupDone: false }; this.extensions.set(id, state)
+  const element = this.mount.ownerDocument.createElement('section')
+  // With a dedicated page host each extension owns a page section. Older hosts
+  // keep appending into one shared mount element.
+  const pageSection = this.pageHost ? element : null
+  if (pageSection) { element.className = 'plugin-page'; pageSection.dataset.pluginPage = id; pageSection.hidden = true; this.pageHost.append(element) }
+  else this.mount.append(element)
+  const state = { manifest, url, importer, sourceIdentity, controller, disposers, preflight, used, ownResources, nativeBindings:new Set(), owner, element, page: { title: pageTitle(manifest.name, id), explicit: false, hasContent: false, observer: null }, status: 'enabling', cleanup: null, cleanupDone: false }; this.extensions.set(id, state)
   const activeIO = () => { if (!state.cleanupRunning) active() }
   const active = () => { if (this.updating) throw Error('应用正在准备更新'); if (state.status !== 'enabled' && state.status !== 'enabling') throw Error('扩展正在停止') }
   const register = (map, key, value) => { active(); const off = this.register(map,key,value); disposers.push(off); return off }
@@ -47,6 +53,15 @@ export class ExtensionHost {
     }
     return ()=>{binding?.preflight();for(const off of offs.reverse())off();offTransport()}
    },
+   registerPage: options => {
+    active()
+    state.page.explicit = true
+    state.page.title = pageTitle(options?.title, pageTitle(manifest.name, id))
+    state.page.hasContent = true
+    if (state.page.observer) { state.page.observer.disconnect(); state.page.observer = null }
+    this.changed()
+    return { get title() { return state.page.title }, setTitle: value => { active(); state.page.title = pageTitle(value, pageTitle(manifest.name, id)); this.changed() }, section: element, show: () => this.changed() }
+   },
    registerMcpTool: (definition, handler) => {
     if (!definition || !definition.name?.startsWith(id + '.') || !/^[a-zA-Z0-9_.-]{1,128}$/.test(definition.name) || typeof definition.description !== 'string' || definition.inputSchema?.type !== 'object' || typeof handler !== 'function') throw Error('无效 MCP 工具契约')
     if(definition.timeoutMs !== undefined && (!Number.isInteger(definition.timeoutMs) || definition.timeoutMs < 1000 || definition.timeoutMs > 1800000)) throw Error('无效 MCP 超时')
@@ -72,8 +87,37 @@ export class ExtensionHost {
     set: (key,value) => { active(); this.storage.setItem(`devicedock.ext.${encodeURIComponent(sourceIdentity)}.${id}.${key}`,JSON.stringify(value)) }
    }, log: text => { this.diagnostics.push({ extension:id, time:Date.now(), text:String(text) }); if (this.diagnostics.length > 500) this.diagnostics.shift() }
   }
-  try { const module = await importer(url); if (typeof module.activate !== 'function') throw Error('扩展未导出 activate'); state.cleanup = await module.activate(api); state.status = 'enabled'; this.changed() }
+  try { const module = await importer(url); if (typeof module.activate !== 'function') throw Error('扩展未导出 activate'); state.cleanup = await module.activate(api); state.status = 'enabled'; this.observePage(state); this.changed() }
   catch (error) { try { await this.disable(id, true) } catch {} throw error }
+ }
+ observePage(state) {
+  const detect = () => {
+   if (state.page.explicit || state.page.hasContent) return true
+   const element = state.element
+   if (element.querySelector?.('*') || String(element.textContent || '').trim()) {
+    state.page.hasContent = true; state.page.observer?.disconnect(); state.page.observer = null; this.changed(); return true
+   }
+   return false
+  }
+  if (detect()) return
+  // Legacy host.mount plugins may build their UI after an async step; promote the
+  // page as soon as content appears instead of showing an empty tab.
+  const Observer = this.mount.ownerDocument?.defaultView?.MutationObserver || globalThis.MutationObserver
+  if (typeof Observer !== 'function') return
+  const observer = new Observer(() => { detect() })
+  observer.observe(state.element, { childList: true, subtree: true, characterData: true })
+  state.page.observer = observer
+ }
+ pages() {
+  const list = []
+  for (const [id, state] of this.extensions) {
+   if (state.status !== 'enabled' || !state.page) continue
+   // Protocol-only packages register parsers without UI; they must not create
+   // an empty page. An explicit registerPage() always counts.
+   if (!state.page.explicit && !state.page.hasContent) continue
+   list.push({ id, title: state.page.title, section: state.element })
+  }
+  return list
  }
  async disable(id, failedActivation = false) {
   const state = this.extensions.get(id); if (!state) return
@@ -97,6 +141,7 @@ export class ExtensionHost {
     for(const binding of state.nativeBindings)await binding.release()
     for (const s of state.ownResources.keys()) { await s.close(); this.resources.delete(`${id}.${state.ownResources.get(s)}`) }
     for (const off of [...state.disposers].reverse()) off()
+    state.page.observer?.disconnect(); state.page.observer = null
     state.element.remove(); this.extensions.delete(id); this.changed()
    } catch (e) { if (!e.preflightRejected) state.status = 'cleanup-error'; this.changed(); throw e }
    finally { state.stopping = null }

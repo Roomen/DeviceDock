@@ -2,6 +2,27 @@
 
 Normative API: `sdk/index.d.ts`. Core works with zero extensions. ESM only. No global protocol state, host globals, or dependencies on sibling repositories.
 
+## Pages and navigation (host UI)
+
+A package that has a UI owns exactly one navigation page. The label comes from
+`host.registerPage({title})` (or `manifest.name` when omitted) and is trimmed to
+40 characters. `registerPage` is optional: a package that appends content into
+`host.mount` is promoted automatically (including after an asynchronous step),
+while a parser-only package (`kind:'protocol'` with no DOM) gets no page at all —
+the host never creates an empty tab. `registerPage` returns a handle with
+title/setTitle/section/show for packages that want an explicit entry or a
+runtime title. See [the example page package](example-page-plugin.md).
+
+Navigation never re-activates or destroys an enabled extension: switching pages
+toggles `hidden` on the section and dispatches `devicedock:page-show` /
+`devicedock:page-hide` on it plus `devicedock:page-resize` on `window`. Re-measure
+anything layout-dependent (xterm fit, canvases, iframe/native view bounds) on
+those events, because a hidden pane has zero size. Disabling removes the entry
+and the section; if it was the current page the host returns to 「通信调试」. The
+host-owned pages are 通信调试 / 扩展管理 / 设置; client services (MCP, app update),
+repository sources and parameter presets live inside 设置 rather than being
+separate top-level tabs.
+
 ## Package
 A distributable directory contains `manifest.json`, `index.js` (or entry), optional relative ESM modules/assets, LICENSE and notices. Manifest example:
 ```json

@@ -33,9 +33,12 @@ try {
  assert.ok(!(await page.locator('.logs').first().textContent()).includes(' AB'))
  await page.locator('.connect').first().click(); await page.locator('.connect').nth(1).click()
  await page.locator('[data-page="extensions"]').click(); const count = await page.locator('.package-row').count();assert.equal(count,expectedPackages.length)
- await page.locator('#trust').check()
+ // Trust is per package version now, not one global checkbox.
+ assert.equal(await page.locator('#trust').count(),0,'the global trust checkbox is gone')
  for (let i = 0; i < count; i++) {
-  await page.locator('.package-row').nth(i).getByRole('button',{name:'启用此版本',exact:true}).click()
+  const row=page.locator('.package-row').nth(i)
+  await row.locator('.trust-toggle').check()
+  await row.getByRole('button',{name:'启用此版本',exact:true}).click()
   await page.waitForFunction(expected => [...window.testApplication.host.extensions.values()].filter(e=>e.status==='enabled').length===expected,i+1)
  }
  const enabled = await page.evaluate(async () => {const {application} = await import('./src/app.js'); return {extensions:application.host.extensions.size,protocols:application.host.protocols.size,services:[...application.host.services.keys()],states:[...application.host.extensions].map(([id,state])=>({id,status:state.status,url:state.url,disposers:state.disposers.length}))}})
@@ -60,7 +63,7 @@ try {
   const catalog={schemaVersion:1,packages:[{id:bundle.manifest.id,version:bundle.manifest.version,apiVersion:1,kind:'protocol',platforms:bundle.manifest.platforms,sha256:createHash('sha256').update(body).digest('hex'),url:'https://packages.test/cjt.json'}]}
   await page.route('https://raw.githubusercontent.com/test/extensions/HEAD/catalog.json',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(catalog)}))
   await page.route('https://packages.test/cjt.json',route=>route.fulfill({status:200,contentType:'application/json',body}))
-  await page.locator('[data-page="sources"]').click();await page.locator('#source-url').fill('https://github.com/test/extensions');await page.locator('#source-form button').click();const testSource=page.locator('.source-row').filter({hasText:'https://github.com/test/extensions'});await testSource.getByRole('button',{name:'刷新目录',exact:true}).click();await testSource.getByRole('button',{name:'下载并安装',exact:true}).waitFor();await testSource.getByRole('button',{name:'下载并安装',exact:true}).click()
+  await page.locator('[data-page="settings"]').click();await page.locator('[data-settings="sources"]').click();await page.locator('#source-url').fill('https://github.com/test/extensions');await page.locator('#source-form button').click();const testSource=page.locator('.source-row').filter({hasText:'https://github.com/test/extensions'});await testSource.getByRole('button',{name:'刷新目录',exact:true}).click();await testSource.getByRole('button',{name:'下载并安装',exact:true}).waitFor();await testSource.getByRole('button',{name:'下载并安装',exact:true}).click()
   await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('已安装'))
   const runtime=await page.evaluate(async bundle=>{
    const {Installer}=await import('./src/installer.js'),{application}=await import('./src/app.js'),installer=new Installer(localStorage,'web')

@@ -1,0 +1,16 @@
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:15px system-ui;padding:24px;color:#dde5f2;background:#141c29}input,button{font:inherit;padding:8px;margin:4px}pre{white-space:pre-wrap}label{display:block}</style>
+<h1>Native process example</h1>
+<p>This page calls an independently compiled Rust process through the bounded host bridge.</p>
+<label>Echo <input id="echo" value="hello native plugin"><button id="send">Echo</button></label>
+<label>Numbers <input id="numbers" value="1, 2, 3"><button id="sum">Sum</button></label>
+<pre id="result" role="status"></pre>
+<script>
+const out=document.getElementById('result');
+const call=async(method,params)=>{try{out.textContent=JSON.stringify(await deviceDockNative.call(method,params),null,2)}catch(e){out.textContent=e.message}};
+document.getElementById('send').onclick=()=>call('echo',{text:document.getElementById('echo').value});
+document.getElementById('sum').onclick=()=>call('sum',{values:document.getElementById('numbers').value.split(',').map(Number)});
+// Also provides a deterministic real-webview handshake for the native smoke test.
+let parentBlocked=false;try{void parent.document.body}catch{parentBlocked=true}
+deviceDockNative.call('sum',{values:[1,2,3]}).then(result=>{parent.postMessage({type:'native-example-ready',result,parentBlocked,isolated:!window.__TAURI__&&!window.__TAURI_INTERNALS__},'*')}).catch(e=>{out.textContent=e.message});
+</script>

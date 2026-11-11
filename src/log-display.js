@@ -20,7 +20,13 @@ export function mountTerminal({q,session,action}){
  terminal.onData(text=>{action(()=>session.send(new TextEncoder().encode(text)))()})
  const off=session.subscribe(row=>{if(row.generation!==generation){terminal.reset();generation=row.generation}if(row.direction==='rx')terminal.write(row.bytes)})
  const observer=new ResizeObserver(()=>{if(q('.display').value==='term')fit.fit()});observer.observe(q('.terminal'))
- const show=()=>{const visible=q('.display').value==='term';q('.terminal').hidden=!visible;q('.logs').hidden=visible;if(visible)fit.fit()}
+ const visible=()=>q('.display').value==='term'
+ // A hidden page has zero layout, so the terminal must re-fit once its page is
+ // shown again instead of keeping the size it had before being hidden.
+ const refit=()=>{if(!visible())return;fit.fit();requestAnimationFrame(()=>{if(visible())fit.fit()})}
+ const show=()=>{q('.terminal').hidden=!visible();q('.logs').hidden=visible();if(visible())refit()}
+ const view=q('.terminal').ownerDocument?.defaultView
+ view?.addEventListener?.('devicedock:page-resize',refit)
  q('.display').addEventListener('change',show);show()
- return {getText:()=>{const lines=[];for(let i=0;i<terminal.buffer.active.length;i++)lines.push(terminal.buffer.active.getLine(i)?.translateToString(true)||'');return lines.join('\n').trimEnd()},clear:()=>terminal.clear(),dispose:()=>{off();observer.disconnect();terminal.dispose()}}
+ return {getText:()=>{const lines=[];for(let i=0;i<terminal.buffer.active.length;i++)lines.push(terminal.buffer.active.getLine(i)?.translateToString(true)||'');return lines.join('\n').trimEnd()},clear:()=>terminal.clear(),dispose:()=>{off();view?.removeEventListener?.('devicedock:page-resize',refit);observer.disconnect();terminal.dispose()}}
 }

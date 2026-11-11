@@ -1,6 +1,6 @@
 import {createMcpTools,startMcpBridge,registerMcpBridge} from '../mcp.js'
 import {exportRows,importRows} from '../workbench.js'
-export async function mountShell({platform,host,sessions,serial,status,action,$}){
+export async function mountShell({platform,host,sessions,serial,status,action,$,hooks}){
  if(!platform.native){$('#native-controls').querySelectorAll('button,input').forEach(e=>e.disabled=true);return}
  const native=platform.native, event=globalThis.__TAURI__.event
  $('#shell-info').textContent='MCP 默认关闭；持久令牌仅保存在本机应用配置。更新使用客户端内置公钥与通道。'
@@ -34,6 +34,7 @@ export async function mountShell({platform,host,sessions,serial,status,action,$}
     const runtime={dual:$('#dual').checked,logs:Object.fromEntries(Object.entries(sessions).map(([id,s])=>[id,exportRows(s.logs)]))}
     session={'devicedock.runtime':JSON.stringify(runtime)}
     if(new TextEncoder().encode(session['devicedock.runtime']).length>25*1024*1024)throw Error('日志过大，请先导出')
+    for(const hook of hooks?.beforeUpdate||[])await hook()
     await host.prepareForUpdate();ready=true
    }catch(e){status(e.message||e)}
    await native.invoke('app_update_ack',{operationId:payload.operationId,ready,session})

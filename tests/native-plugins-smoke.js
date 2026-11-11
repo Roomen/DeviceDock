@@ -1,0 +1,50 @@
+;(async()=>{
+ const invoke=window.__TAURI__.core.invoke,assert=(v,m)=>{if(!v)throw Error(m)}
+ const mark=stage=>invoke('native_smoke_stage',{stage})
+ let adapter,hash=__FIXTURE_HASH__
+ try{
+  await mark('script-entered')
+  const bundleJson=__FIXTURE_JSON__
+  const panel=document.createElement('div'),pagesContainer=document.createElement('div');document.body.append(panel,pagesContainer)
+  let registered=0,removed=0
+  await mark('module-import-begin')
+  const {mountNativePlugins}=await import('./src/shell/native-plugins.js')
+  await mark('module-import-finished')
+  adapter=await mountNativePlugins({platform:{native:{invoke}},panel,pagesContainer,registerPage:({element})=>{registered++;element.hidden=false;return()=>{removed++}},onStage:mark})
+  await mark('adapter-mounted')
+  await mark('install-begin')
+  await invoke('native_plugin_install',{bundleJson,expectedHash:hash})
+  await mark('install-finished')
+  // A previous interrupted smoke run may have left a persisted grant. Reset it explicitly.
+  await mark('reset-trust-begin')
+  await invoke('native_plugin_revoke',{hash})
+  await mark('reset-trust-finished')
+  let rejected=false;try{await invoke('native_plugin_start',{hash})}catch{rejected=true}assert(rejected,'Untrusted native launch accepted')
+  rejected=false;try{await invoke('native_plugin_page',{hash})}catch{rejected=true}assert(rejected,'Untrusted native page accepted')
+  await mark('trust-begin')
+  await invoke('native_plugin_trust',{hash})
+  await mark('trust-finished')
+  assert((await invoke('native_plugin_list')).find(r=>r.hash===hash)?.trusted,'Native trust not persisted')
+  await mark('start-begin')
+  await invoke('native_plugin_start',{hash})
+  await mark('start-finished')
+  const pageReady=new Promise((resolve,reject)=>{const timeout=setTimeout(()=>{window.removeEventListener('message',listen);reject(Error('Native iframe bridge timeout'))},12000);const listen=e=>{if(e.source!==pagesContainer.querySelector('iframe')?.contentWindow||e.data?.type!=='native-example-ready')return;window.removeEventListener('message',listen);clearTimeout(timeout);resolve(e.data)};window.addEventListener('message',listen)})
+  await mark('page-refresh-begin')
+  await adapter.refresh();await mark('iframe-ready-wait');const page=await pageReady;await mark('iframe-rpc-finished')
+  assert(page.result.sum===6&&page.result.count===3,'Native iframe RPC returned incorrect sum')
+  assert(page.isolated&&page.parentBlocked,'Native iframe acquired host globals/DOM')
+  assert(registered===1,'Native page registration count incorrect')
+  assert((await invoke('native_plugin_call',{hash,method:'echo',params:{text:'native-smoke'}})).text==='native-smoke','Native echo failed')
+  await mark('stop-begin');await invoke('native_plugin_stop',{hash});await adapter.refresh();await mark('stop-finished')
+  assert(!pagesContainer.querySelector('iframe')&&removed===1,'Stopped native page survived')
+  await mark('restart-begin')
+  // Stop must have drained before return, allowing immediate restart.
+  await invoke('native_plugin_start',{hash})
+  await mark('revoke-begin');await invoke('native_plugin_revoke',{hash});await adapter.refresh();await mark('revoke-finished')
+  const record=(await invoke('native_plugin_list')).find(r=>r.hash===hash);assert(!record.trusted&&!record.running,'Revocation left native authorization/process')
+  rejected=false;try{await invoke('native_plugin_start',{hash})}catch{rejected=true}assert(rejected,'Revoked native launch accepted')
+  await mark('uninstall-begin');await invoke('native_plugin_uninstall',{hash});await mark('uninstall-finished');assert(!(await invoke('native_plugin_list')).some(r=>r.hash===hash),'Native uninstall failed')
+  await adapter.dispose();await mark('complete')
+  await invoke('native_smoke_complete',{result:{pass:true,nativeExecutable:true,verifiedInstall:true,persistentNativeTrust:true,webkitCustomProtocolIframe:true,opaquePage:true,pageRpc:page.result,stopRestart:true,revoke:true,uninstall:true}})
+ }catch(error){await mark('script-failed');await invoke('native_smoke_complete',{result:{pass:false,error:String(error?.message||error)}})}
+})()

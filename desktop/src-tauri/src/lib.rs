@@ -5,12 +5,22 @@ mod serial;
 mod updater;
 mod portable;
 mod extensions;
+mod native_plugins;
 #[cfg(feature = "native-ble")]
 mod ble;
 #[cfg(feature = "native-spp")]
 mod classic;
 use tauri::{Manager,Emitter};
 mod menu;
+#[cfg(feature="native-smoke")]
+static NATIVE_SMOKE_STAGE:std::sync::Mutex<Option<String>>=std::sync::Mutex::new(None);
+#[cfg(feature="native-smoke")]
+fn record_native_smoke_stage(stage:&str) {
+ if std::env::var("DEVICEDOCK_SMOKE_MODE").as_deref()==Ok("native-plugins") {eprintln!("native-plugin-smoke stage: {stage}");*NATIVE_SMOKE_STAGE.lock().unwrap()=Some(stage.to_string());}
+}
+#[cfg(feature="native-smoke")]
+#[tauri::command]
+fn native_smoke_stage(stage:String) {if stage.len()<120 && stage.bytes().all(|c|c.is_ascii_alphanumeric() || b"-_:".contains(&c)){record_native_smoke_stage(&stage);}}
 #[cfg(feature = "native-smoke")]
 #[tauri::command]
 fn native_smoke_complete(app:tauri::AppHandle,result:serde_json::Value) {
@@ -20,11 +30,13 @@ fn native_smoke_complete(app:tauri::AppHandle,result:serde_json::Value) {
 }
 #[tauri::command]
 fn host_capabilities() -> serde_json::Value {
- serde_json::json!({"serial": cfg!(not(any(target_os = "android",target_os = "ios"))), "ble":cfg!(feature = "native-ble"), "spp":cfg!(all(feature = "native-spp",any(target_os = "macos",windows)))})
+ serde_json::json!({"serial": cfg!(not(any(target_os = "android",target_os = "ios"))), "ble":cfg!(feature = "native-ble"), "nativePlugins":cfg!(any(target_os="macos",target_os="linux",windows)), "spp":cfg!(all(feature = "native-spp",any(target_os = "macos",windows)))})
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
- let builder = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build()).manage(mcp::McpState::default()).manage(serial::SerialState::default()).manage(updater::UpdateState::default()).manage(extensions::ExtensionState::default())
+ #[cfg(feature="native-smoke")] record_native_smoke_stage("runtime-build");
+ let builder = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build()).manage(mcp::McpState::default()).manage(serial::SerialState::default()).manage(updater::UpdateState::default()).manage(extensions::ExtensionState::default()).manage(native_plugins::NativePluginState::default())
+ .register_uri_scheme_protocol("devicedock-native",|context,request|native_plugins::response(context.app_handle(),request.uri().path()))
  .register_uri_scheme_protocol("devicedock-extension",|context,request| {
   match context.app_handle().path().app_data_dir() {Ok(root)=>extensions::response(&root.join("extensions-v1"),request.uri().path()),Err(_)=>tauri::http::Response::builder().status(404).body(Vec::new()).unwrap()}
  });
@@ -33,20 +45,25 @@ pub fn run() {
  #[cfg(feature = "native-spp")]
  let builder = builder.manage(classic::ClassicState::default());
  let builder=builder.setup(|app|{
+  #[cfg(feature="native-smoke")] record_native_smoke_stage("setup-entered");
   app.set_menu(menu::build(app.handle())?)?;
+  #[cfg(feature="native-smoke")] record_native_smoke_stage("setup-menu-built");
   if !portable::startup_gate(app.handle()) {app.handle().exit(0);return Ok(())}
+  #[cfg(feature="native-smoke")] record_native_smoke_stage("setup-startup-gate-passed");
   if let Some(handoff)=updater::read_handoff(app.handle()) {
    for (label,session) in handoff.windows {build_window(app.handle(),&label,Some(&session))?;}
    updater::remove_handoff(app.handle());
   } else {build_window(app.handle(),"main",None)?;}
   #[cfg(feature="native-smoke")]
   {
+   record_native_smoke_stage("setup-window-built");
    let handle=app.handle().clone();
-   std::thread::spawn(move||{std::thread::sleep(std::time::Duration::from_secs(30));let _=std::fs::write(std::env::temp_dir().join("devicedock-host-native-smoke.json"),"{\"pass\":false,\"error\":\"native webview smoke timed out\"}");handle.exit(2);});
+   std::thread::spawn(move||{std::thread::sleep(std::time::Duration::from_secs(30));let stage=NATIVE_SMOKE_STAGE.lock().unwrap().clone();let _=std::fs::write(std::env::temp_dir().join("devicedock-host-native-smoke.json"),serde_json::json!({"pass":false,"error":"native webview smoke timed out","lastStage":stage}).to_string());handle.exit(2);});
   }
   Ok(())
  }).on_menu_event(|app,event|{let id=event.id().as_ref();if id=="new-window"{let _=host_new_window(app.clone());}else if let Some(w)=app.webview_windows().into_values().find(|w|w.is_focused().unwrap_or(false)){let _=w.emit("app-menu",id);}}).on_page_load(|_webview,_payload| {
-  if matches!(_payload.event(),tauri::webview::PageLoadEvent::Started){mcp::release(&_webview.state::<mcp::McpState>(),_webview.label());}
+  #[cfg(feature="native-smoke")] record_native_smoke_stage(if matches!(_payload.event(),tauri::webview::PageLoadEvent::Started){"page-load-started"}else{"page-load-finished"});
+  if matches!(_payload.event(),tauri::webview::PageLoadEvent::Started){mcp::release(&_webview.state::<mcp::McpState>(),_webview.label());let release=_webview.state::<native_plugins::NativePluginState>().release(_webview.label());tauri::async_runtime::spawn(native_plugins::finish_release(release));}
   #[cfg(feature="native-smoke")]
   if matches!(_payload.event(),tauri::webview::PageLoadEvent::Finished) && _webview.label()=="main" {
    if std::env::var("DEVICEDOCK_SMOKE_MODE").as_deref()==Ok("sources"){let _=_webview.eval(include_str!("../../../tests/native-sources-smoke.js"));return}
@@ -54,15 +71,19 @@ pub fn run() {
    use sha2::Digest;
    let fixture=std::env::var("DEVICEDOCK_SMOKE_BUNDLE").ok().and_then(|path|std::fs::read_to_string(path).ok()).unwrap_or_else(||include_str!("../../../tests/fixtures/trusted-package.json").to_string());
    let hash=format!("{:x}",sha2::Sha256::digest(fixture.as_bytes()));
-   let script=include_str!("../../../tests/native-cache-smoke.js")
+   let template=if std::env::var("DEVICEDOCK_SMOKE_MODE").as_deref()==Ok("native-plugins"){include_str!("../../../tests/native-plugins-smoke.js")}else{include_str!("../../../tests/native-cache-smoke.js")};
+   let script=template
     .replace("__FIXTURE_JSON__",&serde_json::to_string(&fixture).unwrap())
     .replace("__FIXTURE_HASH__",&serde_json::to_string(&hash).unwrap());
-   let _=_webview.eval(&script);
+   record_native_smoke_stage("script-dispatch");
+   if _webview.eval(&script).is_err(){record_native_smoke_stage("script-eval-error");}
   }
  });
  builder.invoke_handler(tauri::generate_handler![
   #[cfg(feature = "native-smoke")]
   native_smoke_complete,
+  #[cfg(feature="native-smoke")]
+  native_smoke_stage,
   #[cfg(feature = "native-smoke")]
   native_smoke_window_tool,
   #[cfg(feature = "native-smoke")]
@@ -70,6 +91,7 @@ pub fn run() {
   #[cfg(feature = "native-smoke")]
   updater::native_smoke_update_cycle,
   mcp::mcp_register,mcp::mcp_reveal_token,mcp::mcp_regenerate_token,mcp::mcp_start,mcp::mcp_stop,mcp::mcp_commit,mcp::mcp_reply,
+  native_plugins::native_plugin_install,native_plugins::native_plugin_list,native_plugins::native_plugin_trust,native_plugins::native_plugin_revoke,native_plugins::native_plugin_start,native_plugins::native_plugin_call,native_plugins::native_plugin_stop,native_plugins::native_plugin_uninstall,native_plugins::native_plugin_page,native_plugins::native_plugin_release_owned,
   host_new_window,host_capabilities, serial::serial_list, serial::serial_open, serial::serial_ack_receive, serial::serial_write,
   serial::serial_set_signals, serial::serial_close, serial::serial_release_owned,
   updater::app_update_check, updater::app_update_install, updater::app_update_ack, updater::app_update_result, extensions::extension_install, extensions::extension_download, extensions::extension_read_asset,
@@ -102,13 +124,20 @@ pub fn run() {
  ]).on_window_event(|window,event| {
   if let tauri::WindowEvent::Destroyed = event {
    mcp::release(&window.state::<mcp::McpState>(),window.label());
+   let release=window.state::<native_plugins::NativePluginState>().release(window.label());tauri::async_runtime::spawn(native_plugins::finish_release(release));
    serial::release_destroyed(&window.state::<serial::SerialState>(),window.label());
    #[cfg(feature = "native-ble")]
    ble::release_destroyed(&window.state::<ble::BleState>(),window.label());
    #[cfg(feature = "native-spp")]
    classic::release_destroyed(&window.state::<classic::ClassicState>(),window.label());
   }
- }).run(tauri::generate_context!()).expect("DeviceDock runtime failed");
+ }).build(tauri::generate_context!()).expect("DeviceDock runtime failed").run(|app,event| {
+  if let tauri::RunEvent::ExitRequested{api,code,..}=event {
+   static EXITING:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
+   if EXITING.load(std::sync::atomic::Ordering::SeqCst)!=2 {api.prevent_exit();}
+   if EXITING.compare_exchange(0,1,std::sync::atomic::Ordering::SeqCst,std::sync::atomic::Ordering::SeqCst).is_ok() {app.state::<native_plugins::NativePluginState>().begin_shutdown();let app=app.clone();let exit_code=code.unwrap_or(0);tauri::async_runtime::spawn(async move{app.state::<native_plugins::NativePluginState>().release_all().await;EXITING.store(2,std::sync::atomic::Ordering::SeqCst);app.exit(exit_code);});}
+  }
+ });
 }
 
 fn build_window(app:&tauri::AppHandle,label:&str,session:Option<&std::collections::HashMap<String,String>>)->tauri::Result<()> {

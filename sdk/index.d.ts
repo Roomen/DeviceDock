@@ -48,10 +48,28 @@ export interface SessionService {
  claim(owner: string): () => void
  transaction<T>(owner: string, run: (scope: { signal: AbortSignal; send(bytes: Uint8Array, options?: {beforeWrite?: () => Promise<void>}): Promise<void>; subscribe(fn: (record: LogRecord) => void): () => void }) => Promise<T>, options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<T>
 }
+export type PageHandle = {
+ /** Current navigation label (defaults to manifest.name, bounded to 40 chars). */
+ readonly title: string
+ setTitle(title: string): void
+ /** This package's own page section; identical to `mount` when a page exists. */
+ readonly section: HTMLElement
+ /** Ask the host to refresh the navigation entry. */
+ show(): void
+}
 export interface HostServices {
  assets: { read(packagePath: string): Promise<Uint8Array>; url(packagePath: string): string; createWorker(packagePath: string, options?: WorkerOptions): Promise<Worker> }
  apiVersion: 1
  capabilities: Readonly<Record<string, boolean>>
+ /**
+  * Declare this package's navigation page. Optional: a package that appends UI
+  * into `mount` is promoted automatically; a parser-only package never gets a
+  * page. Call once during activate(). Switching pages only hides the section,
+  * so state survives navigation. The host dispatches `devicedock:page-show` and
+  * `devicedock:page-hide` on the section, and `devicedock:page-resize` on
+  * `window`; re-measure layout-dependent UI there.
+  */
+ registerPage(options?: { title?: string }): PageHandle
  registerProtocol(definition: ProtocolDefinition): () => void
  registerTransport(provider: TransportProvider): () => void
 /** Versioned org.devicedock.*.v1 services, or plugin.<manifest-id>.<name>; collisions rejected. */
