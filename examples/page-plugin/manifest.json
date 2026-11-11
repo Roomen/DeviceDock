@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "org.example.page-demo",
+  "name": "Example plugin page",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "kind": "plugin",
+  "entry": "index.js",
+  "platforms": ["web", "desktop", "mobile"],
+  "capabilities": [],
+  "integrity": {
+    "index.js": "sha256-05a3c49daffb91d48fb95cc19f1d1342fa2aeac095a1e798c295c923365e13f5"
+  },
+  "license": "Apache-2.0"
+}

@@ -236,6 +236,7 @@ pub async fn app_update_install(app: AppHandle, state: State<'_, UpdateState>, v
         }
         prepare_windows(&app,id).await?;
         save_handoff(&app, &state)?;
+        app.state::<crate::native_plugins::NativePluginState>().release_all().await;
         // 前端已保存日志、停止任务并关闭流；再收回窗口可能残留的原生句柄。
         for label in app.webview_windows().into_keys() {
             crate::serial::release_destroyed(&app.state::<crate::serial::SerialState>(), &label);

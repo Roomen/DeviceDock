@@ -1,7 +1,9 @@
 import config from './presets.js'
 import {importCommands,downloadText} from './quick-commands.js'
 const parse=value=>typeof value==='string'?JSON.parse(value):value
-export const settingKeys=['devicedock.theme','devicedock.presets',...['A','B'].flatMap(id=>['lane','display','quick-groups','protocol','send'].map(k=>`devicedock.${k}.${id}`))]
+export const settingKeys=['devicedock.theme','devicedock.density','devicedock.presets',...['A','B'].flatMap(id=>['lane','display','quick-groups','protocol','send'].map(k=>`devicedock.${k}.${id}`))]
+// Trust grants and enabled-package records are intentionally excluded: an import
+// must never authorize executable code or re-create a running plugin.
 export function importSettings(raw){
  const data=parse(raw);if(!data||typeof data!=='object'||Array.isArray(data))throw Error('参数文件无效')
  if(data.schemaVersion===1&&data.settings){const result={};for(const key of settingKeys)if(Object.hasOwn(data.settings,key)){if(typeof data.settings[key]!=='string'||data.settings[key].length>1024*1024)throw Error('参数值无效');result[key]=data.settings[key]}return result}
