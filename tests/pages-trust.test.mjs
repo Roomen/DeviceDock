@@ -211,9 +211,9 @@ test('registerPage marks a page explicitly and can retitle it from package code'
 test('the shipped example package packs, verifies and registers a real page', async () => {
  const { pack } = await import('../tools/integrate.mjs')
  const { verifyPackage } = await import('../src/package.js')
- const { pathToFileURL } = await import('node:url')
+ const { pathToFileURL, fileURLToPath } = await import('node:url')
  const { join } = await import('node:path')
- const root = new URL('..', import.meta.url).pathname
+ const root = fileURLToPath(new URL('..', import.meta.url))
  const directory = join(root, 'examples/page-plugin')
  const bundle = await pack(directory), verified = await verifyPackage(bundle, 'web')
  assert.equal(verified.manifest.id, 'org.example.page-demo')
