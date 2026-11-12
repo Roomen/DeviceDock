@@ -201,6 +201,12 @@ assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () 
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, fields: [{ key: 'a', name: 'A', type: 'uint8', min: 9, max: 1 }] }), /min 大于 max/)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, fields: [{ key: 'a', name: 'A', type: 'uint8', enum: [] }] }), /enum/)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, tx: { queryById: function () {} } }), /tx 缺少方法/)
+// 注册层拒绝 async 协议函数：隔离会话按同步契约调用，await 后的代码会在状态恢复后继续跑
+assert.equal(C.isAsyncFunction(function () {}), false)
+assert.equal(C.isAsyncFunction(async function () {}), true)
+assert.equal(C.isAsyncFunction({ then: function () {} }), false)
+assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: async function () {} }), /不能是 async/)
+assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, logView: async function () {} }), /不能是 async/)
 const withTx = C.normalizeProtocolDef({
 	name: 'x', parseFrame: function () {},
 	tx: {

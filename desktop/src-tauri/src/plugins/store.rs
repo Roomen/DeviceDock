@@ -20,7 +20,7 @@ const STORAGE_FILE: &str = "storage.json";
 pub const MAX_STORAGE_VALUE_BYTES: usize = 64 * 1024;
 pub const MAX_STORAGE_KEYS: usize = 256;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
     pub enabled: bool,
@@ -70,6 +70,24 @@ pub fn save_state(root: &Path, state: &State) -> Result<(), String> {
     write_atomic(&root.join(STATE_FILE), &body)
 }
 
+// rename 之后还要把目录项刷盘，否则断电可能把「记录已写」丢掉。Windows 不能 fsync 目录句柄。
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> Result<(), String> {
+    let f = fs::File::open(dir).map_err(|e| format!("无法同步插件目录：{e}"))?;
+    f.sync_all().map_err(|e| format!("无法同步插件目录：{e}"))
+}
+
+#[cfg(windows)]
+fn sync_dir(_dir: &Path) -> Result<(), String> {
+    // Windows 没有目录 fd 的 fsync：rename 本身是原子替换，只做上面那步文件 fsync。
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn sync_dir(_dir: &Path) -> Result<(), String> {
+    Ok(())
+}
+
 fn write_atomic(path: &Path, body: &[u8]) -> Result<(), String> {
     let dir = path.parent().ok_or_else(|| "路径无效".to_string())?;
     fs::create_dir_all(dir).map_err(|e| format!("无法创建插件目录：{e}"))?;
@@ -82,7 +100,7 @@ fn write_atomic(path: &Path, body: &[u8]) -> Result<(), String> {
     );
     let tmp = dir.join(name);
     let mut file = fs::File::create(&tmp).map_err(|e| format!("无法写入插件目录：{e}"))?;
-    let written = file.write_all(body).and_then(|_| file.flush());
+    let written = file.write_all(body).and_then(|_| file.flush()).and_then(|_| file.sync_all());
     drop(file);
     if let Err(e) = written {
         let _ = fs::remove_file(&tmp);
@@ -92,7 +110,7 @@ fn write_atomic(path: &Path, body: &[u8]) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         return Err(format!("无法保存插件文件：{e}"));
     }
-    Ok(())
+    sync_dir(dir)
 }
 
 pub fn plugin_dir(root: &Path, id: &str) -> PathBuf {
@@ -173,23 +191,72 @@ pub fn verify_dir(dir: &Path, m: &Manifest) -> Result<u64, String> {
 }
 
 // ---------- 安装事务 ----------
-// 崩溃恢复：begin_install 在任何目录换名之前把 .tx.json 落到 plugins/<id>/ 下。
-// committed=false 表示「新包可能已就位但 state.json 还没提交」，启动时一律还原 .old-*；
-// committed=true 表示状态已提交，启动时补做完清理。事务文件总是最后才删。
+// 分阶段记录，每个换名 / 写 state 动作之后立刻推进阶段（记录本身用临时文件 + fsync 文件 +
+// rename + fsync 目录落盘）。恢复按阶段决定「什么都没动 / 还原目录与 state / 补完提交 / 补做清理」。
 const TX_FILE: &str = ".tx.json";
+const REPAIR_FILE: &str = ".repair.json";
 const LOCK_FILE: &str = ".lock";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TxStage {
+    #[default]
+    Prepared,
+    Swapped,
+    StateWritten,
+    Committed,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TxRecord {
+    #[serde(default)]
     pub version: String,
+    #[serde(default)]
     pub backup: bool,
+    #[serde(default)]
     pub staging: String,
+    #[serde(default)]
+    pub stage: TxStage,
+    // 兼容旧格式的 committed 布尔值；新记录以 stage 为准
+    #[serde(default)]
     pub committed: bool,
+    // 新包目录的树摘要：恢复时用它核对「当前目录确实是本次换入的新包」，不凭假设删目录
+    #[serde(default)]
+    pub tree_sha256: String,
+    // 旧 state 条目：回滚时把 state.json 一起还原
+    #[serde(default)]
+    pub previous_state: Option<Entry>,
+    // 新 state 条目：state_written 阶段用来补完提交
+    #[serde(default)]
+    pub expected_state: Option<Entry>,
 }
 
-fn tx_path(root: &Path, id: &str) -> PathBuf {
+impl TxRecord {
+    fn effective_stage(&self) -> TxStage {
+        if self.committed && self.stage == TxStage::Prepared {
+            TxStage::Committed
+        } else {
+            self.stage
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairInfo {
+    pub id: String,
+    pub reason: String,
+    pub stage: String,
+    pub at: u64,
+}
+
+pub fn tx_path(root: &Path, id: &str) -> PathBuf {
     plugin_dir(root, id).join(TX_FILE)
+}
+
+fn repair_path(root: &Path, id: &str) -> PathBuf {
+    plugin_dir(root, id).join(REPAIR_FILE)
 }
 
 fn write_tx(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
@@ -200,6 +267,54 @@ fn write_tx(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
 fn read_tx(path: &Path) -> Result<TxRecord, String> {
     let raw = fs::read_to_string(path).map_err(|e| format!("无法读取插件事务记录：{e}"))?;
     serde_json::from_str(&raw).map_err(|e| format!("插件事务记录损坏：{e}"))
+}
+
+pub fn read_repair(root: &Path, id: &str) -> Option<RepairInfo> {
+    let raw = fs::read_to_string(repair_path(root, id)).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+pub fn repair_reason(root: &Path, id: &str) -> Option<String> {
+    read_repair(root, id).map(|r| r.reason)
+}
+
+fn write_repair(root: &Path, id: &str, reason: &str, stage: TxStage) -> Result<(), String> {
+    let info = RepairInfo {
+        id: id.to_string(),
+        reason: reason.to_string(),
+        stage: format!("{stage:?}"),
+        at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    };
+    let body = serde_json::to_vec(&info).map_err(|e| format!("修复标记序列化失败：{e}"))?;
+    write_atomic(&repair_path(root, id), &body)
+}
+
+pub fn clear_repair(root: &Path, id: &str) {
+    let _ = fs::remove_file(repair_path(root, id));
+}
+
+pub fn discard_tx(root: &Path, id: &str) {
+    let _ = fs::remove_file(tx_path(root, id));
+}
+
+pub fn list_repairs(root: &Path) -> Vec<RepairInfo> {
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return out;
+    };
+    for e in entries.flatten() {
+        if e.path().is_dir() {
+            let id = e.file_name().to_string_lossy().to_string();
+            if let Some(r) = read_repair(root, &id) {
+                out.push(r);
+            }
+        }
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
 }
 
 // 跨进程文件锁：同一台机器上多个客户端实例也要串行进入安装 / 启停 / 卸载事务
@@ -223,6 +338,21 @@ fn staging_name(staging: &Path) -> String {
     staging.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string()
 }
 
+// 新包目录的树摘要：按 manifest.integrity 的顺序把「路径 + 文件内容摘要」喂给 SHA-256。
+// 恢复时重算一次，只有对得上才允许删目录（避免把仍是旧版的目录误当成新包删掉）。
+pub fn tree_sha256(dir: &Path) -> Result<String, String> {
+    let m = read_manifest(dir)?;
+    let mut hasher = Sha256::new();
+    for (rel, _) in &m.integrity {
+        let bytes = fs::read(dir.join(rel)).map_err(|e| format!("无法读取包内文件 {rel}：{e}"))?;
+        hasher.update(rel.as_bytes());
+        hasher.update(b":");
+        hasher.update(sha256_hex(&bytes).as_bytes());
+        hasher.update(b";");
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 fn cleanup_after_commit(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
     prune_versions(root, id, &rec.version);
     if rec.backup {
@@ -231,6 +361,10 @@ fn cleanup_after_commit(root: &Path, id: &str, rec: &TxRecord) -> Result<(), Str
             fs::remove_dir_all(&backup).map_err(|e| format!("无法删除插件旧版本备份：{e}"))?;
         }
     }
+    remove_staging(root, rec)
+}
+
+fn remove_staging(root: &Path, rec: &TxRecord) -> Result<(), String> {
     if !rec.staging.is_empty() {
         let st = root.join(&rec.staging);
         if st.exists() {
@@ -240,34 +374,86 @@ fn cleanup_after_commit(root: &Path, id: &str, rec: &TxRecord) -> Result<(), Str
     Ok(())
 }
 
-fn restore_after_abort(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
+fn restore_state(root: &Path, id: &str, previous: Option<&Entry>) -> Result<(), String> {
+    load_and_save(root, |st| match previous {
+        Some(e) => {
+            st.plugins.insert(id.to_string(), e.clone());
+        }
+        None => {
+            st.plugins.remove(id);
+        }
+    })
+}
+
+// 回滚 / 未提交的恢复：目录与 state.json 一起还原。
+// 只有「当前目录确实是本次换入的新包（树摘要对得上）」且备份存在时才删目录；
+// 任何一步失败都冒泡，调用方保留 .tx.json 让下一次可以继续处理。
+fn abort_install(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
+    if rec.effective_stage() == TxStage::Prepared {
+        // 记录已写但还没换名：目标目录仍是旧版，绝不能删
+        return remove_staging(root, rec);
+    }
     let target = checked_version_dir(root, id, &rec.version)?;
     let backup = plugin_dir(root, id).join(format!(".old-{}", rec.version));
+    if rec.backup && !backup.exists() {
+        return Err("事务备份目录不存在，无法自动还原".to_string());
+    }
     if target.exists() {
+        if rec.tree_sha256.is_empty() {
+            return Err("事务记录缺少包树摘要，不能确认目标目录是新包，拒绝删除".to_string());
+        }
+        let actual = tree_sha256(&target).unwrap_or_default();
+        if actual != rec.tree_sha256 {
+            return Err("目标目录内容与事务记录里的新包摘要不符，拒绝删除".to_string());
+        }
         fs::remove_dir_all(&target).map_err(|e| format!("无法移除未提交的插件版本：{e}"))?;
     }
     if !rec.staging.is_empty() {
-        let st = root.join(&rec.staging);
-        if st.exists() {
-            fs::remove_dir_all(&st).map_err(|e| format!("无法删除插件临时目录：{e}"))?;
-        }
+        remove_staging(root, rec)?;
     }
-    if rec.backup {
-        if !backup.exists() {
-            // 回滚错误绝不能吞掉：备份没了就不能假装已恢复，留着记录让下一次启动继续报
-            return Err(format!("插件 {id} 的事务备份目录不存在，无法自动恢复"));
-        }
-        if !target.exists() {
-            fs::rename(&backup, &target).map_err(|e| format!("无法还原插件旧版本：{e}"))?;
-        }
+    if backup.exists() && !target.exists() {
+        fs::rename(&backup, &target).map_err(|e| format!("无法还原插件旧版本：{e}"))?;
     }
-    Ok(())
+    restore_state(root, id, rec.previous_state.as_ref())
 }
 
-// 应用启动时调用：把上次中断的安装事务收尾
-pub fn recover_transactions(root: &Path) -> Result<(), String> {
+// state_written 阶段：新包与状态意图都已落盘，补完提交而不是回滚。
+fn finish_state_written(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
+    let target = checked_version_dir(root, id, &rec.version)?;
+    if target.exists() {
+        if rec.tree_sha256.is_empty() {
+            return Err("事务记录缺少包树摘要，不能确认目标目录是新包".to_string());
+        }
+        let actual = tree_sha256(&target).unwrap_or_default();
+        if actual != rec.tree_sha256 {
+            return Err("目标目录内容与事务记录里的新包摘要不符，不能补完提交".to_string());
+        }
+    }
+    if let Some(entry) = &rec.expected_state {
+        load_and_save(root, |st| {
+            if !st.plugins.get(id).map(|e| e == entry).unwrap_or(false) {
+                st.plugins.insert(id.to_string(), entry.clone());
+            }
+        })?;
+    }
+    cleanup_after_commit(root, id, rec)
+}
+
+fn recover_one(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
+    match rec.effective_stage() {
+        TxStage::Prepared => remove_staging(root, rec),
+        TxStage::Swapped => abort_install(root, id, rec),
+        TxStage::StateWritten => finish_state_written(root, id, rec),
+        TxStage::Committed => cleanup_after_commit(root, id, rec),
+    }
+}
+
+// 应用启动时调用。单个插件恢复失败只隔离这个插件（写 .repair.json、停用），
+// 返回问题清单，绝不让整个客户端起不来。
+pub fn recover_transactions(root: &Path) -> Vec<RepairInfo> {
+    let mut problems = Vec::new();
     let Ok(entries) = fs::read_dir(root) else {
-        return Ok(());
+        return problems;
     };
     for entry in entries.flatten() {
         if !entry.path().is_dir() {
@@ -278,14 +464,51 @@ pub fn recover_transactions(root: &Path) -> Result<(), String> {
         if !tp.exists() {
             continue;
         }
-        let rec = read_tx(&tp)?;
-        if rec.committed {
-            cleanup_after_commit(root, &id, &rec)?;
-        } else {
-            restore_after_abort(root, &id, &rec)?;
+        let rec = match read_tx(&tp) {
+            Ok(r) => r,
+            Err(e) => {
+                problems.push(isolate_repair(root, &id, &e, TxStage::Prepared));
+                continue;
+            }
+        };
+        match recover_one(root, &id, &rec) {
+            Ok(()) => {
+                let _ = fs::remove_file(&tp);
+                clear_repair(root, &id);
+            }
+            Err(e) => problems.push(isolate_repair(root, &id, &e, rec.effective_stage())),
         }
-        fs::remove_file(&tp).map_err(|e| format!("无法删除插件事务记录：{e}"))?;
     }
+    problems
+}
+
+fn isolate_repair(root: &Path, id: &str, reason: &str, stage: TxStage) -> RepairInfo {
+    let _ = write_repair(root, id, reason, stage);
+    // 停用这个插件，避免 ddplugin:// 继续提供状态不确定的包
+    let _ = load_and_save(root, |st| {
+        if let Some(e) = st.plugins.get_mut(id) {
+            e.enabled = false;
+        }
+    });
+    RepairInfo {
+        id: id.to_string(),
+        reason: reason.to_string(),
+        stage: format!("{stage:?}"),
+        at: 0,
+    }
+}
+
+pub fn retry_recovery(root: &Path, id: &str) -> Result<(), String> {
+    let tp = tx_path(root, id);
+    if !tp.exists() {
+        // 没有事务记录（可能已被手工清掉）：清掉修复标记即可
+        clear_repair(root, id);
+        return Ok(());
+    }
+    let rec = read_tx(&tp)?;
+    recover_one(root, id, &rec)?;
+    fs::remove_file(&tp).map_err(|e| format!("无法删除插件事务记录：{e}"))?;
+    clear_repair(root, id);
     Ok(())
 }
 
@@ -301,51 +524,83 @@ impl InstallTx {
     pub fn target(&self) -> &Path {
         &self.target
     }
-    pub fn commit(&self) -> Result<(), String> {
-        // 先标记已提交再清理：中途崩溃时恢复逻辑会补做清理，绝不会把旧包当成未提交而删掉
-        let mut rec = self.rec.clone();
-        rec.committed = true;
-        write_tx(&self.root, &self.id, &rec)?;
-        cleanup_after_commit(&self.root, &self.id, &rec)?;
+    fn advance(&mut self, stage: TxStage) -> Result<(), String> {
+        self.rec.stage = stage;
+        self.rec.committed = stage == TxStage::Committed;
+        write_tx(&self.root, &self.id, &self.rec)
+    }
+    // prepared → swapped：先换名，成功后才推进阶段；失败尝试还原且保留记录
+    pub fn swap(&mut self) -> Result<(), String> {
+        let plugin_root = plugin_dir(&self.root, &self.id);
+        let backup = plugin_root.join(format!(".old-{}", self.rec.version));
+        if self.target.exists() {
+            let _ = fs::remove_dir_all(&backup);
+            if let Err(e) = fs::rename(&self.target, &backup) {
+                // 换名失败：还原错误也要冒泡，事务记录绝不删
+                let restore = fs::rename(&backup, &self.target);
+                if self.target.exists() || restore.is_ok() {
+                    return Err(format!("无法替换已有插件版本：{e}"));
+                }
+                return Err(format!("无法替换已有插件版本：{e}；还原备份也失败：{restore:?}"));
+            }
+        }
+        let staging = self.root.join(&self.rec.staging);
+        if let Err(e) = fs::rename(&staging, &self.target) {
+            let _ = fs::remove_dir_all(&staging);
+            let mut restore_err = String::new();
+            if backup.exists() && !self.target.exists() {
+                if let Err(re) = fs::rename(&backup, &self.target) {
+                    restore_err = format!("；还原备份也失败：{re}");
+                }
+            }
+            return Err(format!("无法放置插件文件：{e}{restore_err}"));
+        }
+        self.advance(TxStage::Swapped)
+    }
+    // swapped → state_written：先把「准备写哪条 state」记进事务，再写 state.json
+    pub fn write_state(&mut self, entry: Entry) -> Result<(), String> {
+        self.rec.expected_state = Some(entry.clone());
+        self.advance(TxStage::StateWritten)?;
+        load_and_save(&self.root, |st| {
+            st.plugins.insert(self.id.clone(), entry);
+        })
+    }
+    pub fn commit(&mut self) -> Result<(), String> {
+        self.advance(TxStage::Committed)?;
+        cleanup_after_commit(&self.root, &self.id, &self.rec)?;
         fs::remove_file(tx_path(&self.root, &self.id))
             .map_err(|e| format!("无法删除插件事务记录：{e}"))
     }
-    pub fn rollback(&self) -> Result<(), String> {
-        restore_after_abort(&self.root, &self.id, &self.rec)?;
+    pub fn rollback(&mut self) -> Result<(), String> {
+        abort_install(&self.root, &self.id, &self.rec)?;
         fs::remove_file(tx_path(&self.root, &self.id))
             .map_err(|e| format!("无法删除插件事务记录：{e}"))
     }
 }
 
-pub fn begin_install(root: &Path, id: &str, version: &str, staging: &Path) -> Result<InstallTx, String> {
+pub fn begin_install(
+    root: &Path,
+    id: &str,
+    version: &str,
+    staging: &Path,
+    previous_state: Option<Entry>,
+) -> Result<InstallTx, String> {
     let target = checked_version_dir(root, id, version)?;
     let plugin_root = plugin_dir(root, id);
     fs::create_dir_all(&plugin_root).map_err(|e| format!("无法创建插件目录：{e}"))?;
-    let backup_path = plugin_root.join(format!(".old-{version}"));
-    let had_target = target.exists();
+    let tree = tree_sha256(staging)?;
     let rec = TxRecord {
         version: version.to_string(),
-        backup: had_target,
+        backup: target.exists(),
         staging: staging_name(staging),
+        stage: TxStage::Prepared,
         committed: false,
+        tree_sha256: tree,
+        previous_state,
+        expected_state: None,
     };
-    // 事务记录必须先落盘：崩溃点之后才有依据决定还原还是补做提交
+    // 记录先落盘（fsync），此时还没动任何目录：崩溃也只会走「什么都没发生」的恢复分支
     write_tx(root, id, &rec)?;
-    if had_target {
-        let _ = fs::remove_dir_all(&backup_path);
-        if let Err(e) = fs::rename(&target, &backup_path) {
-            let _ = fs::remove_file(tx_path(root, id));
-            return Err(format!("无法替换已有插件版本：{e}"));
-        }
-    }
-    if let Err(e) = fs::rename(staging, &target) {
-        let _ = fs::remove_dir_all(staging);
-        if had_target && backup_path.exists() && !target.exists() {
-            let _ = fs::rename(&backup_path, &target);
-        }
-        let _ = fs::remove_file(tx_path(root, id));
-        return Err(format!("无法放置插件文件：{e}"));
-    }
     Ok(InstallTx {
         root: root.to_path_buf(),
         id: id.to_string(),
@@ -490,64 +745,201 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    fn stage_pkg(root: &Path, tag: &str, body: &str) -> PathBuf {
+        let dir = root.join(format!(".staging-{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let html = format!("<p>{body}</p>").into_bytes();
+        fs::write(dir.join("index.html"), &html).unwrap();
+        let m = serde_json::json!({
+            "schemaVersion": 1, "id": "hello", "name": "Hello", "version": "1.0.0",
+            "apiVersion": 1, "kind": "web", "entry": "index.html",
+            "capabilities": [],
+            "integrity": { "index.html": format!("sha256-{}", sha256_hex(&html)) }
+        });
+        fs::write(dir.join("manifest.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+        dir
+    }
+    fn entry(version: &str, sha: char, enabled: bool) -> Entry {
+        Entry {
+            enabled,
+            repo: "https://github.com/o/r".into(),
+            tag: "v1".into(),
+            version: version.into(),
+            installed_at: 7,
+            capabilities: vec![],
+            package_sha256: sha.to_string().repeat(64),
+        }
+    }
+    fn seed_state(root: &Path, e: Entry) {
+        let mut st = State::default();
+        st.plugins.insert("hello".to_string(), e);
+        save_state(root, &st).unwrap();
+    }
+
     #[test]
-    fn install_commit_prunes_other_versions_and_keeps_storage() {
-        let root = tmpdir("install");
-        let staging = root.join("staging");
-        fs::create_dir_all(&staging).unwrap();
-        fs::write(staging.join("index.html"), b"x").unwrap();
-        let tx = begin_install(&root, "hello", "1.0.0", &staging).unwrap();
-        assert!(tx.target().exists());
-        tx.commit().unwrap();
-        fs::write(plugin_dir(&root, "hello").join(STORAGE_FILE), b"{}").unwrap();
-        let staging2 = root.join("staging2");
-        fs::create_dir_all(&staging2).unwrap();
-        fs::write(staging2.join("index.html"), b"y").unwrap();
-        let tx2 = begin_install(&root, "hello", "2.0.0", &staging2).unwrap();
-        // 状态还没提交之前旧版本必须仍在，失败时才能回滚到它
+    fn prepared_crash_does_not_touch_the_old_dir() {
+        // 记录已写、换名还没做：目标目录仍是旧包，恢复绝不能删它
+        let root = tmpdir("tx-prepared");
+        let first = stage_pkg(&root, "s0", "old");
+        fs::create_dir_all(plugin_dir(&root, "hello")).unwrap();
+        fs::rename(&first, version_dir(&root, "hello", "1.0.0")).unwrap();
+        let old = entry("1.0.0", 'a', true);
+        seed_state(&root, old.clone());
+        let staging = stage_pkg(&root, "s1", "new");
+        let tx = begin_install(&root, "hello", "1.0.0", &staging, Some(old.clone())).unwrap();
+        assert_eq!(read_tx(&tx_path(&root, "hello")).unwrap().stage, TxStage::Prepared);
+        drop(tx); // 崩在任何换名之前
+        let problems = recover_transactions(&root);
+        assert!(problems.is_empty(), "prepared 阶段恢复不该失败");
+        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"<p>old</p>");
+        assert_eq!(load_state(&root).plugins.get("hello"), Some(&old));
+        assert!(!tx_path(&root, "hello").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn swapped_crash_restores_dir_and_state_together() {
+        let root = tmpdir("tx-swapped");
+        let first = stage_pkg(&root, "s0", "old");
+        fs::rename(&first, {
+            fs::create_dir_all(plugin_dir(&root, "hello")).unwrap();
+            version_dir(&root, "hello", "1.0.0")
+        }).unwrap();
+        let old = entry("1.0.0", 'a', true);
+        seed_state(&root, old.clone());
+        let staging = stage_pkg(&root, "s1", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, Some(old.clone())).unwrap();
+        tx.swap().unwrap();
+        assert_eq!(read_tx(&tx_path(&root, "hello")).unwrap().stage, TxStage::Swapped);
+        assert_eq!(fs::read(tx.target().join("index.html")).unwrap(), b"<p>new</p>");
+        drop(tx); // 崩在写 state.json 之前
+        let problems = recover_transactions(&root);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"<p>old</p>");
+        assert_eq!(load_state(&root).plugins.get("hello"), Some(&old), "state.json 必须与目录一起还原");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn state_written_crash_completes_the_commit() {
+        let root = tmpdir("tx-state-written");
+        let first = stage_pkg(&root, "s0", "old");
+        fs::create_dir_all(plugin_dir(&root, "hello")).unwrap();
+        fs::rename(&first, version_dir(&root, "hello", "0.9.0")).unwrap();
+        seed_state(&root, entry("0.9.0", 'a', true));
+        let staging = stage_pkg(&root, "s1", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, Some(entry("0.9.0", 'a', true))).unwrap();
+        tx.swap().unwrap();
+        let new_entry = entry("1.0.0", 'b', true);
+        tx.write_state(new_entry.clone()).unwrap();
+        assert_eq!(read_tx(&tx_path(&root, "hello")).unwrap().stage, TxStage::StateWritten);
+        drop(tx); // 崩在 committed 标记之前
+        fs::create_dir_all(plugin_dir(&root, "hello").join("0.9.0")).ok();
+        let problems = recover_transactions(&root);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"<p>new</p>");
+        assert_eq!(load_state(&root).plugins.get("hello"), Some(&new_entry), "state 补完为新条目");
+        assert!(!version_dir(&root, "hello", "0.9.0").exists(), "补完提交要清旧版本");
+        assert!(!tx_path(&root, "hello").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn committed_but_not_cleaned_is_finished_at_startup() {
+        let root = tmpdir("tx-committed");
+        let first = stage_pkg(&root, "s0", "old");
+        fs::create_dir_all(plugin_dir(&root, "hello")).unwrap();
+        fs::rename(&first, version_dir(&root, "hello", "0.9.0")).unwrap();
+        seed_state(&root, entry("0.9.0", 'a', true));
+        let staging = stage_pkg(&root, "s1", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, Some(entry("0.9.0", 'a', true))).unwrap();
+        tx.swap().unwrap();
+        tx.write_state(entry("1.0.0", 'b', true)).unwrap();
+        let mut rec = read_tx(&tx_path(&root, "hello")).unwrap();
+        rec.stage = TxStage::Committed;
+        rec.committed = true;
+        write_tx(&root, "hello", &rec).unwrap();
+        drop(tx); // 崩在清理之前
+        let problems = recover_transactions(&root);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(!version_dir(&root, "hello", "0.9.0").exists());
         assert!(version_dir(&root, "hello", "1.0.0").exists());
-        tx2.commit().unwrap();
-        assert!(version_dir(&root, "hello", "2.0.0").exists());
-        assert!(!version_dir(&root, "hello", "1.0.0").exists());
-        assert!(plugin_dir(&root, "hello").join(STORAGE_FILE).exists());
-        remove_plugin(&root, "hello").unwrap();
-        assert!(!plugin_dir(&root, "hello").exists());
+        assert!(!tx_path(&root, "hello").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn rollback_restores_the_previous_version() {
-        let root = tmpdir("rollback");
-        let staging = root.join("staging");
-        fs::create_dir_all(&staging).unwrap();
-        fs::write(staging.join("index.html"), b"old").unwrap();
-        begin_install(&root, "hello", "1.0.0", &staging).unwrap().commit().unwrap();
-        let staging2 = root.join("staging2");
-        fs::create_dir_all(&staging2).unwrap();
-        fs::write(staging2.join("index.html"), b"new").unwrap();
-        // 同版本重装：先备份旧目录；state.json 保存失败时 rollback 要还原旧文件
-        let tx = begin_install(&root, "hello", "1.0.0", &staging2).unwrap();
-        assert_eq!(fs::read(tx.target().join("index.html")).unwrap(), b"new");
-        tx.rollback().unwrap();
-        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"old");
-        assert!(!root.join("hello/.old-1.0.0").exists());
+    fn recovery_failure_is_isolated_per_plugin() {
+        let root = tmpdir("tx-isolate");
+        // 一个坏事务：备份被删，恢复必然失败
+        let first = stage_pkg(&root, "s0", "old");
+        fs::create_dir_all(plugin_dir(&root, "hello")).unwrap();
+        fs::rename(&first, version_dir(&root, "hello", "1.0.0")).unwrap();
+        let old = entry("1.0.0", 'a', true);
+        seed_state(&root, old.clone());
+        let staging = stage_pkg(&root, "s1", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, Some(old.clone())).unwrap();
+        tx.swap().unwrap();
+        fs::remove_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
+        drop(tx);
+        // 另一个好事务：只有 prepared 记录，恢复应成功
+        let good = stage_pkg(&root, "g0", "good");
+        let _ = begin_install(&root, "good", "1.0.0", &good, None);
+        let problems = recover_transactions(&root);
+        assert_eq!(problems.len(), 1, "只有坏插件需要修复");
+        assert_eq!(problems[0].id, "hello");
+        assert!(read_repair(&root, "hello").is_some(), "写 .repair.json");
+        assert_eq!(load_state(&root).plugins["hello"].enabled, false, "停用受影响插件");
+        assert!(!tx_path(&root, "good").exists(), "好插件照常恢复");
+        assert!(read_repair(&root, "good").is_none());
+        // 备份补回来后，「重试恢复」应能成功并清掉修复标记 / 事务记录
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
+        fs::write(plugin_dir(&root, "hello").join(".old-1.0.0/index.html"), b"<p>old</p>").unwrap();
+        retry_recovery(&root, "hello").unwrap();
+        assert!(read_repair(&root, "hello").is_none());
+        assert!(!tx_path(&root, "hello").exists());
+        assert_eq!(load_state(&root).plugins["hello"], old, "重试恢复把 state 还原成旧条目");
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
-    fn rollback_of_a_new_version_keeps_the_installed_one() {
-        let root = tmpdir("rollback-new");
-        let first = root.join("s1");
-        fs::create_dir_all(&first).unwrap();
-        fs::write(first.join("index.html"), b"v1").unwrap();
-        begin_install(&root, "hello", "1.0.0", &first).unwrap().commit().unwrap();
-        let second = root.join("s2");
-        fs::create_dir_all(&second).unwrap();
-        fs::write(second.join("index.html"), b"v2").unwrap();
-        let tx = begin_install(&root, "hello", "2.0.0", &second).unwrap();
-        tx.rollback().unwrap();
-        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"v1");
-        assert!(!version_dir(&root, "hello", "2.0.0").exists());
+    fn tree_digest_mismatch_blocks_directory_delete() {
+        let root = tmpdir("tx-tree-mismatch");
+        let first = stage_pkg(&root, "s0", "old");
+        fs::create_dir_all(plugin_dir(&root, "hello")).unwrap();
+        fs::rename(&first, version_dir(&root, "hello", "1.0.0")).unwrap();
+        seed_state(&root, entry("1.0.0", 'a', true));
+        let staging = stage_pkg(&root, "s1", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, Some(entry("1.0.0", 'a', true))).unwrap();
+        tx.swap().unwrap();
+        // 换名之后目标目录被改坏，树摘要对不上：恢复不能删目录
+        fs::write(tx.target().join("index.html"), b"tampered").unwrap();
+        drop(tx);
+        let problems = recover_transactions(&root);
+        assert_eq!(problems.len(), 1);
+        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"tampered");
+        assert!(tx_path(&root, "hello").exists(), "失败时保留事务记录");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn tx_record_is_fsynced_and_roundtrips_stages() {
+        let root = tmpdir("tx-fsync");
+        fs::create_dir_all(plugin_dir(&root, "hello")).unwrap();
+        let rec = TxRecord {
+            version: "1.0.0".into(), backup: true, staging: ".staging-x".into(),
+            stage: TxStage::StateWritten, committed: false,
+            tree_sha256: "c".repeat(64),
+            previous_state: Some(entry("0.9.0", 'a', true)),
+            expected_state: Some(entry("1.0.0", 'b', true)),
+        };
+        write_tx(&root, "hello", &rec).unwrap();
+        let back = read_tx(&tx_path(&root, "hello")).unwrap();
+        assert_eq!(back.stage, TxStage::StateWritten);
+        assert_eq!(back.previous_state, rec.previous_state);
+        assert_eq!(back.expected_state, rec.expected_state);
+        assert_eq!(back.tree_sha256, rec.tree_sha256);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -556,8 +948,7 @@ mod tests {
         let root = tmpdir("version-path");
         assert!(checked_version_dir(&root, "hello", "1.0.0-x/../../other").is_err());
         assert!(checked_version_dir(&root, "hello", "../evil").is_err());
-        assert!(begin_install(&root, "hello", "1.0.0-x/../../other", &root.join("staging")).is_err());
-        // 非法版本也绝不会被拼成可穿越的路径
+        assert!(begin_install(&root, "hello", "1.0.0-x/../../other", &root.join("staging"), None).is_err());
         let dir = version_dir(&root, "hello", "1.0.0-x/../../other");
         assert_eq!(dir, plugin_dir(&root, "hello").join(".invalid-version"));
         let ok = checked_version_dir(&root, "hello", "1.0.0-beta.1+sha.7").unwrap();
@@ -576,18 +967,7 @@ mod tests {
             handles.push(std::thread::spawn(move || {
                 let (root, lock) = &*shared;
                 update_state(root, lock, |st| {
-                    st.plugins.insert(
-                        format!("p{i}"),
-                        Entry {
-                            enabled: true,
-                            repo: String::new(),
-                            tag: String::new(),
-                            version: "1.0.0".to_string(),
-                            installed_at: i,
-                            capabilities: vec![],
-                            package_sha256: String::new(),
-                        },
-                    );
+                    st.plugins.insert(format!("p{i}"), entry("1.0.0", 'a', true));
                 })
                 .unwrap();
             }));
@@ -600,87 +980,18 @@ mod tests {
     }
 
     #[test]
-    fn transaction_record_is_written_before_the_swap() {
-        let root = tmpdir("tx-record");
-        let old = root.join("s0");
-        fs::create_dir_all(&old).unwrap();
-        fs::write(old.join("index.html"), b"old").unwrap();
-        let first = begin_install(&root, "hello", "1.0.0", &old).unwrap();
-        first.commit().unwrap();
-        let staging = root.join("staging");
-        fs::create_dir_all(&staging).unwrap();
-        fs::write(staging.join("index.html"), b"new").unwrap();
-        let tx = begin_install(&root, "hello", "1.0.0", &staging).unwrap();
-        let rec = read_tx(&tx_path(&root, "hello")).unwrap();
-        assert_eq!(rec.committed, false);
-        assert_eq!(rec.backup, true);
-        assert_eq!(fs::read(tx.target().join("index.html")).unwrap(), b"new");
-        // 模拟进程被杀：不 commit 也不 rollback，启动时按未提交还原
-        drop(tx);
-        recover_transactions(&root).unwrap();
-        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"old");
-        assert!(!tx_path(&root, "hello").exists(), "恢复成功后事务记录必须删除");
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn committed_transaction_is_finished_at_startup() {
-        let root = tmpdir("tx-committed");
-        let old = root.join("s0");
-        fs::create_dir_all(&old).unwrap();
-        fs::write(old.join("index.html"), b"v1").unwrap();
-        begin_install(&root, "hello", "1.0.0", &old).unwrap().commit().unwrap();
-        let staging = root.join("staging2");
-        fs::create_dir_all(&staging).unwrap();
-        fs::write(staging.join("index.html"), b"v2").unwrap();
-        let tx = begin_install(&root, "hello", "2.0.0", &staging).unwrap();
-        // 模拟「已标记提交但清理没做完」：手写 committed 记录
-        write_tx(&root, "hello", &TxRecord {
-            version: "2.0.0".into(), backup: false, staging: "staging2".into(), committed: true,
-        }).unwrap();
-        drop(tx);
-        recover_transactions(&root).unwrap();
-        assert_eq!(fs::read(version_dir(&root, "hello", "2.0.0").join("index.html")).unwrap(), b"v2");
-        assert!(!version_dir(&root, "hello", "1.0.0").exists(), "已提交事务要补做清理");
-        assert!(!tx_path(&root, "hello").exists());
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn rollback_errors_are_not_ignored() {
-        let root = tmpdir("tx-rollback-error");
-        let first = root.join("s1");
-        fs::create_dir_all(&first).unwrap();
-        fs::write(first.join("index.html"), b"v1").unwrap();
-        begin_install(&root, "hello", "1.0.0", &first).unwrap().commit().unwrap();
-        let staging = root.join("staging");
-        fs::create_dir_all(&staging).unwrap();
-        fs::write(staging.join("index.html"), b"v2").unwrap();
-        let tx = begin_install(&root, "hello", "1.0.0", &staging).unwrap();
-        // 备份目录被人为删掉：恢复/回滚必须报错，不能当作成功
-        fs::remove_dir_all(root.join("hello/.old-1.0.0")).unwrap();
-        assert!(tx.rollback().is_err());
-        assert!(recover_transactions(&root).is_err());
-        assert!(tx_path(&root, "hello").exists(), "失败时保留事务记录供下次恢复");
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
     fn baseline_and_sha256_checks() {
         assert!(valid_sha256(&"a".repeat(64)));
         assert!(valid_sha256(&"A".repeat(64)));
         assert!(!valid_sha256(""));
         assert!(!valid_sha256(&"a".repeat(63)));
         assert!(!valid_sha256(&("g".repeat(63) + "a")));
-        let e = Entry {
-            enabled: true, repo: String::new(), tag: String::new(), version: "1.0.0".into(),
-            installed_at: 0, capabilities: vec![], package_sha256: "b".repeat(64),
-        };
+        let e = entry("1.0.0", 'b', true);
         assert!(baseline_matches(None, None, None));
         assert!(baseline_matches(Some(&e), Some("1.0.0"), Some(&"B".repeat(64))));
-        assert!(!baseline_matches(Some(&e), Some("1.0.0"), Some(&"c".repeat(64))), "摘要变了要重新确认");
-        assert!(!baseline_matches(Some(&e), Some("2.0.0"), Some(&"b".repeat(64))), "版本变了要重新确认");
-        assert!(!baseline_matches(Some(&e), None, None), "原本为空基线但现在已安装");
+        assert!(!baseline_matches(Some(&e), Some("1.0.0"), Some(&"c".repeat(64))));
+        assert!(!baseline_matches(Some(&e), Some("2.0.0"), Some(&"b".repeat(64))));
+        assert!(!baseline_matches(Some(&e), None, None));
         assert!(!baseline_matches(None, Some("1.0.0"), Some(&"b".repeat(64))));
     }
 

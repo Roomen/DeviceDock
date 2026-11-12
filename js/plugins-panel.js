@@ -40,6 +40,11 @@
 		body.appendChild(mk('p', 'mdn-src-intro',
 			'插件从 GitHub Release 下载并经 SHA-256 校验，在独立沙箱 iframe 中隔离运行，只能按授予的能力调用宿主接口。更新版本或能力变化时须重新确认。'))
 
+		// 顶部常显：安装事务恢复失败 / 停用或卸载后仍未释放的资源（即使插件已卸载也在）
+		s.issuesEl = mk('div', 'mdn-plg-issues')
+		s.issuesEl.hidden = true
+		body.appendChild(s.issuesEl)
+
 		// 1. 从 GitHub 仓库安装
 		const addRow = mk('div', 'mdn-src-add')
 		s.repoInput = mk('input', 'form-control form-control-sm')
@@ -426,11 +431,80 @@
 		if (!p.supported) card.appendChild(mk('div', 'mdn-src-note', '该插件不支持当前操作系统'))
 		if (s.notes[p.id]) card.appendChild(mk('div', 'mdn-src-note', s.notes[p.id]))
 		if (p.error) card.appendChild(mk('div', 'mdn-src-err', p.error))
+		if (p.repair) card.appendChild(mk('div', 'mdn-src-err', '安装事务恢复失败：' + p.repair + '（见面板顶部的重试恢复 / 移除）'))
 		if (s.errors['check:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['check:' + p.id]))
 		if (s.errors['remove:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['remove:' + p.id]))
 		if (s.errors[enableKey]) card.appendChild(mk('div', 'mdn-src-err', s.errors[enableKey]))
 		if (s.errors['retry:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['retry:' + p.id]))
 		return card
+	}
+
+	// 宿主级待处理项：修复失败的插件（Rust）与未释放的资源（页面侧），插件卸载后仍保留
+	function renderIssues(s) {
+		s.issuesEl.textContent = ''
+		const repairs = (s.issues && s.issues.repairs) || []
+		const resources = (s.issues && s.issues.resources) || []
+		const rows = []
+		repairs.forEach(function (r) {
+			rows.push({ kind: 'repair', id: r.id, resource: '安装事务 ' + (r.stage || ''), reason: r.reason })
+		})
+		resources.forEach(function (r) {
+			rows.push({ kind: 'release', id: r.id, resource: r.resource, reason: r.reason })
+		})
+		s.issuesEl.hidden = rows.length === 0
+		if (!rows.length) return
+		rows.forEach(function (row) {
+			const card = mk('div', 'mdn-src-card mdn-plg-issue')
+			const head = mk('div', 'mdn-src-head')
+			const title = mk('div', 'mdn-src-title')
+			title.appendChild(mk('i', 'icon icon-sm icon-triangle-alert'))
+			title.appendChild(mk('span', 'mdn-src-name', row.id))
+			title.appendChild(mk('span', 'mdn-src-ver', row.resource))
+			head.appendChild(title)
+			const actions = mk('div', 'mdn-src-head-actions')
+			if (row.kind === 'release') {
+				const retry = mk('button', 'btn btn-sm btn-outline-warning', '重试释放')
+				retry.type = 'button'
+				retry.disabled = !!s.busy['issue:' + row.kind + ':' + row.id]
+				retry.addEventListener('click', function () {
+					runPluginAction(s, 'issue:' + row.kind + ':' + row.id, function () {
+						if (!root.PluginHost || !root.PluginHost.retryRelease) return
+						return Promise.resolve(root.PluginHost.retryRelease(row.id)).then(function () { return refreshList(s) })
+					}, '重试中…')
+				})
+				actions.appendChild(retry)
+			} else {
+				const retry = mk('button', 'btn btn-sm btn-outline-warning', '重试恢复')
+				retry.type = 'button'
+				retry.disabled = !!s.busy['issue:' + row.kind + ':' + row.id]
+				retry.addEventListener('click', function () {
+					runPluginAction(s, 'issue:' + row.kind + ':' + row.id, function () {
+						return Promise.resolve(svc.retryRecovery(row.id)).then(function () { return refreshList(s) }, function (e) {
+							s.errors['issue:' + row.kind + ':' + row.id] = String((e && e.message) || e)
+						})
+					}, '恢复中…')
+				})
+				const remove = mk('button', 'btn btn-sm btn-outline-danger', '移除')
+				remove.type = 'button'
+				remove.addEventListener('click', function () {
+					runPluginAction(s, 'issue:' + row.kind + ':' + row.id, function () {
+						return Promise.resolve(svc.removeRepair(row.id)).then(function () {
+							if (root.PluginHost && root.PluginHost.close) root.PluginHost.close(row.id)
+							return refreshList(s)
+						})
+					}, '移除中…')
+				})
+				actions.appendChild(retry)
+				actions.appendChild(remove)
+			}
+			head.appendChild(actions)
+			card.appendChild(head)
+			card.appendChild(mk('div', 'mdn-src-err', row.reason))
+			if (s.errors['issue:' + row.kind + ':' + row.id]) {
+				card.appendChild(mk('div', 'mdn-src-err', s.errors['issue:' + row.kind + ':' + row.id]))
+			}
+			s.issuesEl.appendChild(card)
+		})
 	}
 
 	function render(s) {
@@ -442,6 +516,7 @@
 		s.addErr.textContent = s.addError || ''
 
 		renderConfirmCard(s)
+		renderIssues(s)
 
 		s.tokenBadge.textContent = s.tokenSet ? '已设置' : '未设置'
 		s.tokenSaveBtn.disabled = !!s.tokenBusy
@@ -467,10 +542,13 @@
 		return Promise.all([
 			Promise.resolve(svc.list ? svc.list() : []).catch(function () { return [] }),
 			Promise.resolve(svc.tokenStatus ? svc.tokenStatus() : { set: false }).catch(function () { return { set: false } }),
+			Promise.resolve(svc.repairList ? svc.repairList() : []).catch(function () { return [] }),
+			Promise.resolve(root.PluginHost && root.PluginHost.failedResources ? root.PluginHost.failedResources() : []).catch(function () { return [] }),
 		]).then(function (res) {
 			if (s.closed) return
 			s.plugins = Array.isArray(res[0]) ? res[0] : []
 			s.tokenSet = !!(res[1] && res[1].set)
+			s.issues = { repairs: Array.isArray(res[2]) ? res[2] : [], resources: Array.isArray(res[3]) ? res[3] : [] }
 			s.failedReleases = root.PluginHost && root.PluginHost.failedReleases ? root.PluginHost.failedReleases() : []
 			if (root.PluginHost && root.PluginHost.reload) root.PluginHost.reload()
 			render(s)
@@ -497,6 +575,7 @@
 			confirmRemove: '',
 			confirmTimer: 0,
 			failedReleases: [],
+			issues: { repairs: [], resources: [] },
 		}
 		session = s
 		opening = false

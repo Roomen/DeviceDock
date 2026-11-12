@@ -94,6 +94,22 @@
 		}
 	}
 
+	// 串口占用 / 打开状态变化属于「状态事件」，宿主侧会合并成最新态并保证送达
+	function notifyClaimState(ctx) {
+		ctx.send('claim.state', {
+			at: Date.now(),
+			claims: ctx.claims().map(function (rec) {
+				return { claimId: rec.id, open: !!rec.open, closing: !!rec.closing, port: rec.port ? keyOfPort(rec.port) : null }
+			}),
+		})
+	}
+	function isAsyncProtocolFn(fn) {
+		const C = root.DeviceDockContract
+		if (C && typeof C.isAsyncFunction === 'function') return C.isAsyncFunction(fn)
+		if (typeof fn !== 'function') return false
+		return Object.prototype.toString.call(fn) === '[object AsyncFunction]'
+	}
+
 	// 协议函数要在该路协议 + 一次性隔离会话里跑：SEK 解析会读写 skSession 的基准水量，
 	// 双路 A/B 不能串，单路 S 也不能让插件输入污染实时会话（inLane 换入的 st 用完即丢）。
 	function inProtocolLane(sid, fn) {
@@ -201,6 +217,7 @@
 			const id = claims.claim(port, ctx.id, ctx.name, params.mode)
 			const rec = ctx.claim(id)
 			rec.port = port
+			notifyClaimState(ctx)
 			return { claimId: id, mode: params.mode === 'shared' ? 'shared' : 'exclusive' }
 		},
 		async 'claim.release'(params, ctx) {
@@ -209,6 +226,7 @@
 			await closeClaim(rec, { cancelled: true })
 			if (root.serialPortClaims) root.serialPortClaims.release(rec.id)
 			ctx.dropClaim(rec.id)
+			notifyClaimState(ctx)
 			return { released: true }
 		},
 		async 'claim.list'(params, ctx) {
@@ -220,6 +238,7 @@
 			const rec = ctx.claimRecord(params.claimId)
 			if (!rec) throw fail('not_found', '占用声明不存在')
 			await openClaim(rec, params)
+			notifyClaimState(ctx)
 			return { claimId: rec.id, open: true }
 		},
 		async 'claim.close'(params, ctx) {
@@ -227,17 +246,19 @@
 			if (!rec) return { closed: false }
 			// 普通关闭不是停用：不置 cancelled，同一声明之后还能重新 open
 			await closeClaim(rec, { cancelled: false })
+			notifyClaimState(ctx)
 			return { closed: true }
 		},
 		async 'claim.write'(params, ctx) {
 			const rec = ctx.claimRecord(params.claimId)
 			if (!rec) throw fail('not_found', '占用声明不存在')
 			if (rec.cancelled) throw fail('not_found', '插件已停用')
+			if (rec.closing) throw fail('closing', '串口正在关闭，暂不能写入')
 			if (!rec.open || !rec.port.writable) throw fail('not_found', '串口未打开')
 			const bytes = bytesOf(params.bytes)
 			// 写任务记在 rec 上并串行化：关闭时必须等持锁的 writer 写完、释放锁再 close
 			const run = async function () {
-				if (rec.cancelled || !rec.open || !rec.port.writable) throw fail('not_found', '串口已关闭')
+				if (rec.cancelled || rec.closing || !rec.open || !rec.port.writable) throw fail(rec.closing ? 'closing' : 'not_found', rec.closing ? '串口正在关闭' : '串口已关闭')
 				const writer = rec.port.writable.getWriter()
 				try {
 					await writer.write(bytes)
@@ -280,6 +301,8 @@
 			if (!def) throw fail('not_found', '这一路没有协议')
 			if (typeof def[fn] !== 'function') throw fail('unsupported', '该协议没有 ' + fn)
 			const args = Array.isArray(params.args) ? params.args : []
+			// 注册层已拒绝 async 实现；这里再挡一次，避免异步函数在隔离上下文退出后继续跑
+			if (isAsyncProtocolFn(def[fn])) throw fail('unsupported_async', '协议函数不支持异步实现：' + fn)
 			// inLane 里只跑同步代码，不 await；结果经 JSON 克隆剔除函数与 DOM 引用
 			const value = inProtocolLane(sid, function () { return def[fn].apply(def, args) })
 			try {
@@ -416,6 +439,7 @@
 		// 普通 claim.close 之后可以重新打开同一声明：重置这一轮的流状态
 		rec.portOpened = false
 		rec.portClosed = false
+		rec.closing = false
 		rec.open = false
 		rec.reading = false
 		rec.reader = null
@@ -487,7 +511,9 @@
 	// opts.cancelled=true 是停用 / 卸载（该声明此后不可再用）；false 是普通 claim.close（可重新 open）。
 	// 串行化关闭：失败的释放重试时不能并发再跑一次 close。
 	async function closeClaim(rec, opts) {
+		// 一进入关闭就置位：等待在飞写入期间不能再排队新的 claim.write
 		if (opts && opts.cancelled) rec.cancelled = true
+		rec.closing = true
 		rec.reading = false
 		if (rec.closingTask) return rec.closingTask
 		const task = (async function () {
@@ -513,6 +539,7 @@
 				rec.portClosed = true
 			}
 			rec.open = false
+			rec.closing = false
 		})()
 		rec.closingTask = task
 		try {

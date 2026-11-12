@@ -33,10 +33,14 @@ impl PluginsState {
     pub fn init(app: &AppHandle) -> Result<Self, String> {
         let root = store::root(app)?;
         std::fs::create_dir_all(&root).map_err(|e| format!("无法创建插件目录：{e}"))?;
-        // 上次进程可能在安装事务中途被杀：启动时按 .tx.json 的提交标记还原或补做清理
+        // 上次进程可能在安装事务中途被杀：按 .tx.json 的阶段还原或补完。
+        // 恢复失败只隔离对应插件（.repair.json + 停用），返回值是问题清单，绝不当成启动失败。
         {
             let _file = store::file_lock(&root)?;
-            store::recover_transactions(&root)?;
+            let problems = store::recover_transactions(&root);
+            for p in problems {
+                eprintln!("插件 {} 需要修复：{}", p.id, p.reason);
+            }
         }
         Ok(PluginsState { root, tx: Mutex::new(()) })
     }
@@ -68,6 +72,8 @@ pub struct PluginInfo {
     pub supported: bool,
     // manifest 读不出来或校验失败时的原因：仍列出，用户可以卸载
     pub error: Option<String>,
+    // 安装事务恢复失败的原因：该插件被停用，管理面板显示「重试恢复 / 移除」
+    pub repair: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -146,6 +152,7 @@ fn build_info(root: &Path, id: &str, entry: Option<&store::Entry>) -> PluginInfo
         package_sha256: entry.map(|e| e.package_sha256.clone()).unwrap_or_default(),
         supported: true,
         error: Some("插件文件缺失或已损坏，请重新安装".to_string()),
+        repair: store::repair_reason(root, id),
     };
     let m: Manifest = match store::read_manifest(&dir) {
         Ok(m) => m,
@@ -174,6 +181,7 @@ fn build_info(root: &Path, id: &str, entry: Option<&store::Entry>) -> PluginInfo
         package_sha256: entry.map(|e| e.package_sha256.clone()).unwrap_or_default(),
         supported: m.runs_on(current_os()),
         error: None,
+        repair: store::repair_reason(root, id),
     }
 }
 
@@ -316,8 +324,7 @@ pub async fn plugin_install(
         let _ = std::fs::remove_dir_all(&staging);
         return Err("本地进程（native）插件尚未支持，请安装 web 类型插件".to_string());
     }
-    // 目录切换与 state.json 提交在同一把进程内锁 + 同一把跨进程文件锁里完成；
-    // 旧版本目录一直留到状态写成功才清，失败按事务记录回滚，崩溃由启动时恢复。
+    // 分阶段事务：prepared → swapped → state_written → committed，每步都先落记录再做动作。
     let outcome = (|| -> Result<store::State, String> {
         let _file = store::file_lock(&root)?;
         let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
@@ -330,34 +337,35 @@ pub async fn plugin_install(
         ) {
             return Err("插件安装状态在确认后发生变化，请重新检查并确认".to_string());
         }
-        let tx = store::begin_install(&root, &m.id, &m.version, &staging)?;
-        let saved = store::load_and_save(&root, |st| {
-            st.plugins.insert(
-                m.id.clone(),
-                store::Entry {
-                    // 安装对话框就是本次确认：装完即可用，用户可随时在管理面板停用
-                    enabled: true,
-                    repo: format!("https://github.com/{}/{}", parsed.owner, parsed.repo),
-                    tag: release.tag_name.clone(),
-                    version: m.version.clone(),
-                    installed_at: now_secs(),
-                    capabilities: m.capabilities.clone(),
-                    package_sha256: digest.clone(),
-                },
-            );
-        });
-        match saved {
-            Ok(_) => {
-                tx.commit()?; // 提交失败也如实上报；事务记录留给启动恢复
-                Ok(store::load_state(&root))
-            }
-            Err(e) => {
-                if let Err(rb) = tx.rollback() {
-                    return Err(format!("{e}；回滚也失败：{rb}"));
-                }
-                Err(e)
-            }
+        let mut tx = store::begin_install(
+            &root,
+            &m.id,
+            &m.version,
+            &staging,
+            before.plugins.get(&m.id).cloned(),
+        )?;
+        if let Err(e) = tx.swap() {
+            // swap 内部已尝试还原；事务记录保留，交给启动恢复或重试恢复
+            return Err(e);
         }
+        let entry = store::Entry {
+            enabled: true,
+            repo: format!("https://github.com/{}/{}", parsed.owner, parsed.repo),
+            tag: release.tag_name.clone(),
+            version: m.version.clone(),
+            installed_at: now_secs(),
+            capabilities: m.capabilities.clone(),
+            package_sha256: digest.clone(),
+        };
+        if let Err(e) = tx.write_state(entry) {
+            return match tx.rollback() {
+                Ok(()) => Err(e),
+                Err(rb) => Err(format!("{e}；回滚也失败：{rb}")),
+            };
+        }
+        tx.commit()?;
+        store::clear_repair(&root, &m.id);
+        Ok(store::load_state(&root))
     })();
     let st = match outcome {
         Ok(st) => st,
@@ -428,6 +436,40 @@ pub fn plugin_uninstall(app: AppHandle, state: State<'_, PluginsState>, id: Stri
     }
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(list_all(&root))
+}
+
+#[tauri::command]
+pub fn plugin_repair_list(state: State<'_, PluginsState>) -> Vec<store::RepairInfo> {
+    store::list_repairs(state.root())
+}
+
+#[tauri::command]
+pub fn plugin_retry_recovery(app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Vec<store::RepairInfo>, String> {
+    let root = state.root().to_path_buf();
+    {
+        let _file = store::file_lock(&root)?;
+        let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        // 回滚分支会还原 previous_state（含 enabled），补完分支写的是 expected_state，
+        // 两条路各自把 state.json 处理好了，这里不要再改 enabled
+        store::retry_recovery(&root, &id)?;
+    }
+    let _ = app.emit(EVENT_CHANGED, ());
+    Ok(store::list_repairs(&root))
+}
+
+#[tauri::command]
+pub fn plugin_remove_repair(app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Vec<store::RepairInfo>, String> {
+    let root = state.root().to_path_buf();
+    {
+        let _file = store::file_lock(&root)?;
+        let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        store::discard_tx(&root, &id);
+        store::clear_repair(&root, &id);
+        store::load_and_save(&root, |st| { st.plugins.remove(&id); })?;
+        store::remove_plugin(&root, &id)?;
+    }
+    let _ = app.emit(EVENT_CHANGED, ());
+    Ok(store::list_repairs(&root))
 }
 
 #[derive(Serialize)]

@@ -53,7 +53,7 @@
 	}
 
 	// 宿主 → 插件的事件名(插件端订阅前不需要授权，内容本身来自已授权的方法)
-	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'app.busy', 'events.dropped']
+	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'claim.state', 'app.busy', 'events.dropped']
 
 	const ERROR_TEXT = {
 		bad_request: '请求格式不正确',
@@ -63,12 +63,29 @@
 		unsupported: '当前环境不支持',
 		too_large: '数据超过上限',
 		rate_limited: '插件请求过于频繁',
+		closing: '串口正在关闭',
 		unsupported_async: '不支持异步协议函数',
 		internal: '宿主内部错误',
 	}
 
 	// 消息 / 在飞 / 速率上限：插件是第三方代码，高频调用或大消息不能拖垮宿主界面。
 	// 估算大小时不拼大字符串，超过预算立即停止，避免「先分配 100MB 再拒绝」。
+	// 事件分两类：状态事件（连接 / 断开 / 占用 / 主题 / 设备信息变化等）按类型合并为最新态
+	// 并保证送达；数据流事件（串口字节、解析帧、BLE 广播）按配额限流，超额丢弃并报 events.dropped。
+	const STATE_EVENTS = [
+		'ready', 'theme', 'theme-change', 'device.ports', 'device.lane',
+		'device.ble-error', 'claim.state', 'app.busy',
+	]
+	const DATA_EVENTS = ['serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'device.ble']
+	function isStateEvent(name) { return STATE_EVENTS.indexOf(name) !== -1 }
+	function isDataEvent(name) { return DATA_EVENTS.indexOf(name) !== -1 }
+	// 纯函数：限流期间同一类型只保留最新一份，旧的直接被覆盖
+	function coalesceState(pending, name, payload) {
+		const out = Object.assign({}, pending || {})
+		out[name] = payload
+		return out
+	}
+
 	const LIMITS = {
 		maxMessageChars: 256 * 1024,
 		maxParamsChars: 128 * 1024,
@@ -97,17 +114,31 @@
 				if (v.length > n) return Infinity
 				for (let i = 0; i < n; i++) stack.push(v[i])
 			} else if (typeof v === 'object') {
-				const keys = Object.keys(v)
-				if (keys.length > budget) return Infinity
-				for (let i = 0; i < keys.length; i++) {
-					total += keys[i].length + 4
-					stack.push(v[keys[i]])
+				// 不先 Object.keys 全量枚举：for…in 逐键计步，超预算立即停
+				let keys = 0
+				for (const k in v) {
+					if (!Object.prototype.hasOwnProperty.call(v, k)) continue
+					if (++keys > budget) return Infinity
+					total += k.length + 4
+					stack.push(v[k])
 				}
 			}
 			if (total > budget) return Infinity
 		}
 		return total
 	}
+	// 状态事件走独立的合并窗口：不占数据流配额，也不产生 events.dropped 误报。
+	// 窗口内同类型只保留最新，窗口切换或定时器到点后整批补发。
+	function newStateEventState() { return { windowStart: 0 } }
+	function stateEventPlan(state, now, limits) {
+		const l = limits || EVENT_LIMITS
+		const s = state || newStateEventState()
+		if (now - (s.windowStart || 0) >= l.windowMs) {
+			return { immediate: true, flush: true, state: { windowStart: now } }
+		}
+		return { immediate: false, flush: false, state: s }
+	}
+
 	function newEventState() {
 		return { windowStart: 0, count: 0, dropped: 0, reported: 0 }
 	}
@@ -293,7 +324,9 @@
 
 	const lib = {
 		PROTOCOL, CAPABILITIES, CAPABILITY_TEXT, METHODS, EVENTS, ERROR_TEXT,
-		LIMITS, EVENT_LIMITS, estimateSize, newEventState, eventAdmission, newAdmissionState, admission, releaseInflight,
+		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, isStateEvent, isDataEvent, coalesceState,
+		estimateSize, newEventState, eventAdmission, newStateEventState, stateEventPlan,
+		newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,
 		resultEnvelope, errorEnvelope, eventEnvelope, themePayload, capabilitySummary,
 		pluginChanged, changedCapabilities, orderPlugins, movePlugin, movePluginTo, lanesForMode, toBytes,

@@ -10302,3 +10302,24 @@ html[data-layout='modern'] .mdn-plg-notes {
 	}
 }
 
+
+/* 插件管理面板：安装事务修复与待释放资源（宿主级，插件卸载后仍显示） */
+html[data-layout='modern'] .mdn-plg-issues {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+html[data-layout='modern'] .mdn-plg-issues[hidden] {
+	display: none !important;
+}
+html[data-layout='modern'] .mdn-plg-issue {
+	border-color: var(--warning);
+}
+html[data-layout='modern'] .mdn-plg-issue .mdn-src-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+

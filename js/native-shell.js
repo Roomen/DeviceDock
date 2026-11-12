@@ -100,6 +100,9 @@
 		storageGet: function (id, key) { return T.core.invoke('plugin_storage_get', { id: id, key: key }) },
 		storageSet: function (id, key, value) { return T.core.invoke('plugin_storage_set', { id: id, key: key, value: value === undefined ? null : value }) },
 		storageRemove: function (id, key) { return T.core.invoke('plugin_storage_remove', { id: id, key: key }) },
+		repairList: function () { return T.core.invoke('plugin_repair_list') },
+		retryRecovery: function (id) { return T.core.invoke('plugin_retry_recovery', { id: id }) },
+		removeRepair: function (id) { return T.core.invoke('plugin_remove_repair', { id: id }) },
 		listen: function (name, cb) { return T.event.listen(name, function (e) { cb(e.payload || {}) }) },
 	})
 

@@ -80,6 +80,9 @@
 				let ready = false
 				let session = {}
 				try {
+					// 插件释放失败先自动重试一次再判 busy：瞬时失败不该让整个更新无法开始
+					const pluginHost = env.AppPlatform && env.AppPlatform.service('plugin-host')
+					if (pluginHost && pluginHost.retryAll) await pluginHost.retryAll()
 					const reasons = blockers(env)
 					if (reasons.length) {
 						emit({ state: 'blocked', reasons: reasons })

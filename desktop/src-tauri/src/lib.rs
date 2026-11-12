@@ -272,6 +272,9 @@ pub fn run() {
 			plugins::plugin_storage_get,
 			plugins::plugin_storage_set,
 			plugins::plugin_storage_remove,
+			plugins::plugin_repair_list,
+			plugins::plugin_retry_recovery,
+			plugins::plugin_remove_repair,
 			titlebar_double_click
 		])
 		.on_window_event(|window, event| {
@@ -304,7 +307,8 @@ pub fn run() {
 			}
 			// 上次启用过本地 MCP 服务时只登记「等窗口注册」，真正监听要等页面注册
 			app.state::<mcp::McpState>().init(app.handle());
-			// 插件宿主：应用数据目录下 plugins/，状态与插件私有存储都在那里
+			// 插件宿主：应用数据目录下 plugins/。安装事务恢复失败只隔离对应插件并写进
+			// .repair.json（页面提示重试恢复 / 移除），不作为启动失败向上传播。
 			let plugins = plugins::PluginsState::init(app.handle())
 				.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 			app.manage(plugins);

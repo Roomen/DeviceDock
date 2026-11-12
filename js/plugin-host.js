@@ -138,6 +138,7 @@
 			plugin: plugin, el: el, iframe: iframe, ready: false, closed: false,
 			claims: new Map(), busy: new Map(), busySeq: 0, teardowns: [], ctx: null,
 			admission: Rpc.newAdmissionState(), eventState: Rpc.newEventState(),
+			stateEventState: Rpc.newStateEventState(), pendingState: {}, stateTimer: 0,
 		}
 		view.ctx = makeContext(view)
 		iframe.addEventListener('load', function () {
@@ -191,8 +192,10 @@
 	function runRelease(entry) {
 		const label = entry.view.plugin.name || entry.id
 		entry.label = label + ' · 正在释放资源'
+		entry.failures = []
 		return releaseView(entry.view, entry.state).then(function (res) {
 			entry.failed = !res.ok
+			entry.failures = res.failures || []
 			entry.label = label + (res.ok ? ' · 已释放' : ' · 释放失败（可重试）')
 			if (res.ok) pendingReleases.delete(entry.id)
 			return res
@@ -206,29 +209,62 @@
 		view.el.remove()
 		views.delete(id)
 		view.busy.clear()
+		if (view.stateTimer) { clearTimeout(view.stateTimer); view.stateTimer = 0 }
 		const entry = {
-			id: id, view: view, failed: false, promise: null,
+			id: id, view: view, failed: false, promise: null, inflight: null, failures: [],
 			label: (view.plugin.name || id) + ' · 正在释放资源',
 			state: { teardowns: view.teardowns.map(function (fn) { return { fn: fn, done: false } }) },
 		}
 		view.teardowns = []
 		entry.promise = runRelease(entry)
+		entry.inflight = entry.promise
 		pendingReleases.set(id, entry)
+		entry.promise.then(function () { if (entry.inflight === entry.promise) entry.inflight = null })
 		return entry.promise
 	}
-	// 释放失败的重试入口：管理面板 / 重开插件 / 更新准备前都能调，避免永久占口或挡更新
+	// 每条释放记录只有一个在飞 Promise：管理面板 / 重开插件 / 更新路径并发触发也复用同一个；
+	// 重试开始即清 failed，已成功的 teardown 由 state.teardowns[].done 跳过，不会重复执行。
 	function retryRelease(id) {
 		const entry = pendingReleases.get(id)
-		if (!entry || !entry.failed) return Promise.resolve({ ok: true, failures: [] })
-		entry.promise = runRelease(entry)
-		return entry.promise
+		if (!entry) return Promise.resolve({ ok: true, failures: [] })
+		if (entry.inflight) return entry.inflight
+		if (!entry.failed) return Promise.resolve({ ok: true, failures: [] })
+		entry.failed = false
+		const p = runRelease(entry)
+		entry.promise = p
+		entry.inflight = p
+		p.then(function () { if (entry.inflight === p) entry.inflight = null })
+		return p
 	}
 	function failedReleases() {
 		const out = []
 		pendingReleases.forEach(function (entry, id) { if (entry.failed) out.push(id) })
 		return out
 	}
-function platformInfo() {
+	// 宿主级「待释放资源」：插件停用 / 卸载后依然保留，管理面板顶部常显
+	function failedResources() {
+		const out = []
+		pendingReleases.forEach(function (entry, id) {
+			if (!entry.failed) return
+			const list = entry.failures || []
+			if (!list.length) out.push({ id: id, resource: 'release', reason: entry.label })
+			list.forEach(function (f) {
+				out.push({
+					id: id,
+					resource: f.claimId === 'teardown' ? 'teardown' : ('claim:' + f.claimId),
+					reason: f.message,
+				})
+			})
+		})
+		return out
+	}
+	async function retryAll() {
+		const ids = failedReleases()
+		for (let i = 0; i < ids.length; i++) {
+			try { await retryRelease(ids[i]) } catch (e) {}
+		}
+	}
+	function platformInfo() {
 		return {
 			os: P.os, runtime: P.runtime, profile: P.profile, lanes: P.lanes,
 			version: root.APP_VERSION || '',
@@ -238,15 +274,48 @@ function platformInfo() {
 		if (!view || view.closed || !view.iframe.contentWindow) return
 		try { view.iframe.contentWindow.postMessage(msg, '*') } catch (e) {}
 	}
-	// 宿主 → 插件的事件按插件限流，超额丢弃；窗口切换时先补一条 events.dropped 计数事件
+	// 状态事件保证送达：窗口内按类型只保留最新，窗口切换或定时器到点后整批补发
+	function flushStateEvents(view) {
+		if (view.closed) return
+		const pending = view.pendingState || {}
+		const names = Object.keys(pending)
+		for (let i = 0; i < names.length; i++) {
+			post(view, Rpc.eventEnvelope(names[i], pending[names[i]]))
+		}
+		view.pendingState = {}
+	}
+	function scheduleStateFlush(view) {
+		if (view.stateTimer || view.closed) return
+		view.stateTimer = setTimeout(function () {
+			view.stateTimer = 0
+			flushStateEvents(view)
+		}, Rpc.EVENT_LIMITS.windowMs + 20)
+	}
+	// 状态事件（连接 / 断开 / 占用 / 主题 / 设备信息变化）合并最新态、绝不丢弃；
+	// 数据流事件（串口字节、解析帧、BLE 广播）按配额限流丢弃并报 events.dropped。
 	function postEvent(view, envelope) {
 		if (!view || view.closed) return
-		const a = Rpc.eventAdmission(view.eventState, Date.now(), Rpc.EVENT_LIMITS)
+		const name = envelope && envelope.event
+		const now = Date.now()
+		if (Rpc.isStateEvent(name)) {
+			const plan = Rpc.stateEventPlan(view.stateEventState, now, Rpc.EVENT_LIMITS)
+			view.stateEventState = plan.state
+			if (plan.flush) flushStateEvents(view)
+			if (plan.immediate) post(view, envelope)
+			else {
+				view.pendingState = Rpc.coalesceState(view.pendingState, name, envelope.payload)
+				scheduleStateFlush(view)
+			}
+			return
+		}
+		const rolled = now - (view.eventState.windowStart || 0) >= Rpc.EVENT_LIMITS.windowMs
+		const a = Rpc.eventAdmission(view.eventState, now, Rpc.EVENT_LIMITS)
 		view.eventState = a.state
 		if (a.report > 0) {
 			// 丢失提示本身不受限流，且必须直接 post，避免递归
 			post(view, Rpc.eventEnvelope('events.dropped', { count: a.report, windowMs: Rpc.EVENT_LIMITS.windowMs }))
 		}
+		if (rolled) flushStateEvents(view)
 		if (a.ok) post(view, envelope)
 	}
 
@@ -591,18 +660,17 @@ function platformInfo() {
 		// 给管理面板用：停用 / 卸载后立刻收起对应视图
 		close: destroyView,
 		retryRelease: retryRelease,
+		retryAll: retryAll,
 		failedReleases: failedReleases,
+		failedResources: failedResources,
 		list: function () { return plugins.slice() },
 		order: function () { return order.slice() },
 	}
 	P.provide('plugin-host', {
 		isBusyForUpdate: isBusyForUpdate,
 		release: async function () {
-			// 确认前先重试一次失败的释放，一次瞬时失败不该永久挡住应用更新
-			const stale = failedReleases()
-			for (let i = 0; i < stale.length; i++) {
-				try { await retryRelease(stale[i]) } catch (e) {}
-			}
+			// 确认前先重试一次失败的释放；一次瞬时失败不该永久挡住应用更新
+			await retryAll()
 			Array.from(views.keys()).forEach(destroyView)
 			const results = await Promise.all(Array.from(pendingReleases.values(), function (e) { return e.promise }))
 			const failed = results.filter(function (r) { return !r.ok })

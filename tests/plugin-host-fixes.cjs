@@ -322,6 +322,75 @@ function fakeCtx() {
 		assert.equal(box.recs.size, 0)
 	}
 
+	// ---- 10. 回修 3：状态/数据事件分类、有界大对象、同步协议契约、closing 拒绝写入 ----
+	{
+		assert.equal(Rpc.isStateEvent('device.lane'), true)
+		assert.equal(Rpc.isStateEvent('claim.state'), true)
+		assert.equal(Rpc.isStateEvent('theme-change'), true)
+		assert.equal(Rpc.isStateEvent('serial.rx'), false)
+		assert.equal(Rpc.isDataEvent('protocol.frame'), true)
+		assert.equal(Rpc.isDataEvent('device.ble'), true)
+		const p1 = Rpc.coalesceState({}, 'device.lane', { sid: 'A', state: 'connected' })
+		const p2 = Rpc.coalesceState(p1, 'device.lane', { sid: 'A', state: 'disconnected' })
+		assert.deepEqual(Object.keys(p2), ['device.lane'])
+		assert.equal(p2['device.lane'].state, 'disconnected', '同类型只保留最新')
+		let ss = Rpc.newStateEventState()
+		const first = Rpc.stateEventPlan(ss, 1000, Rpc.EVENT_LIMITS)
+		assert.equal(first.immediate, true)
+		ss = first.state
+		assert.equal(Rpc.stateEventPlan(ss, 1100, Rpc.EVENT_LIMITS).immediate, false, '窗口内合并')
+		const roll = Rpc.stateEventPlan(ss, 1000 + Rpc.EVENT_LIMITS.windowMs, Rpc.EVENT_LIMITS)
+		assert.equal(roll.immediate, true)
+		assert.equal(roll.flush, true, '窗口切换补发')
+
+		// 大对象：for…in 计步，不先 Object.keys 全量枚举
+		const big = {}
+		for (let i = 0; i < 200000; i++) big['k' + i] = 'x'
+		assert.equal(Rpc.estimateSize(big, 1000), Infinity, '大对象不能先枚举完再判预算')
+	}
+
+	// 注册层 + 调用前双重拒绝 async 协议实现
+	{
+		const Contract = require('../js/protocol-contract.js')
+		let called = 0
+		const def = { name: 'x', parseFrame: async function () { called++; return 1 } }
+		assert.equal(Contract.isAsyncFunction(def.parseFrame), true)
+		const host = loadApi({
+			DeviceDockContract: Contract,
+			SerialHub: { isVisible: () => true },
+			serialLanes: { protocolOf: () => 'sek', protocolName: () => 'SEK', callInIsolatedLane: (sid, fn) => fn() },
+			DeviceDockProtocols: { get: () => def },
+		})
+		await assert.rejects(
+			() => host.PluginApi.call('protocol.call', { lane: 'S', fn: 'parseFrame', args: [] }, {}),
+			(e) => e.code === 'unsupported_async'
+		)
+		assert.equal(called, 0, '异步实现必须在调用之前就被拒绝，不能先跑起来')
+	}
+
+	// claim.close 一开始就置 closing，等待在飞写入期间拒绝新 claim.write
+	{
+		const host = newClaimHost()
+		const box = fakeCtx()
+		const port = makeClaimPort()
+		let resolveWrite
+		port.writable = { getWriter: () => ({ write: () => new Promise((r) => { resolveWrite = r }), releaseLock() {} }) }
+		await host.PluginApi.call('claim.acquire', { portKey: host.PluginApi.keyOfPort(port) }, box.ctx)
+		await host.PluginApi.call('claim.open', { claimId: 'c1' }, box.ctx)
+		const writing = host.PluginApi.call('claim.write', { claimId: 'c1', bytes: [1] }, box.ctx)
+		await new Promise((r) => setTimeout(r, 0))
+		const closing = host.PluginApi.call('claim.close', { claimId: 'c1' }, box.ctx)
+		await new Promise((r) => setTimeout(r, 0))
+		await assert.rejects(
+			() => host.PluginApi.call('claim.write', { claimId: 'c1', bytes: [2] }, box.ctx),
+			(e) => e.code === 'closing'
+		)
+		resolveWrite()
+		await writing
+		await closing
+		assert.equal(box.recs.get('c1').closing, false, '普通关闭成功后清除 closing')
+	}
+
 	console.log('plugin-host-fixes: ok')
 })().catch((err) => {
 	console.error(err)

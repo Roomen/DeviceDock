@@ -18,6 +18,7 @@
 - `def` 是规范化协议对象：现有字段 `name`、`parseFrame`、`formatFrame`、`logView`、`findFrame`、`byteMap`、`buildDownFrame`、`presets` 全部保留（`name` 与 `parseFrame` 必填，其余可空），另外可选：`fields`（字段目录 `[{ key, name, unit?, type, read?, write?, min?, max?, step?, enum?, group? }]`，协议可以带自己的附加属性，例如 SEK 的 `tag` / `fid`）、`queries`（整包查询用例，随机读写测试用）、`metrics(frame)`（`[{ key, value }]` 数值点，供曲线面板）、`buildRead(field)` / `buildWrite(field, value)` / `matchResponse(frame, request)`（供测试流程引擎）、`mountPanel(el, api)`（自定义面板，返回 dispose）、`tx`（协议自带的测试执行器，见下）。
 - `type` 只接受 `uint8`、`uint16le`、`uint32le`、`int8`、`int16le`、`int32le`、`float32le`、`float64le`、`bcd`、`ascii`、`enum`、`bool`；`enum` 归一化成 `[{ value, label }]`。
 - `tx` 是给宿主测试工具（随机读写、批量配置）用的过渡执行器，必须同时提供 `queryById`、`readTag`、`writeRaw`、`readItem`、`bytesEqual`、`hasTag`、`reset`、`cancel`；v1 只有内置 SEK 提供，P3 的通用流程引擎改吃 `buildRead` / `buildWrite` / `matchResponse` / `metrics`。
+- **协议函数必须是同步函数**：`parseFrame` / `formatFrame` / `logView` / `findFrame` / `byteMap` / `buildDownFrame` / `metrics` / `buildRead` / `buildWrite` / `matchResponse` / `mountPanel` 一律不接受 `async` 实现，注册层（`normalizeProtocolDef` 里的 `isAsyncFunction`）会直接拒绝整包。宿主在按路隔离的会话快照里同步调用这些函数，`await` 之后的代码会在全局状态已恢复时继续跑，会串路或污染实时基准。`tx` 测试执行器由宿主自己的异步流程调用，不受此限制（SEK 的 `readTag` 就是 async）。
 - `activate` 必须同步完成注册（不要注册到 `setTimeout` / `fetch` 回调里）；宿主在 `activate` 返回后核对 id，晚注册的 id 会被当成「多出」而整包卸载。
 - `activate` 抛错、超过 15 s、或没有导出 `activate`，整包按失败处理，什么都不会注册。
 - 注册先进暂存区：`activate` 返回、`provides` 核对通过后才一次性发布；注册窗口在 `activate` 返回 / 抛错 / 超时后立即关闭，包再用定时器调 `registerProtocol` 会被拒绝。
