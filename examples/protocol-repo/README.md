@@ -27,3 +27,16 @@ A5 03 01 0A 0B 0C AA
 ```sh
 node examples/protocol-repo/tools/refresh-integrity.mjs
 ```
+
+## 字段目录与文档
+
+`demo.a5frame` 带 `fields`（字段目录）与 `metrics(frame)`（数值点）：上行帧数据域前 2 字节是
+uint16 LE 电压 0.01V，接着 2 字节是 uint16 LE 瞬时流量 L/h，宿主的「曲线」面板据此出图。
+字段表文档在 `docs/demo-a5frame-fields.md`，由宿主仓库的工具从 bundle 生成：
+
+```sh
+node tools/protocol-fields-doc.mjs examples/protocol-repo/packages/demo/index.js demo.a5frame > examples/protocol-repo/docs/demo-a5frame-fields.md
+```
+
+外部协议仓库应在自己的 CI 里跑同样的生成与比对（加 `--check <文件>`，内容不一致退出 1），
+保证文档永远与 bundle 一致；`tests/protocol-fields-doc.cjs` 是宿主侧的参照实现。

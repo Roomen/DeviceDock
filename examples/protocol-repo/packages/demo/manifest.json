@@ -8,7 +8,7 @@
   "version": "1.0.0",
   "entry": "index.js",
   "integrity": {
-    "index.js": "sha256-7948b32fcc6736e5494a7026cf63228f7d50b1c4662667adaf79d941e8b13fd2"
+    "index.js": "sha256-ea1ed69e43d53c406ae71f877fcc3e2646be491e8282feb32fab726b05047652"
   },
   "provides": [
     {

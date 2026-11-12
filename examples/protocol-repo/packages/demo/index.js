@@ -240,6 +240,22 @@ function findModbus(bytes) {
 	return null
 }
 
+// ===================== 曲线演示：字段目录 + metrics =====================
+// 协议只输出 fields（目录，含 chart 标记）与 metrics(frame)（数值点），画图由宿主统一做。
+// 演示约定：上行帧（命令最高位为 1）数据域前 2 字节是 uint16 LE 电压 0.01V，接着 2 字节是 uint16 LE 瞬时流量 L/h。
+const A5_FIELDS = [
+	{ key: 'a5-voltage', name: 'A5 电压', group: '演示数据', type: 'uint16le', unit: '0.01V', min: 0, max: 65535, chart: true, read: false, write: false },
+	{ key: 'a5-flow', name: 'A5 瞬时流量', group: '演示数据', type: 'uint16le', unit: 'L/h', min: 0, max: 65535, chart: true, read: false, write: false },
+]
+function metricsA5(frame) {
+	if (!frame || !frame.a5 || frame.dir !== 'up') return []
+	const d = frame.a5.data
+	const out = []
+	if (d.length >= 2) out.push({ key: 'a5-voltage', value: (d[0] | (d[1] << 8)) & 0xffff })
+	if (d.length >= 4) out.push({ key: 'a5-flow', value: (d[2] | (d[3] << 8)) & 0xffff })
+	return out
+}
+
 // ===================== 入口 =====================
 export function activate(host) {
 	host.registerProtocol({
@@ -249,6 +265,8 @@ export function activate(host) {
 		formatFrame: formatA5,
 		logView: logViewA5,
 		findFrame: findA5,
+		fields: A5_FIELDS,
+		metrics: metricsA5,
 		presets: [],
 	})
 	host.registerProtocol({
