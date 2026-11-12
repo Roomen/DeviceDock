@@ -1,0 +1,36 @@
+# 可直接复制到独立插件仓库的 .github/workflows/release.yml
+# 推送 v* 标签（如 v1.0.0）时自动构建 devicedock-plugin.zip 与 devicedock-plugin.zip.sha256 并发布到 GitHub Release。
+name: Release DeviceDock Plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build plugin archive and sha256
+        run: node tools/build.mjs --out-dir dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/devicedock-plugin.zip \
+            dist/devicedock-plugin.zip.sha256 \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

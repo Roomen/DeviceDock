@@ -1,0 +1,23 @@
+{
+	"schemaVersion": 1,
+	"id": "hello",
+	"name": "Hello 示例",
+	"version": "1.0.0",
+	"apiVersion": 1,
+	"kind": "web",
+	"entry": "index.html",
+	"icon": "cpu",
+	"capabilities": [
+		"device.read",
+		"serial.io",
+		"log",
+		"app"
+	],
+	"integrity": {
+		"index.html": "sha256-9cb950b8d33e996eeb4f28b7e5badda931af03dbd8c85ad1d66052ed565a2d7d",
+		"app.js": "sha256-54c1710aff062410001efeb6e9a3eabe4e51a96541a6258dd9f81abf52eca6be",
+		"sdk/devicedock-plugin.js": "sha256-0235868107e865b1026459649503964143ff44d4da754fa67928fb33c5bf2eaa"
+	},
+	"homepage": "https://github.com/Roomen/DeviceDock",
+	"license": "MIT"
+}
