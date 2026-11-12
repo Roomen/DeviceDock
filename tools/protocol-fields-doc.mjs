@@ -88,15 +88,16 @@ function renderDoc(proto) {
 	out.push('')
 	out.push('协议 id：`' + proto.id + '` · 字段 ' + fields.length + ' 项 · 曲线默认显示 ' + chartCount + ' 项（`chart: true`）')
 	out.push('')
-	out.push('| key | 名称 | 类型 | 单位 | 范围 / 枚举 | 读写 | 分组 | 曲线 |')
-	out.push('| --- | --- | --- | --- | --- | --- | --- | --- |')
+	out.push('| key | 名称 | 类型 | 单位 | 范围 / 枚举 | 读写 | 分组 | 曲线 | 随机 |')
+	out.push('| --- | --- | --- | --- | --- | --- | --- | --- | --- |')
 	fields.forEach(function (f) {
 		out.push('| `' + esc(f.key) + '` | ' + esc(f.name) + ' | `' + esc(f.type) + '` | ' +
 			esc(f.unit || '') + ' | ' + esc(rangeOf(f)) + ' | ' + rwOf(f) + ' | ' +
-			esc(f.group || '') + ' | ' + (f.chart ? '✓' : '') + ' |')
+			esc(f.group || '') + ' | ' + (f.chart ? '✓' : '') + ' | ' + (f.random === false ? '—' : '✓') + ' |')
 	})
 	out.push('')
 	out.push('只读字段（读写列无 W）没有写入地址；`source: frame` 类字段来自帧头，不在 TLV 里，单独回读取不到。')
+	out.push('随机列为 — 表示 `random: false`：密码 / 表号地址 / IP·APN / 通信参数 / 时钟 / 复位类等危险字段，不进随机读写（批量配置仍可手动选）。')
 	out.push('')
 	return out.join('\n')
 }

@@ -56,14 +56,19 @@
 				map.forEach(trim)
 				return capacity
 			},
-			// points: [{ key, value }]，非数值点直接丢掉(协议给了 NaN / null 时不要画成 0)
+			// points: [{ key, value, unit? }]，非数值点直接丢掉(协议给了 NaN / null 时不要画成 0)；
+			// 点带 unit 时覆盖字段目录的单位（fields.unit 是原始编码单位、metrics 换算出工程单位时用）
 			ingest: function (sid, ts, points, metaOf) {
 				const added = []
 				;(points || []).forEach(function (p) {
 					if (!p || p.key == null) return
 					const value = Number(p.value)
 					if (!Number.isFinite(value)) return
-					const s = ensure(sid, String(p.key), metaOf ? metaOf(p.key) : null)
+					let meta = metaOf ? metaOf(p.key) : null
+					if (p.unit != null) {
+						meta = meta ? Object.assign({}, meta, { unit: p.unit }) : { name: String(p.key), unit: p.unit, chart: false }
+					}
+					const s = ensure(sid, String(p.key), meta)
 					s.t.push(ts)
 					s.v.push(value)
 					trim(s)

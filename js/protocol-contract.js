@@ -371,6 +371,9 @@
 			out.type = type
 			out.read = raw.read !== false
 			out.write = raw.write !== false
+			// random: false 标记「不进随机读写」的危险字段（密码 / 表号地址 / IP·APN / 通信参数 / 时钟 / 复位类），
+			// 随机生成器永远跳过；批量配置仍可手动选。缺省 true
+			out.random = raw.random !== false
 			if (raw.unit != null) out.unit = str(raw.unit, 16)
 			if (raw.group != null) out.group = str(raw.group, 60)
 			;['min', 'max', 'step'].forEach(function (k) {

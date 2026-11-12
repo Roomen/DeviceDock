@@ -90,6 +90,25 @@ const queries = [{ key: 'q1', name: '查询', queryId: 1 }]
 	assert.notEqual(nv, 5, '随机值不等于当前值')
 	assert.equal(T.newValueFor(T.mulberry32(2), { key: 'x', type: 'uint8', min: 3, max: 3 }, 3), null, '只有一个取值时取不到新值')
 	assert.ok(/^\d+$/.test(T.pickRandomValue(T.mulberry32(3), { key: 'b', type: 'bcd', fillLen: 3 })), 'BCD 生成纯数字')
+
+	// random: false 的危险字段（密码 / 表号地址 / IP·APN / 通信参数 / 时钟 / 复位类）永不进随机计划
+	{
+		const risky = [
+			{ key: 'pwd', name: 'P', type: 'uint8', min: 0, max: 9, read: true, write: true, random: false },
+			{ key: 'safe', name: 'S', type: 'uint8', min: 0, max: 9, read: true, write: true },
+		]
+		for (let seed = 1; seed <= 30; seed++) {
+			const p = T.randomPlan({ seed: seed, count: 30, fields: risky, queries: [] })
+			assert.ok(p.steps.every(function (s) { return s.field !== 'pwd' }), '危险字段不进随机计划 seed=' + seed)
+		}
+		// 同一字段不连续出现
+		const p2 = T.randomPlan({ seed: 11, count: 40, fields: fields, queries: queries })
+		for (let i = 1; i < p2.steps.length; i++) {
+			const prev = p2.steps[i - 1]
+			const cur = p2.steps[i]
+			assert.ok(!(prev.kind === 'write' && cur.kind === 'write' && prev.field === cur.field), '同一字段不连续写：' + cur.field)
+		}
+	}
 }
 
 // ---- 校验 ----

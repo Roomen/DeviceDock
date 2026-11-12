@@ -75,7 +75,7 @@
 		return {
 			mode: 'batch',
 			batch: { steps: [], gapMs: 200 },
-			random: { count: 40, gapMs: 200, timeoutMs: 5000, seed: '', verify: false, includeNoReadback: false },
+			random: { count: 40, gapMs: 200, timeoutMs: 5000, seed: '', includeNoReadback: false },
 			defaults: { timeoutMs: 5000, retries: 0, onFailure: 'continue', restoreOriginals: true },
 		}
 	}
@@ -377,7 +377,10 @@
 			const field = idx.get(item.field)
 			const row = mk('div', 'sk-flow-item-row')
 			row.appendChild(mk('span', 'sk-flow-item-no', String(i + 1)))
-			row.appendChild(mk('span', 'sk-flow-item-name', field ? field.name : '(未知字段: ' + item.field + ')'))
+			const nameText = field ? field.name : '(未知字段: ' + item.field + ')'
+			const nameSpan = mk('span', 'sk-flow-item-name', nameText)
+			nameSpan.title = nameText + (field && field.desc ? '\n' + field.desc : '')
+			row.appendChild(nameSpan)
 			if (field) {
 				const val = valueInputFor(field, item.value, function () {
 					item.value = val.value
@@ -451,9 +454,13 @@
 			if (step.kind === 'send-raw') label = '查询 ' + (step.query || '')
 			else if (step.kind === 'read') label = '读 ' + (field ? field.name : step.field)
 			else if (step.kind === 'verify') label = '回读比对 ' + (field ? field.name : step.field)
-			else if (step.kind === 'write') label = '写 ' + (field ? field.name : step.field) + ' = (量程内随机)'
-			row.appendChild(mk('span', 'sk-flow-item-name', label))
-			row.appendChild(mk('span', 'sk-flow-item-value sk-flow-item-static', step.kind === 'write' ? '随机' : ''))
+			else if (step.kind === 'write') label = '写 ' + (field ? field.name : step.field)
+			const name = mk('span', 'sk-flow-item-name', label)
+			name.title = label + (step.kind === 'write' ? '（值在量程 / 枚举内随机生成）' : '')
+			row.appendChild(name)
+			const val = mk('span', 'sk-flow-item-value sk-flow-item-static', step.kind === 'write' ? '随机' : '')
+			if (step.kind === 'write') val.title = '值在运行时按量程 / 枚举随机生成，与当前值不同'
+			row.appendChild(val)
 			box.appendChild(row)
 		})
 	}
@@ -842,10 +849,11 @@
 			setStatus('当前协议没有可读 / 可写字段', 'err')
 			return
 		}
-		// 传给随机生成器的目录：开关关闭时直接排除不可回读的只写字段（读 / 写 / 校验都不会选中它）
-		const planFields = draft.random.includeNoReadback
-			? fields
-			: fields.filter(function (f) { return f.write !== false ? canReadBack(proto, f) : true })
+		// 传给随机生成器的目录：读 / 写都只挑能回读的（buildRead 能构出读请求）；
+		// 「包括无法回读的字段」只放宽写（写后不校验、不恢复）；危险字段 random:false 两边都不进
+		const planFields = fields
+			.filter(function (f) { return f.random !== false })
+			.filter(function (f) { return canReadBack(proto, f) || (draft.random.includeNoReadback && f.write !== false) })
 		const queries = (proto && Array.isArray(proto.queries)) ? proto.queries : []
 		let seed = parseInt(draft.random.seed, 10)
 		if (isNaN(seed)) seed = (Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0
@@ -855,7 +863,7 @@
 			count: draft.random.count,
 			fields: planFields,
 			queries: queries,
-			verify: !!draft.random.verify,
+			verify: draft.batchVerify !== false,
 			delayAfterMs: draft.random.gapMs,
 			timeoutMs: draft.random.timeoutMs,
 		})
@@ -910,7 +918,6 @@
 		el.randomGap = $('sk-flow-gap')
 		el.randomTimeout = $('sk-flow-timeout')
 		el.randomSeed = $('sk-flow-seed')
-		el.randomVerify = $('sk-flow-verify')
 		el.randomNoReadback = $('sk-flow-noreadback')
 		el.randomNoReadWarn = $('sk-flow-noread-warn')
 		el.generate = $('sk-flow-generate')
@@ -946,7 +953,6 @@
 		if (el.randomGap) el.randomGap.value = String(draft.random.gapMs)
 		if (el.randomTimeout) el.randomTimeout.value = String(draft.random.timeoutMs)
 		if (el.randomSeed) el.randomSeed.value = draft.random.seed || ''
-		if (el.randomVerify) el.randomVerify.checked = !!draft.random.verify
 		if (el.randomNoReadback) el.randomNoReadback.checked = !!draft.random.includeNoReadback
 		if (el.randomNoReadWarn) el.randomNoReadWarn.hidden = !draft.random.includeNoReadback
 		if (el.batchVerify) el.batchVerify.checked = draft.batchVerify !== false
@@ -996,10 +1002,6 @@
 		})
 		el.randomSeed.addEventListener('change', function () {
 			draft.random.seed = el.randomSeed.value.trim()
-			saveState()
-		})
-		el.randomVerify.addEventListener('change', function () {
-			draft.random.verify = el.randomVerify.checked
 			saveState()
 		})
 		if (el.randomNoReadback) el.randomNoReadback.addEventListener('change', function () {

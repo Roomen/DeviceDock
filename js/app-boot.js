@@ -13,19 +13,27 @@
 	var closeBtn = document.getElementById('issue-tip-close')
 	if (!tip || !closeBtn) return
 	if (localStorage.getItem('issueTipDismissed')) return
-	// 挂到左栏「反馈」项旁边的小气泡：默认位置（固定左下）会在窄窗口时离反馈项太远，
-	// 但都不落在右侧面板区，不再挡住面板标题与工具条
-	var anchor = document.querySelector('#activity-rail .rail-item[href*="issues/new"]')
-	if (anchor) {
-		var rect = anchor.getBoundingClientRect()
-		var top = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 130))
-		tip.style.left = Math.round(rect.right + 10) + 'px'
-		tip.style.top = Math.round(top) + 'px'
-		tip.style.bottom = 'auto'
+	// 提示是状态栏右端的一条单行（css 的 .issue-tip），插进 #serial-statusbar 后不遮任何内容；
+	// workbench 建好外壳后才插入（状态栏节点由它在 DOMContentLoaded 时搬进 #app-statusbar），
+	// 模式切换重建状态栏时由 workbench 原样保留。一次性语义与 shell.browser 门控（data-feature）不变
+	function mount() {
+		var bar = document.getElementById('serial-statusbar')
+		if (!bar) return false
+		bar.appendChild(tip)
+		tip.hidden = false
+		return true
 	}
-	tip.hidden = false
-	closeBtn.addEventListener('click', function () {
-		tip.hidden = true
-		localStorage.setItem('issueTipDismissed', '1')
-	})
+	function bind() {
+		closeBtn.addEventListener('click', function () {
+			tip.hidden = true
+			localStorage.setItem('issueTipDismissed', '1')
+		})
+	}
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', function () {
+			if (mount()) bind()
+		})
+	} else if (mount()) {
+		bind()
+	}
 })()

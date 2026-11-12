@@ -448,6 +448,10 @@
 	const statusRefs = { sig: '', sessions: {}, tasks: [] }
 
 	function buildStatusBar(bar, sids) {
+		// 首次反馈提示（js/app-boot.js 插进来的）跟着重建保留：模式切换会清空状态栏重建
+		const issueTip = document && typeof document.getElementById === 'function'
+			? document.getElementById('issue-tip')
+			: null
 		bar.textContent = ''
 		statusRefs.sessions = {}
 		const left = span('sb-group')
@@ -500,6 +504,7 @@
 		const hint = span('sb-hint')
 		hint.append(span('', 'Ctrl/⌘+Enter 发送'), span('', 'Ctrl/⌘+K 命令'))
 		bar.append(left, tasks, hint)
+		if (issueTip) bar.appendChild(issueTip)
 	}
 
 	function updateStatusBar() {

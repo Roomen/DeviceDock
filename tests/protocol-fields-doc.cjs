@@ -22,6 +22,10 @@ assert.match(sekMd, /rw-t3-0.*过流告警阈值.*uint32le.*L\/h.*1 ~ 50000 \| R
 assert.match(sekMd, /\| `m-batt-comm` \|/, '曲线用的只读字段也在表里')
 assert.match(sekMd, /m-rsrp.*✓/, '帧头信号字段标了曲线')
 assert.match(sekMd, /字段 \d+ 项/, '头部统计')
+// 随机列：危险字段 random:false 标 —（SN 密钥 / 表号 / IP 等），普通字段 ✓；unit 保持原始编码单位
+assert.match(sekMd, /\| `rw-t3-4` \| 电压告警阈值 \| `uint16le` \| 0\.01V \|/, '原始编码单位保留在 fields.unit')
+assert.match(sekMd, /\| `w-t3-16-ascii` \| 设置SN密钥 \|.*— \|/, '危险字段随机列标 —')
+assert.match(sekMd, /随机列为 — 表示 `random: false`/, '脚注说明')
 
 // --check 模式：一致退出 0，被篡改退出非 0
 const check = execFileSync(process.execPath, [TOOL, '--sek', '--check', sekDoc], { cwd: ROOT, encoding: 'utf8' })

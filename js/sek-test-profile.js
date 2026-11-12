@@ -104,8 +104,8 @@
 		{ key: 'rw-t3-1', name: '持续过流告警时间', group: '告警阈值', type: 'uint8', min: 1, max: 120, unit: '分钟', tag: 3, fid: 1 },
 		{ key: 'rw-t3-2', name: '反流告警阈值', group: '告警阈值', type: 'uint32le', min: 1, max: 5000, unit: 'L/h', tag: 3, fid: 2 },
 		{ key: 'rw-t3-3', name: '持续反流告警时间', group: '告警阈值', type: 'uint8', min: 1, max: 120, unit: '分钟', tag: 3, fid: 3 },
-		// 0.01V 的原始值在 metrics 里换算成 V 出图（scale），写入与量程仍按原始值
-		{ key: 'rw-t3-4', name: '电压告警阈值', group: '告警阈值', type: 'uint16le', min: 0, max: 400, unit: 'V', scale: 0.01, tag: 3, fid: 4 },
+		// unit 保持原始编码单位 0.01V（写入按原始值）；metrics 出点换算成 V 并带 displayUnit
+		{ key: 'rw-t3-4', name: '电压告警阈值', group: '告警阈值', type: 'uint16le', min: 0, max: 400, unit: '0.01V', scale: 0.01, displayUnit: 'V', tag: 3, fid: 4 },
 		{ key: 'rw-t3-9', name: '上报频率', group: '上报', type: 'uint16le', min: 30, max: 1440, step: 30, unit: '分钟', tag: 3, fid: 9 },
 		{ key: 'rw-t3-10', name: '上报重发次数', group: '上报', type: 'uint8', min: 0, max: 4, tag: 3, fid: 10 },
 		{ key: 'rw-t3-11', name: '上报重发间隔', group: '上报', type: 'uint8', min: 1, max: 60, unit: '分钟', tag: 3, fid: 11 },
@@ -178,6 +178,19 @@
 		})
 		return out
 	}
+	// 这些地址不进随机读写（写错可能导致设备失联、身份改变或凭据丢失）：SN 密钥 / 加密与密码（Tag38）、
+	// 表号 / 基表号 / 唯一编码 / 蓝牙表名与 MAC / 逻辑地址 / 探头地址、业务与维护平台 IP·APN、
+	// 通信方式 / LoRa 组网 / 485 协议、水表时钟。批量配置仍可手动选；契约字段 random:false，随机生成器永远跳过
+	const RANDOM_BLOCKED = {}
+	;[
+		[3, 6], [3, 7], [3, 16], [3, 19], [3, 20], [3, 21], [3, 23], [3, 25], [3, 26], [3, 42], [3, 43],
+		[33, 1], [33, 30],
+		[35, 1], [35, 2], [35, 3], [35, 4],
+		[37, 0], [37, 1], [37, 2], [37, 3], [37, 4],
+		[38, 0], [38, 1], [38, 2], [38, 3], [38, 4], [38, 5], [38, 6],
+		[64, 0],
+	].forEach(function (p) { RANDOM_BLOCKED[p[0] + '-' + p[1]] = true })
+
 	// 字段目录去重：派生字段与手写字段指向同一设备地址（tag+fid 相同）时只保留手写的那份
 	//（手写目录带单位 / 量程 / 分组 / 曲线标记，更完整）；派生字段之间同地址的也只留第一个
 	const WRITE_FIELDS = (function () {
@@ -188,6 +201,7 @@
 			const k = f.tag + '-' + f.fid
 			if (seen[k]) return
 			seen[k] = true
+			if (RANDOM_BLOCKED[k]) f.random = false
 			out.push(f)
 		})
 		return out
@@ -331,7 +345,10 @@
 			if (!it || !it.raw) return
 			const raw = bytesToNum(it.raw, f.type)
 			if (raw == null) return
-			out.push({ key: f.key, value: raw * scaleOf(f) })
+			// 点可带可选 unit：fields.unit 是原始编码单位（如 0.01V）时，给出换算后的显示单位
+			const point = { key: f.key, value: raw * scaleOf(f) }
+			if (f.displayUnit) point.unit = f.displayUnit
+			out.push(point)
 		})
 		return out
 	}

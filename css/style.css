@@ -2154,60 +2154,35 @@ hr {
 }
 
 /* ========== Issue Tip ========== */
-/* 首次反馈提示贴着左栏（js/app-boot.js 会把它定位到「反馈」项旁边），不落在右侧面板区 */
+/* 首次反馈提示：状态栏右端的一条单行提示（js/app-boot.js 把它插进 #serial-statusbar），不浮层不遮内容 */
 .issue-tip {
-  position: fixed;
-  left: 64px;
-  bottom: 12px;
-  z-index: 1080;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  max-width: min(360px, calc(100vw - 76px));
-  padding: 14px 16px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-color);
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-lg);
-  animation: issue-tip-in 0.28s ease-out;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 0 4px;
+  color: var(--text-secondary);
+  font-size: var(--fs-micro);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .issue-tip[hidden] {
   display: none !important;
 }
 
-.issue-tip-icon {
-  flex-shrink: 0;
-  margin-top: 2px;
-  color: var(--accent);
+.issue-tip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.issue-tip-body {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-body);
-  line-height: 1.45;
-}
-
-.issue-tip-body strong {
-  display: block;
-  margin-bottom: 4px;
-  font-size: var(--fs-body-lg);
-}
-
-.issue-tip-body p {
-  margin: 0;
-  color: var(--text-secondary);
-}
-
-.issue-tip-body a {
+.issue-tip-text a {
   color: var(--accent);
   text-decoration: none;
   font-weight: 500;
 }
 
-.issue-tip-body a:hover {
+.issue-tip-text a:hover {
   text-decoration: underline;
 }
 
@@ -2216,14 +2191,13 @@ hr {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin: -4px -6px 0 0;
+  width: 20px;
+  height: 20px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--text-secondary);
-  transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+  color: var(--text-muted);
+  transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
 .issue-tip-close:hover {
@@ -10488,4 +10462,8 @@ html[data-layout='modern'] .sk-flow-noread-warn {
 
 html[data-layout='modern'] .sk-flow-noread-warn[hidden] {
 	display: none;
+}
+/* 随机列表的值列（「随机」占位）与批量行的值输入一样用等宽 */
+html[data-layout='modern'] .sk-flow-item-static {
+	font-family: var(--font-mono);
 }

@@ -66,6 +66,26 @@
 		return t.s
 	}
 
+	// 纵轴 size 按数据里最长刻度文本给足宽度（固定 46px 会把「36.95」这类小数裁掉一两位）；
+	// 字符宽按 micro 等宽 11px 估 7px/字符，另留内边距
+	function yAxisSize(u, scaleKey) {
+		if (!u || !u.series || !u.data) return 46
+		let width = 0
+		try {
+		u.series.forEach(function (s, i) {
+			if (!i || s.scale !== scaleKey) return
+			const d = u.data[i] || []
+			for (let k = 0; k < d.length; k++) {
+				const v = d[k]
+				if (v == null || !isFinite(v)) continue
+				const len = String(Math.round(Math.abs(v) * 100) / 100).length + (v < 0 ? 1 : 0)
+				if (len > width) width = len
+			}
+		})
+		} catch (e) { return 46 }
+		return Math.max(46, width * 7 + 18)
+	}
+
 	// ---------- 选择 ----------
 	function refreshFieldCache() {
 		fieldCache = {}
@@ -179,7 +199,7 @@
 			grid: { stroke: t.grid, width: 1 },
 			ticks: { stroke: t.axis, width: 1 },
 			font: t.micro + ' ' + t.mono,
-			size: 46,
+			size: function (u) { return yAxisSize(u, 'y') },
 		}]
 		if (grouped.axes[1]) {
 			axes.push({
@@ -189,7 +209,7 @@
 				grid: { stroke: t.grid, width: 0 },
 				ticks: { stroke: t.axis, width: 1 },
 				font: t.micro + ' ' + t.mono,
-				size: 46,
+				size: function (u) { return yAxisSize(u, 'y2') },
 			})
 		}
 		axes[0].values = function (u, splits) {

@@ -26,6 +26,18 @@ const C = require('../js/curves-core.js')
 	s2.setCapacity(101)
 	assert.equal(a.t.length, 101, '缩容量立即裁剪')
 	assert.equal(s2.keys('S').length, 1)
+	// metrics 点带 unit 时覆盖字段目录的单位（0.01V 原始编码 → V 显示）
+	{
+		const s3 = C.createStore({})
+		const meta = function () { return { name: '阈值', unit: '0.01V', chart: true } }
+		s3.ingest('S', 1, [{ key: 't', value: 360 }], meta)
+		s3.ingest('S', 2, [{ key: 't', value: 3.6, unit: 'V' }], meta)
+		assert.equal(s3.get('S', 't').unit, 'V', '点级 unit 覆盖目录单位')
+		assert.deepEqual(s3.get('S', 't').v, [360, 3.6])
+		const s4 = C.createStore({})
+		s4.ingest('S', 1, [{ key: 't', value: 1, unit: 'V' }], function () { return null })
+		assert.equal(s4.get('S', 't').unit, 'V', '目录缺字段时点的 unit 仍生效')
+	}
 	// 按路隔离：S / A / B 同 key 互不可见
 	s2.ingest('A', 5, [{ key: 'a', value: 7 }])
 	s2.ingest('B', 6, [{ key: 'a', value: 8 }])

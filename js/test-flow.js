@@ -324,7 +324,9 @@
 		const o = opts || {}
 		const rng = mulberry32(o.seed >>> 0)
 		const count = toInt(o.count, 40, 1, MAX_STEPS)
-		const fields = (o.fields || []).filter(function (f) { return f && f.key })
+		// random: false 的危险字段（密码 / 表号地址 / IP·APN / 通信参数 / 时钟 / 复位类）读写都不进随机，
+		// 不受「包括无法回读的字段」开关影响——面板在传目录前也会过滤，这里是引擎层的兜底
+		const fields = (o.fields || []).filter(function (f) { return f && f.key && f.random !== false })
 		const readable = fields.filter(function (f) { return f.read !== false })
 		const writable = fields.filter(function (f) { return f.write !== false })
 		const queries = o.queries || []
@@ -366,16 +368,20 @@
 				else steps.push(queryStep(pick(rng, queries)))
 				continue
 			}
-			// 写：同一个字段连写 1~3 次（重复写同一项能验证设备的写入幂等性）
-			const f = pick(rng, writable)
-			const n = 1 + Math.floor(rng() * 3)
-			for (let k = 0; k < n && steps.length < count; k++) {
-				steps.push(normalizeStep({
-					kind: 'write', field: f.key, value: '', verify: !!o.verify, randomValue: true,
-					delayAfterMs: o.delayAfterMs, timeoutMs: o.timeoutMs,
-				}, steps.length, o))
-				if (written.indexOf(f.key) < 0) written.push(f.key)
+			// 写：每次一步，同一字段不连续出现（连写同一参数没有验证价值，还容易把设备调乱）
+			const last = steps[steps.length - 1]
+			let cands = writable
+			if (last && last.kind === 'write') {
+				const notLast = writable.filter(function (w) { return w.key !== last.field })
+				if (notLast.length) cands = notLast
 			}
+			const f = pick(rng, cands)
+			if (!f) continue
+			steps.push(normalizeStep({
+				kind: 'write', field: f.key, value: '', verify: !!o.verify, randomValue: true,
+				delayAfterMs: o.delayAfterMs, timeoutMs: o.timeoutMs,
+			}, steps.length, o))
+			if (written.indexOf(f.key) < 0) written.push(f.key)
 		}
 		// 末尾按 30%~100% 的比例对写过的字段抽检
 		if (o.verifyTail !== false) {
