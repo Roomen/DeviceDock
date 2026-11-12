@@ -1061,6 +1061,9 @@
     <script src="js/text-byte-encoder.js"></script>
     <script src="js/protocol-contract.js"></script>
     <script src="js/protocol-registry.js"></script>
+    <!-- 外部协议来源必须在 common.js 之前加载：它要先把已启用但还在加载的协议 id 登记成 pending，
+         common.js 的「未知协议回退 SEK」才不会再把它们清掉（解析器会在脚本之间让出，不能靠后面的脚本） -->
+    <script src="js/protocol-sources.js"></script>
     <script src="js/common.js"></script>
     <script src="js/cjt188-protocol.js"></script>
     <script src="js/sek-transaction.js"></script>
