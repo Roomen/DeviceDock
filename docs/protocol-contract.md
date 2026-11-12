@@ -15,9 +15,37 @@
 ## 入口
 
 - bundle 必须 `export function activate(host)`；`host.registerProtocol(def)` 每调用一次注册一个协议，返回宿主使用的完整 id。
-- `def` 是规范化协议对象：现有字段 `name`、`parseFrame`、`formatFrame`、`logView`、`findFrame`、`byteMap`、`buildDownFrame`、`presets` 全部保留（`name` 与 `parseFrame` 必填，其余可空），另外可选：`fields`（字段目录 `[{ key, name, unit?, type, read?, write?, min?, max?, step?, enum?, group? }]`，协议可以带自己的附加属性，例如 SEK 的 `tag` / `fid`）、`queries`（整包查询用例，随机读写测试用）、`metrics(frame)`（`[{ key, value }]` 数值点，供曲线面板）、`buildRead(field)` / `buildWrite(field, value)` / `matchResponse(frame, request)`（供测试流程引擎）、`mountPanel(el, api)`（自定义面板，返回 dispose）、`tx`（协议自带的测试执行器，见下）。
+- `def` 是规范化协议对象：现有字段 `name`、`parseFrame`、`formatFrame`、`logView`、`findFrame`、`byteMap`、`buildDownFrame`、`presets` 全部保留（`name` 与 `parseFrame` 必填，其余可空），另外可选：`fields`（字段目录，完整定义见下节）、`queries`（整包查询用例 `[{ key, name, queryId?, expectTag?, … }]`，协议自己认它的附加属性）、`metrics(frame)`（`[{ key, value }]` 数值点，供曲线面板）、`buildRead(field)` / `buildWrite(field, value)` / `buildQuery(query)` / `matchResponse(frame, request)` / `readField(frame, field)`（测试流程引擎用，见下节）、`session`（可选会话钩子 `{ prepare?, keepalive?, idleMs?, keepaliveTimeoutMs? }`）、`mountPanel(el, api)`（自定义面板，返回 dispose）。
 - `type` 只接受 `uint8`、`uint16le`、`uint32le`、`int8`、`int16le`、`int32le`、`float32le`、`float64le`、`bcd`、`ascii`、`enum`、`bool`；`enum` 归一化成 `[{ value, label }]`。
-- `tx` 是给宿主测试工具（随机读写、批量配置）用的过渡执行器，必须同时提供 `queryById`、`readTag`、`writeRaw`、`readItem`、`bytesEqual`、`hasTag`、`reset`、`cancel`；v1 只有内置 SEK 提供，P3 的通用流程引擎改吃 `buildRead` / `buildWrite` / `matchResponse` / `metrics`。
+- `tx`（v1 过渡期暴露的协议自带测试执行器）已随 P3 的通用流程引擎移除：宿主工具只吃 `fields` / `queries` / `buildRead` / `buildWrite` / `buildQuery` / `matchResponse` / `readField` / `session`，注册表不再规范化 `tx`，协议包里带 `tx` 会被当成普通附加属性忽略。
+
+## fields 字段目录
+
+- `fields` 是 `[{ key, name, type, unit?, min?, max?, step?, enum?, read?, write?, group?, chart?, … }]`；`key` 全目录唯一（`[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}`），宿主只认上面这些键，其余（如 SEK 的 `tag` / `fid` / `source` / `fillLen`）原样保留给协议自己。
+- `read` / `write` 默认都是 true；`read: false` 表示这个字段没有可寻址的读请求（例如来自帧头的信号量），`write: false` 表示只读。测试流程的「读 / 写 / 回读比对」与批量配置的字段下拉按这两个开关过滤。
+- `chart: true` 标记「曲线上默认显示」的字段；曲线面板首次打开按它出默认勾选，用户仍可勾任意有 `metrics` 的字段。
+- 数值字段的 `unit` 是曲线的 Y 轴分组依据：一个单位一根轴，最多两根，第三种单位整组不画。`min` / `max` / `step` 同时是随机读写取值的量程。
+- 字段表文档由 `tools/protocol-fields-doc.mjs` 从 `fields` 生成（见「字段文档」节），协议作者不要手写。
+
+## 构帧与应答钩子（测试流程引擎）
+
+- `buildRead(field)`、`buildWrite(field, value)`、`buildQuery(query)` 都返回 `{ bytes, request }`：`bytes` 是整帧下行字节（数组或 Uint8Array），`request` 是协议自己定义的不透明凭证，宿主只负责「发 `bytes`、等应答、拿 `request` 去匹配」，不认识帧格式。构不出来（例如该字段没有读地址）返回 null，宿主按「不支持」记。
+- `matchResponse(frame, request)` 收到解析后的上行帧：返回 `false` 表示「不是这条请求的应答，继续等」，`true` 表示成功，`{ ok: false, message?, code?, unsupported? }` 表示失败应答（`unsupported: true` 用于「设备不支持该字段」这类不算失败的结果）。
+- `readField(frame, field)` 从应答帧里取该字段的原始字节（数组或 null），回读比对由引擎按 `type` 解码（bcd 比数字串、ascii 比到第一个 0x00、数值按类型解码），协议不用自己实现相等判断。
+- `session` 是可选的会话钩子：`prepare()` 运行前做一次连通检查（失败整轮不跑），`keepalive()` 在空闲超过 `idleMs`（默认 20 s）后由引擎自动调用，等待窗口 `keepaliveTimeoutMs`（默认 4 s）。它们同样返回 `{ bytes, request }`，引擎不认识内容。红外 / 载波这类「不发就被断开」的链路层前置就写在这里，不要让引擎或面板写协议特判。
+- 引擎不得依赖 `window.sekTx` 或任何协议帧格式；协议自己也不要把 SEK 语义暴露进这几个钩子之外的字段。
+
+## 曲线（metrics）
+
+- 曲线由宿主统一画图（uPlot，工作台「曲线」面板）：协议在 `metrics(frame)` 里把解析结果换算成 `[{ key, value }]` 数值点，`key` 对应 `fields` 里的字段，`value` 必须是最终数值（换算、缩放、基准水量都在协议里完成），非数值点会被丢弃。
+- 只收实时帧：宿主在每路的实时日志路径上同步调 `metrics`（按路换入该路的协议与解析状态），历史日志重放不灌入曲线——重放会按行序把几天前的点重新塞回时间序列，既没有时间意义，也会在分批重渲时冲掉实时数据。
+- 协议没有 `metrics` 或 `fields` 时曲线面板显示原因提示，不画图；协议不需要为此提供任何绘图代码。
+
+## 字段文档
+
+- `tools/protocol-fields-doc.mjs`（无依赖）从协议的 `fields` 生成 Markdown 字段表：内置 SEK 用 `--sek`（VM 加载 `js/sek-test-profile.js`），外部协议传 bundle 入口与协议 id（`node tools/protocol-fields-doc.mjs <entry> <id>`），生成器 `import` bundle 并调用 `activate(host stub)` 取注册对象的 `fields`——与页面同一条入口，不要在 manifest 或文档里另抄一份目录。
+- 生成：`node tools/protocol-fields-doc.mjs --sek > docs/protocols/sek-fields.md`；比对：加 `--check <文件>`，内容不一致退出 1。`tests/protocol-fields-doc.cjs` 对 SEK 与示例仓库各做一次生成比对，改了 `fields` 不重新生成文档时测试会失败。
+- **外部协议仓库应在自己的 CI 里对同样的入口跑同样的生成与比对**（把生成命令与 `--check` 写进仓库的 CI 脚本），保证仓库里的字段文档永远与 bundle 一致；示例见 `examples/protocol-repo/`（`docs/demo-a5frame-fields.md` + `tools/` 里的摘要刷新）。
 - `activate` 必须同步完成注册（不要注册到 `setTimeout` / `fetch` 回调里）；宿主在 `activate` 返回后核对 id，晚注册的 id 会被当成「多出」而整包卸载。
 - `activate` 抛错、超过 15 s、或没有导出 `activate`，整包按失败处理，什么都不会注册。
 - 注册先进暂存区：`activate` 返回、`provides` 核对通过后才一次性发布；注册窗口在 `activate` 返回 / 抛错 / 超时后立即关闭，包再用定时器调 `registerProtocol` 会被拒绝。
@@ -65,8 +93,14 @@
 ## 内置协议
 
 - `sek` / `cjt188` / `sk-ultrasonic` 经同一条规范化路径注册（`js/common.js` 的 `registerProtocol` → `js/protocol-registry.js`），解析行为不变。
-- SEK 的字段目录、查询用例、tag→查询映射与测试执行器在 `js/sek-test-profile.js`，随机读写与批量配置从当前协议读 `fields` / `queries` / `presets` / `tx`，协议不支持时给「当前协议未提供字段目录 / 配置项目录」提示；不要再往这两个工具里写死协议数据。
-- CJ/T 188 没有稳定的读写字段目录（数据标识按命令走、没有统一量程），`fields` 留空，随机读写与批量配置在 188 下按「未提供字段目录」处理。
+- SEK 的字段目录、查询用例、构帧钩子、`metrics` 与会话钩子都在 `js/sek-test-profile.js`：可写字段由下行预设（`0x01` 且带单值 param）派生，只读字段来自 `SK_TAGS` 里单位明确的数值项，帧头信号（RSRP / SNR / CSQ / ECL）来自解析结果。测试流程（批量配置 / 随机读写）与曲线从当前协议读 `fields` / `queries` / `buildRead` / `buildWrite` / `buildQuery` / `matchResponse` / `readField` / `session` / `metrics`，协议不支持时给「未提供字段目录 / 构帧钩子」提示；不要再往这两个工具里写死协议数据。
+- CJ/T 188 没有稳定的读写字段目录（数据标识按命令走、没有统一量程），`fields` 留空，测试流程与曲线面板在 188 下按「未提供字段目录」处理，卡片沿用旧行为直接隐藏。
+
+## 宿主工具
+
+- 曲线面板（工作台 `curves`，`js/curves-core.js` + `js/curves.js` + `js/curves-panel.js`）：环形缓冲每序列默认 5000 点（面板可调 100–50000，存 `serialCurvesModern`），按「路 / 字段」隔离（S / A / B 各自的协议与状态），字段按单位分轴（最多两根），A 青 / B 琥珀 / 单路 accent 只从 CSS 变量取色。交互：字段选择（协议标了 `chart: true` 的默认勾选）、暂停 / 继续、清空、缩放后复位、悬停读数（等宽数字）、导出 CSV。
+- 测试流程面板（工作台 `flow`，`js/test-flow.js` 纯逻辑 + `js/test-flow-panel.js` 界面）：步骤 `{ kind: 'read'|'write'|'verify'|'wait'|'send-raw', field?, value?, raw?, query?, expect?, delayAfterMs?, timeoutMs?, retries?, verify? }` + 全局默认（延时 / 超时 / 重试 / 失败策略 / 恢复原值）。批量配置：从字段目录挑可写字段、填值（`{n}` 替换为产线计数，bcd 字段支持逐台步进）、上下移排序、写后回读，保存为命名流程（`testFlowFlowsV1`）可导入导出 JSON；随机读写：按量程 / 枚举随机生成 N 步（seed 可复现，`{n}` 之外支持 `randomValue` 运行时取值），写过的字段末尾按比例抽检。运行时钉扎主发路，串口收发走 `serialApi.writeRaw` + 面板的按协议匹配泵，不另开串口、不碰 `sekTx`。
+- 流程结果每步记录请求帧、应答帧、耗时、状态（成功 / 失败 / 超时 / 不匹配 / 不支持 / 跳过）与原因，可导出 JSON / CSV；产线计数存 sessionStorage（`sk-batch-state.index`，按实例隔离），编辑中的流程存 localStorage（`sk-batch-state`）。
 
 ## 管理界面
 
