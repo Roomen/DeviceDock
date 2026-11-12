@@ -147,7 +147,7 @@
 		button.dataset.fwIdx = index
 
 		const icon = document.createElement('i')
-		icon.className = 'bi bi-arrow-right-circle'
+		icon.className = 'icon icon-circle-arrow-right'
 		const buttonText = document.createElement('span')
 		buttonText.textContent = '使用此固件进行串口升级'
 		button.append(icon, buttonText)

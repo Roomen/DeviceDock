@@ -10,9 +10,9 @@
     "source": "https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
   },
   {
-    "url": "https://cdn.bootcdn.net/ajax/libs/bootstrap-icons/1.11.0/font/bootstrap-icons.css",
-    "path": "bootstrap-icons/bootstrap-icons.css",
-    "source": "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css"
+    "url": "https://cdn.jsdelivr.net/npm/lucide-static@1.62.0/font/lucide.css",
+    "path": "lucide/lucide.css",
+    "source": "https://cdn.jsdelivr.net/npm/lucide-static@1.62.0/font/lucide.css"
   },
   {
     "url": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css",

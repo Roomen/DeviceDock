@@ -28,10 +28,10 @@
 		const themeEntry = document.getElementById('rail-theme-btn')
 		if (themeEntry) {
 			const labels = { auto: '跟随系统', light: '浅色', dark: '深色' }
-			const icons = { auto: 'circle-half', light: 'sun', dark: 'moon-stars' }
+			const icons = { auto: 'contrast', light: 'sun', dark: 'moon-star' }
 			themeEntry.title = '主题：' + labels[choice]
 			themeEntry.setAttribute('aria-label', themeEntry.title)
-			themeEntry.querySelector('i').className = 'bi bi-' + icons[choice]
+			themeEntry.querySelector('i').className = 'icon icon-' + icons[choice]
 		}
 		if (!themeSwitch) return
 		themeSwitch.querySelectorAll('[data-theme-choice]').forEach((btn) => {
@@ -1593,8 +1593,8 @@
 		const nameAttr = attrEscape(rawName)
 		const content = attrEscape(item.content || '')
 		return `<div class="quick-item">
-			<span class="quick-drag-handle" draggable="true" title="拖拽排序"><i class="bi bi-grip-vertical"></i></span>
-			<button type="button" title="移除" class="btn quick-remove" aria-label="移除"><i class="bi bi-x-lg"></i></button>
+			<span class="quick-drag-handle" draggable="true" title="拖拽排序"><i class="icon icon-grip-vertical"></i></span>
+			<button type="button" title="移除" class="btn quick-remove" aria-label="移除"><i class="icon icon-x"></i></button>
 			<input class="form-control form-control-sm quick-content" placeholder="发送内容" value="${content}">
 			<button type="button" class="btn btn-sm quick-send" title="发送: ${nameAttr}">${name}</button>
 			<label class="quick-hex ctl-chip ctl-chip--mono ctl-chip--micro" title="HEX 模式">
@@ -1762,7 +1762,7 @@
 				? '也支持 Ctrl/Cmd+V'
 				: '首次需浏览器授权'
 		return '<div class="sk-hex-empty" aria-hidden="true">' +
-			'<div class="sk-hex-empty-main"><i class="bi bi-clipboard-plus"></i><span>' + main + '</span></div>' +
+			'<div class="sk-hex-empty-main"><i class="icon icon-clipboard-plus"></i><span>' + main + '</span></div>' +
 			'<div class="sk-hex-empty-sub">' + sub + '</div></div>'
 	}
 	function refreshHexEmptyHtml() {
@@ -4026,15 +4026,15 @@
 		const label = SerialHub.getSessionLabel(sid)
 		const prefix = label ? label + ' · ' : ''
 		if (SerialHub.isReleaseFailed(sid)) {
-			btn.innerHTML = '<i class="bi bi-power"></i>'
+			btn.innerHTML = '<i class="icon icon-power"></i>'
 			btn.title = '重试关闭'
 			btn.setAttribute('aria-label', prefix + '重试关闭串口')
 		} else if (open) {
-			btn.innerHTML = '<i class="bi bi-power"></i>'
+			btn.innerHTML = '<i class="icon icon-power"></i>'
 			btn.title = '断开'
 			btn.setAttribute('aria-label', prefix + '断开串口')
 		} else {
-			btn.innerHTML = '<i class="bi bi-play-fill"></i>'
+			btn.innerHTML = '<i class="icon icon-play"></i>'
 			btn.title = '打开'
 			btn.setAttribute('aria-label', prefix + '打开串口')
 		}
@@ -4697,13 +4697,13 @@
 		if (chip) chip.classList.toggle('is-empty', !port)
 		if (!port) {
 			const def = SerialHub.mode === 'dual' ? '选择' : '选择设备'
-			btn.innerHTML = '<i class="bi bi-usb-plug"></i> ' + def
+			btn.innerHTML = '<i class="icon icon-usb"></i> ' + def
 			btn.title = '点击选择设备并连接'
 			return
 		}
 		const name = getPortDisplayName(port)
 		btn.title = (getPortAlias(port) ? name + '（' + getPortDefaultName(port) + '）' : name) + ' · 点击换设备，铅笔改名'
-		btn.innerHTML = '<i class="bi bi-usb-plug"></i><span class="serial-port-name">' + HTMLEncode(name) + '</span>' + renderStatusButtons(sid, port)
+		btn.innerHTML = '<i class="icon icon-usb"></i><span class="serial-port-name">' + HTMLEncode(name) + '</span>' + renderStatusButtons(sid, port)
 	}
 
 	/** 刷新选口按钮上的设备名/别名 */
@@ -6557,8 +6557,8 @@
 			if (icon) {
 				//箭头永远指向"点下去会往哪边动"
 				const pointRight = pane === 'left' ? collapsed : !collapsed
-				icon.classList.toggle('bi-chevron-compact-right', pointRight)
-				icon.classList.toggle('bi-chevron-compact-left', !pointRight)
+				icon.classList.toggle('icon-chevron-right', pointRight)
+				icon.classList.toggle('icon-chevron-left', !pointRight)
 			}
 			saveSidebarState()
 		}
@@ -6696,8 +6696,8 @@
 			lockBtn.setAttribute('aria-pressed', locked ? 'true' : 'false')
 			const icon = lockBtn.querySelector('i')
 			if (icon) {
-				icon.classList.toggle('bi-lock-fill', locked)
-				icon.classList.toggle('bi-unlock', !locked)
+				icon.classList.toggle('icon-lock', locked)
+				icon.classList.toggle('icon-lock-open', !locked)
 			}
 			lockBtn.title = locked ? '已锁定：点击日志行不再自动展开协议解析（点击解锁）' : '锁定：点击日志行时不自动展开协议解析'
 		}
@@ -6705,8 +6705,8 @@
 			panel.classList.toggle('collapsed', collapsed)
 			const icon = header.querySelector('.serial-parse-chevron')
 			if (icon) {
-				icon.classList.toggle('bi-chevron-down', !collapsed)
-				icon.classList.toggle('bi-chevron-right', collapsed)
+				icon.classList.toggle('icon-chevron-down', !collapsed)
+				icon.classList.toggle('icon-chevron-right', collapsed)
 			}
 			saveState()
 		}
@@ -6806,8 +6806,8 @@
 			panel.classList.toggle('collapsed', collapsed)
 			const icon = header.querySelector('.serial-send-chevron')
 			if (icon) {
-				icon.classList.toggle('bi-chevron-down', !collapsed)
-				icon.classList.toggle('bi-chevron-right', collapsed)
+				icon.classList.toggle('icon-chevron-down', !collapsed)
+				icon.classList.toggle('icon-chevron-right', collapsed)
 			}
 			saveState()
 		}
@@ -7536,13 +7536,13 @@
 
 	/** 选口按钮内的改名/清除（用 span 避免 button 套 button） */
 	function renderStatusButtons(sid, port) {
-		let html = '<span class="port-rename-btn" role="button" title="重命名设备（本地保存，留空=删除）" data-port-sid="' + sid + '"><i class="bi bi-pencil"></i></span>'
+		let html = '<span class="port-rename-btn" role="button" title="重命名设备（本地保存，留空=删除）" data-port-sid="' + sid + '"><i class="icon icon-pencil"></i></span>'
 		if (getPortAlias(port)) {
-			html += '<span class="port-alias-clear-btn" role="button" title="清除别名" data-port-sid="' + sid + '"><i class="bi bi-x"></i></span>'
+			html += '<span class="port-alias-clear-btn" role="button" title="清除别名" data-port-sid="' + sid + '"><i class="icon icon-x"></i></span>'
 		}
 		// 关闭状态下才允许取消选择：打开中先走关闭按钮，避免拔掉一个正用着的口
 		if (!SerialHub.isOpen(sid)) {
-			html += '<span class="port-forget-btn" role="button" title="取消选择，恢复未连接状态" data-port-sid="' + sid + '"><i class="bi bi-x-circle"></i></span>'
+			html += '<span class="port-forget-btn" role="button" title="取消选择，恢复未连接状态" data-port-sid="' + sid + '"><i class="icon icon-circle-x"></i></span>'
 		}
 		return html
 	}

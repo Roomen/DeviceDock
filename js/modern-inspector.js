@@ -184,7 +184,7 @@
 
 	function emptyView() {
 		const box = el('div', 'mi-empty')
-		const icon = el('i', 'bi bi-search')
+		const icon = el('i', 'icon icon-search')
 		icon.setAttribute('aria-hidden', 'true')
 		box.append(icon, el('div', 'mi-empty-main', '点选日志行查看这一帧'))
 		const btn = el('button', 'btn btn-sm btn-outline-secondary mi-paste', '粘贴 HEX')

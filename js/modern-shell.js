@@ -127,7 +127,7 @@
 		return n
 	}
 	function icon(name) {
-		const i = mk('i', 'bi ' + name)
+		const i = mk('i', 'icon ' + name)
 		i.setAttribute('aria-hidden', 'true')
 		return i
 	}
@@ -191,7 +191,7 @@
 		wrap.dataset.path = key
 		// 四段分体：电源键(连接/断开) · 设备键(选口) · 设置键(参数/路标签) · 协议键；B 路另有独立移除键
 		const power = btn('mdn-conn-power')
-		power.appendChild(icon('bi-power'))
+		power.appendChild(icon('icon-power'))
 		const b = btn('mdn-conn-btn')
 		b.setAttribute('aria-haspopup', 'dialog')
 		b.setAttribute('aria-expanded', 'false')
@@ -207,7 +207,7 @@
 		more.setAttribute('aria-label', '串口设置')
 		more.title = '串口设置'
 		const moreParams = mk('span', 'mdn-conn-params')
-		more.append(icon('bi-sliders'), moreParams)
+		more.append(icon('icon-sliders'), moreParams)
 		const pop = mk('div', 'mdn-pop')
 		pop.hidden = true
 		pop.setAttribute('role', 'dialog')
@@ -339,9 +339,9 @@
 		const hint = mk('div', 'mdn-ports-hint')
 		const foot = mk('div', 'mdn-ports-foot')
 		const add = btn('btn btn-sm btn-outline-primary', '', '在浏览器的选择框里选一个串口设备并连接，选过的设备之后会一直列在这里')
-		add.append(icon('bi-usb-plug'), document.createTextNode(' 选择设备…'))
+		add.append(icon('icon-usb'), document.createTextNode(' 选择设备…'))
 		const reload = btn('btn btn-sm btn-outline-secondary', '', '重新列出串口')
-		reload.append(icon('bi-arrow-clockwise'), document.createTextNode(' 刷新'))
+		reload.append(icon('icon-rotate-cw'), document.createTextNode(' 刷新'))
 		foot.append(add, reload)
 		const sources = window.AppPlatform && window.AppPlatform.service('connection-source')
 		box.append(list, empty, hint, foot)
@@ -498,7 +498,7 @@
 		const main = mk('div', 'mdn-port-main')
 		main.append(mk('div', 'mdn-port-name', r.title))
 		if (r.sub) main.append(mk('div', 'mdn-port-sub', r.sub))
-		row.append(icon(r.source ? 'bi-bluetooth mdn-port-icon' : (r.absent ? 'bi-usb-plug mdn-port-icon' : 'bi-usb-symbol mdn-port-icon')), main)
+		row.append(icon(r.source ? 'icon-bluetooth mdn-port-icon' : (r.absent ? 'icon-usb mdn-port-icon' : 'icon-usb mdn-port-icon')), main)
 		if (r.state.tag) row.append(mk('span', 'mdn-port-tag', r.state.tag))
 		const acts = mk('span', 'mdn-port-acts')
 		if (r.source) {
@@ -508,21 +508,21 @@
 			f.dataset.act = 'forget'
 			f.tabIndex = -1
 			f.setAttribute('aria-label', '清除 ' + r.title)
-			f.append(icon('bi-x-circle'))
+			f.append(icon('icon-circle-x'))
 			acts.append(f)
 		} else {
 			const ren = btn('mdn-port-act', '', r.meta.persistent ? '重命名（保存在本机，下次打开仍显示）' : '重命名（设备无持久标识，仅本次有效）')
 			ren.dataset.act = 'rename'
 			ren.tabIndex = -1
 			ren.setAttribute('aria-label', '重命名 ' + r.title)
-			ren.append(icon('bi-pencil'))
+			ren.append(icon('icon-pencil'))
 			acts.append(ren)
 			if (r.meta.alias) {
 				const clr = btn('mdn-port-act', '', '清除别名，恢复默认名')
 				clr.dataset.act = 'clear'
 				clr.tabIndex = -1
 				clr.setAttribute('aria-label', '清除别名 ' + r.title)
-				clr.append(icon('bi-x-lg'))
+				clr.append(icon('icon-x'))
 				acts.append(clr)
 			}
 			// 「取消选择」只对本路当前设备有意义(forgetPort 按路清)，且只在断开 / 关闭失败时给：
@@ -532,7 +532,7 @@
 				fg.dataset.act = 'forget'
 				fg.tabIndex = -1
 				fg.setAttribute('aria-label', '取消选择 ' + r.title)
-				fg.append(icon('bi-x-circle'))
+				fg.append(icon('icon-circle-x'))
 				acts.append(fg)
 			}
 		}
@@ -948,7 +948,7 @@
 			cap.setAttribute('aria-expanded', 'false')
 			const name = mk('span', 'mdn-fmt-cap-lane')
 			const val = mk('span', 'mdn-fmt-cap-val')
-			cap.append(name, val, icon('bi-chevron-down'))
+			cap.append(name, val, icon('icon-chevron-down'))
 			const pop = mk('div', 'mdn-fmt-pop')
 			pop.id = 'mdn-fmt-pop-' + sid.toLowerCase()
 			cap.setAttribute('aria-controls', pop.id)
@@ -1126,7 +1126,7 @@
 		})
 		const grow = mk('span', 'mdn-grow')
 		const fold = btn('mdn-fold', '', '')
-		fold.appendChild(icon('bi-chevron-down'))
+		fold.appendChild(icon('icon-chevron-down'))
 		listen(fold, 'click', function () { if (header) header.click() })
 		// 快捷按钮只镜像右栏「快捷发送」面板：平台没有该面板(移动端)时分组、按钮与管理入口一起隐藏，折叠键照留
 		;[sel, list, manage].forEach(function (n) { n.setAttribute('data-feature', 'panel.quick-send') })
@@ -1273,11 +1273,11 @@
 		box.setAttribute('role', 'group')
 		box.setAttribute('aria-label', '日志缩放')
 		const out = btn('mdn-zoom-btn', '', '缩小日志')
-		out.appendChild(icon('bi-dash'))
+		out.appendChild(icon('icon-minus'))
 		out.setAttribute('aria-label', '缩小日志')
 		const val = btn('mdn-zoom-val', '100%', '恢复 100%（也可 Ctrl/⌘ + 滚轮缩放）')
 		const inn = btn('mdn-zoom-btn', '', '放大日志')
-		inn.appendChild(icon('bi-plus'))
+		inn.appendChild(icon('icon-plus'))
 		inn.setAttribute('aria-label', '放大日志')
 		box.append(out, val, inn)
 		let zoom = 1

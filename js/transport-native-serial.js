@@ -355,7 +355,7 @@
 			const heading = el('div', 'native-port-heading')
 			const headingIcon = el('span', 'native-port-heading-icon')
 			headingIcon.setAttribute('aria-hidden', 'true')
-			headingIcon.append(el('i', 'bi bi-usb-symbol'))
+			headingIcon.append(el('i', 'icon icon-usb'))
 			const headingText = el('div', 'native-port-heading-text')
 			const title = el('h2', 'modal-title', '选择串口设备')
 			title.id = 'native-port-title'
@@ -364,7 +364,7 @@
 			const x = el('button', 'native-port-close')
 			x.type = 'button'
 			x.setAttribute('aria-label', '取消')
-			x.append(el('i', 'bi bi-x-lg'))
+			x.append(el('i', 'icon icon-x'))
 			head.append(heading, x)
 			const body = el('div', 'modal-body native-port-body')
 			const toolbar = el('div', 'native-port-toolbar')
@@ -378,7 +378,7 @@
 			const foot = el('div', 'modal-footer')
 			const refreshBtn = el('button', 'btn btn-sm btn-outline-secondary me-auto')
 			refreshBtn.type = 'button'
-			refreshBtn.append(el('i', 'bi bi-arrow-clockwise'), doc.createTextNode(' 刷新'))
+			refreshBtn.append(el('i', 'icon icon-rotate-cw'), doc.createTextNode(' 刷新'))
 			const cancel = el('button', 'btn btn-sm btn-outline-secondary', '取消')
 			cancel.type = 'button'
 			const ok = el('button', 'btn btn-sm btn-primary', '连接')
@@ -396,7 +396,7 @@
 			row.setAttribute('aria-selected', selected ? 'true' : 'false')
 			row.tabIndex = selected ? 0 : -1
 			row.dataset.path = d.path
-			const icon = el('i', 'native-port-icon bi ' + (d.transport === 'bluetooth' ? 'bi-bluetooth' : d.transport === 'usb' ? 'bi-usb-symbol' : 'bi-hdd'))
+			const icon = el('i', 'native-port-icon icon ' + (d.transport === 'bluetooth' ? 'icon-bluetooth' : d.transport === 'usb' ? 'icon-usb' : 'icon-hard-drive'))
 			const main = el('div', 'native-port-main')
 			const line1 = el('div', 'native-port-line1')
 			line1.append(el('span', 'native-port-name', portTitle(d)))
@@ -408,7 +408,7 @@
 			if (details.length) main.append(el('div', 'native-port-details', details.join(' · ')))
 			const check = el('span', 'native-port-check')
 			check.setAttribute('aria-hidden', 'true')
-			if (selected) check.append(el('i', 'bi bi-check-lg'))
+			if (selected) check.append(el('i', 'icon icon-check'))
 			row.append(icon, main, check)
 			return row
 		}

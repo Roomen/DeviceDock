@@ -207,7 +207,7 @@
 			button.type = 'button'
 			button.className = 'rail-item'
 			button.title = '检查应用更新'
-			button.innerHTML = '<i class="bi bi-arrow-down-circle"></i><span class="rail-label">更新</span>'
+			button.innerHTML = '<i class="icon icon-circle-arrow-down"></i><span class="rail-label">更新</span>'
 			button.addEventListener('click', function () { check(true) })
 			menu.insertBefore(button, doc.getElementById('app-version'))
 		}

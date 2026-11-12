@@ -94,7 +94,7 @@
 		const base = {
 			title: def.title || def.id,
 			label: def.label || def.title || def.id,
-			icon: def.icon || 'bi-grid',
+			icon: def.icon || 'icon-layout-grid',
 			el: def.el,
 			order: typeof def.order === 'number' ? def.order : 100 + panels.length,
 			docks: docks,
@@ -211,7 +211,7 @@
 
 	function iconEl(icon) {
 		const i = document.createElement('i')
-		i.className = 'bi ' + icon
+		i.className = 'icon ' + icon
 		i.setAttribute('aria-hidden', 'true')
 		return i
 	}
@@ -304,7 +304,7 @@
 		pane.setAttribute('role', 'tabpanel')
 		const tip = document.createElement('div')
 		tip.className = 'wb-pane-unavailable'
-		tip.append(iconEl('bi-info-circle'), document.createTextNode(hint))
+		tip.append(iconEl('icon-info'), document.createTextNode(hint))
 		pane.append(tip, card)
 		registerPanel({
 			id: id, title: title, label: label, icon: icon, el: pane, order: order,
@@ -329,15 +329,15 @@
 
 	function registerBuiltins() {
 		const qs = $('nav-quick-send')
-		if (qs) registerPanel({ id: 'quick-send', title: '快捷发送', icon: 'bi-lightning-charge', el: qs, order: 10 })
+		if (qs) registerPanel({ id: 'quick-send', title: '快捷发送', icon: 'icon-zap', el: qs, order: 10 })
 		const proto = $('nav-protocol')
-		if (proto) registerPanel({ id: 'protocol', title: '协议设置与下发', label: '协议', icon: 'bi-braces', el: proto, order: 20 })
-		standalonePanel('rw', '随机读写测试', '随机读写', 'bi-shuffle', 'sk-rw-card', 30, '当前协议不支持随机读写测试，在顶栏把协议切换到 SEK 后可用')
-		standalonePanel('batch', '批量配置写入', '批量配置', 'bi-list-check', 'sk-batch-card', 40, '当前协议不支持批量配置写入，在顶栏把协议切换到 SEK 后可用')
+		if (proto) registerPanel({ id: 'protocol', title: '协议设置与下发', label: '协议', icon: 'icon-braces', el: proto, order: 20 })
+		standalonePanel('rw', '随机读写测试', '随机读写', 'icon-shuffle', 'sk-rw-card', 30, '当前协议不支持随机读写测试，在顶栏把协议切换到 SEK 后可用')
+		standalonePanel('batch', '批量配置写入', '批量配置', 'icon-list-check', 'sk-batch-card', 40, '当前协议不支持批量配置写入，在顶栏把协议切换到 SEK 后可用')
 		const fw = $('nav-firmware')
-		if (fw) registerPanel({ id: 'firmware', title: '固件升级', icon: 'bi-cpu', el: fw, order: 50 })
+		if (fw) registerPanel({ id: 'firmware', title: '固件升级', icon: 'icon-cpu', el: fw, order: 50 })
 		const parse = $('serial-parse-body')
-		if (parse) registerPanel({ id: 'parse', title: '协议解析', label: '解析', icon: 'bi-diagram-3', el: parse, order: 0, docks: ['bottom'], fixed: true })
+		if (parse) registerPanel({ id: 'parse', title: '协议解析', label: '解析', icon: 'icon-workflow', el: parse, order: 0, docks: ['bottom'], fixed: true })
 	}
 
 	// ---------- 顶栏：命令面板入口 ----------
@@ -563,7 +563,7 @@
 	// 对注册定义的覆盖：解析变成右栏第一个标签「检查器」，固件升级并进固件打包页
 	const PROFILE = {
 		parse: function () {
-			return { el: inspectorEl(), title: '检查器', label: '检查器', icon: 'bi-search', order: -1, docks: ['right'], defDock: 'right', fixed: false }
+			return { el: inspectorEl(), title: '检查器', label: '检查器', icon: 'icon-search', order: -1, docks: ['right'], defDock: 'right', fixed: false }
 		},
 		firmware: function () {
 			return fwInPackView() ? { hidden: true, view: 'view-fw-pack' } : null
@@ -594,11 +594,11 @@
 		const resend = mk('button', 'btn btn-sm btn-outline-secondary')
 		resend.type = 'button'
 		resend.id = 'wb-frame-resend'
-		resend.append(iconEl('bi-arrow-repeat'), document.createTextNode(' 重发此帧'))
+		resend.append(iconEl('icon-refresh-cw'), document.createTextNode(' 重发此帧'))
 		const save = mk('button', 'btn btn-sm btn-outline-secondary')
 		save.type = 'button'
 		save.id = 'wb-frame-save'
-		save.append(iconEl('bi-lightning-charge'), document.createTextNode(' 存为快捷发送'))
+		save.append(iconEl('icon-zap'), document.createTextNode(' 存为快捷发送'))
 		actions.append(mk('span', 'wb-inspector-actions-title', '基于此帧'), resend, save)
 		// 结构化视图由 js/modern-inspector.js 往 view 里画；原协议解析面板(HEX 输入区 + 输出)放进可折叠的「原始输出」
 		const view = mk('div', 'wb-insp-view')
@@ -670,7 +670,7 @@
 			const sec = host('section', 'fw-pack-upgrade', 'fw-pack-upgrade')
 			sec.setAttribute('aria-label', '固件升级')
 			const head = mk('div', 'fw-pack-upgrade-head')
-			head.append(iconEl('bi-cpu'), mk('span', 'fw-pack-upgrade-title', '固件升级'), mk('span', 'view-bar-sub', '经顶部串口连接收发'))
+			head.append(iconEl('icon-cpu'), mk('span', 'fw-pack-upgrade-title', '固件升级'), mk('span', 'view-bar-sub', '经顶部串口连接收发'))
 			sec.appendChild(head)
 			fwView.appendChild(sec)
 			sec.appendChild(fw.base.el)
