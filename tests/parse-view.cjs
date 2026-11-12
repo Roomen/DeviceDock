@@ -73,11 +73,19 @@ assert.ok(PV.render({ title: 'T', sections: [{ pairs: [['标签', '值', 'ID9']]
 	assert.ok(!/\.pv\s*\{[^}]*display:\s*contents/i.test(styleCss), 'style.css 中绝不可对 .pv 使用 display: contents')
 	assert.ok(!/\.log-body\s*\{[^}]*display:\s*contents/i.test(styleCss), 'style.css 中绝不可对 .log-body 使用 display: contents')
 
-	// 3. 样式契约：ANSI 模式下必须维持深底亮字，浅色主题的深黑字规则必须用 :not(.ansi) 隔离
-	assert.ok(/\.ansi\s+\.pv-title\s*\{[^}]*color:\s*#f5f5f7/i.test(styleCss), 'style.css 中 .ansi .pv-title 必须强制使用亮色 #f5f5f7')
-	assert.ok(/\.ansi\s+\.pv-v\s*\{[^}]*color:\s*#f5f5f7/i.test(styleCss), 'style.css 中 .ansi .pv-v 必须强制使用亮色 #f5f5f7')
+	// 3. 样式契约：ANSI 模式下必须维持深底亮字，浅色主题的深黑字规则必须用 :not(.ansi) 隔离。
+	// 亮色不再写死 #f5f5f7，走 --plate-fg（令牌只在一层定义，见 .claude/skills/unslop 的方向）
+	assert.ok(/\.ansi\s+\.pv-title\s*\{[^}]*color:\s*var\(--plate-fg\)/i.test(styleCss), 'style.css 中 .ansi .pv-title 必须强制使用 var(--plate-fg) 亮色')
+	assert.ok(/\.ansi\s+\.pv-v\s*\{[^}]*color:\s*var\(--plate-fg\)/i.test(styleCss), 'style.css 中 .ansi .pv-v 必须强制使用 var(--plate-fg) 亮色')
 	assert.ok(/:not\(\.ansi\)\s+\.pv-title/i.test(styleCss), 'style.css 中使用 var(--text-primary) 的 pv-title 必须限定 :not(.ansi)')
 	assert.ok(/\.ansi[^{]*\.log-body\s*\{[^}]*color:\s*var\(--bb-plate-fg/i.test(styleCss), 'style.css 中 .ansi 的 log-body 必须恢复 var(--bb-plate-fg) 亮色基色供子元素继承')
+	// --plate-fg 必须是浅色：深底亮字的前提是这条令牌本身够亮
+	const plateFg = (styleCss.match(/--plate-fg:\s*#([0-9a-f]{6})/i) || [])[1]
+	assert.ok(plateFg, 'style.css 必须定义 --plate-fg')
+	{
+		const r = parseInt(plateFg.slice(0, 2), 16), g = parseInt(plateFg.slice(2, 4), 16), b = parseInt(plateFg.slice(4, 6), 16)
+		assert.ok((r * 299 + g * 587 + b * 114) / 1000 > 200, '--plate-fg 必须是浅色（ANSI 深底上的亮字），实际 #' + plateFg)
+	}
 }
 // ---- linesToPairs ----
 {
