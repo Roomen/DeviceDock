@@ -3,6 +3,9 @@
 // 值解码与回读比对、执行(顺序 / 延时 / 超时 / 重试 / 失败策略 / 写后回读 / 恢复原值)、统计与导出。
 const assert = require('node:assert/strict')
 const T = require('../js/test-flow.js')
+const vm = require('node:vm')
+const fs = require('node:fs')
+const path = require('node:path')
 
 // ---- 步骤规范化：默认值、范围夹取、必填项 ----
 {
@@ -398,7 +401,73 @@ async function runFlow(flow, io) {
 		assert.match(csv[1], /成功/)
 	}
 
-	console.log('test-flow: ok')
+	// ---- SEK 随机白名单：随机计划里的每个字段都必须在白名单内（30 个 seed）----
+// SEK 字段目录在浏览器里组装，node 里用与 tools/protocol-fields-doc.mjs 相同的 stub 装载
+{
+	const sekTx = {
+		buildDown: function () { return { frame: [], seq: 0, opts: {} } },
+		funcValue: function () { return null },
+		tag11Result: function () { return null },
+		hasTag: function () { return false },
+		findTlvItem: function () { return null },
+		bytesEqual: function () { return false },
+		clearBuffer: function () {},
+		cancelAll: function () {},
+	}
+	let patch = null
+	const window = { sekTx: sekTx }
+	window.DeviceDockProtocols = {
+		has: function () { return true },
+		extend: function (id, p) { patch = p },
+	}
+	const ctx = vm.createContext({ window: window, console: console })
+	ctx.globalThis = ctx
+	vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/protocol-presets.js'), 'utf8'), ctx, { filename: 'protocol-presets.js' })
+	vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/sek-test-profile.js'), 'utf8'), ctx, { filename: 'sek-test-profile.js' })
+	assert.ok(patch && Array.isArray(patch.fields), 'sek-test-profile 产出 fields')
+	const fields = patch.fields
+	const whitelist = fields.filter(function (f) { return f.random === true })
+	assert.ok(whitelist.length >= 19, 'SEK 白名单只有显式放行的字段（参数 + 只读 metrics）：' + whitelist.length)
+	// 白名单里不允许出现链路 / 执行机构 / 标识 / 时钟 / 凭据类字段
+	const bannedNames = ['连接模式', 'IP', 'APN', '表号', '密码', '密钥', '时钟', '时间参数', '启用标志', '阀门', '阀控', '开阀', '关阀', '休眠', '复位', '口径', '脉冲形式', '基准水量', '机电分离', '模组开关', '校时']
+	whitelist.forEach(function (f) {
+		bannedNames.forEach(function (word) {
+			assert.ok(f.name.indexOf(word) === -1 && (f.key || '').indexOf(word) === -1, '白名单混入危险字段：' + f.key + ' ' + f.name + '（命中「' + word + '」）')
+		})
+		assert.notEqual(f.type, 'bcd', 'bcd 类（标识 / 表号）不进白名单：' + f.key)
+		assert.notEqual(f.type, 'ascii', 'ascii 类（地址 / 凭据）不进白名单：' + f.key)
+	})
+	// 30 个 seed：随机计划里每个带字段的步骤都在白名单内（引擎过滤 random:false）
+	for (let seed = 1; seed <= 30; seed++) {
+		const p = T.randomPlan({ seed: seed, count: 30, fields: fields, queries: patch.queries || [] })
+		p.steps.forEach(function (s) {
+			if (!s.field) return
+			const f = fields.filter(function (x) { return x.key === s.field })[0]
+			assert.ok(f, '计划字段在目录内：' + s.field)
+			assert.equal(f.random, true, '随机计划只出白名单字段：' + s.field + ' seed=' + seed)
+		})
+		// 回读步骤紧跟写步骤时必须指向同一字段
+		for (let i = 1; i < p.steps.length; i++) {
+			const prev = p.steps[i - 1]
+			const cur = p.steps[i]
+			if (cur.kind === 'verify' && prev.kind === 'write') {
+				assert.equal(cur.field, prev.field, '紧跟写的回读必须同字段 seed=' + seed + ' i=' + i)
+			}
+		}
+	}
+	// 帧头信号字段（read:false）不会出现在计划里
+	const planFieldsSeen = {}
+	for (let seed = 1; seed <= 30; seed++) {
+		const p = T.randomPlan({ seed: seed, count: 30, fields: fields, queries: patch.queries || [] })
+		p.steps.forEach(function (s) { if (s.field) planFieldsSeen[s.field] = true })
+	}
+	Object.keys(planFieldsSeen).forEach(function (k) {
+		const f = fields.filter(function (x) { return x.key === k })[0]
+		assert.notEqual(f.read, false, 'read:false 的字段不进随机计划：' + k)
+	})
+}
+
+console.log('test-flow: ok')
 })().catch(function (e) {
 	console.error(e)
 	process.exit(1)

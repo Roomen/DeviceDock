@@ -350,9 +350,12 @@
 		let guard = 0
 		while (steps.length < count && guard++ < count * 4) {
 			const r = rng()
-			// 有待校验的写入时提高抽检概率
+			// 有待校验的写入时提高抽检概率；紧跟在写后面的抽检必须指向刚写的那个字段
+			//（回读比对的是 lastWritten[key]，指到别的字段会让「写→回读」读起来像错指）
 			if (written.length && r < 0.22) {
-				const f = fields.filter(function (x) { return x.key === pick(rng, written) })[0]
+				const last = steps[steps.length - 1]
+				const key = last && last.kind === 'write' ? last.field : pick(rng, written)
+				const f = fields.filter(function (x) { return x.key === key })[0]
 				if (f) { steps.push(verifyStep(f)); continue }
 			}
 			if (hasQueries && r < 0.35) {
@@ -383,12 +386,19 @@
 			}, steps.length, o))
 			if (written.indexOf(f.key) < 0) written.push(f.key)
 		}
-		// 末尾按 30%~100% 的比例对写过的字段抽检
+		// 末尾按 30%~100% 的比例对写过的字段抽检；若最后一步是写，首个抽检先对它——
+		// 与循环内的规则一致：紧跟写步骤的回读必须指向同一字段
 		if (o.verifyTail !== false) {
 			const shuffled = written.slice()
 			for (let i = shuffled.length - 1; i > 0; i--) {
 				const j = Math.floor(rng() * (i + 1))
 				const t = shuffled[i]; shuffled[i] = shuffled[j]; shuffled[j] = t
+			}
+			const last = steps[steps.length - 1]
+			if (last && last.kind === 'write') {
+				const at = shuffled.indexOf(last.field)
+				if (at > 0) { shuffled.splice(at, 1); shuffled.unshift(last.field) }
+				else if (at === -1) shuffled.unshift(last.field)
 			}
 			const n = Math.max(1, Math.ceil(shuffled.length * (0.3 + rng() * 0.7)))
 			for (let i = 0; i < n && i < shuffled.length; i++) {
