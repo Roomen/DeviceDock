@@ -786,20 +786,47 @@
 		refreshConn()
 	}
 
+	// 顶栏协议下拉按组（内置 / 每个来源一组）呈现，每路的协议键也要照抄同样的分组
+	function readProtoOptions(root) {
+		const out = []
+		Array.prototype.forEach.call(root.children, function (node) {
+			if (node.tagName === 'OPTGROUP') {
+				Array.prototype.forEach.call(node.children, function (o) {
+					if (o.tagName === 'OPTION') out.push([node.label, o.value, o.textContent])
+				})
+			} else if (node.tagName === 'OPTION') {
+				out.push(['', node.value, node.textContent])
+			}
+		})
+		return out
+	}
+	function writeProtoOptions(sel, opts) {
+		sel.textContent = ''
+		let group = null
+		let groupLabel = null
+		opts.forEach(function (o) {
+			if (o[0] !== groupLabel) {
+				groupLabel = o[0]
+				group = null
+				if (groupLabel) {
+					group = mk('optgroup')
+					group.label = groupLabel
+					sel.appendChild(group)
+				}
+			}
+			const n = mk('option', '', o[2])
+			n.value = o[1]
+			;(group || sel).appendChild(n)
+		})
+	}
+
 	function syncProtoSelect(sel, sid) {
 		const top = $('serial-protocol-select')
 		const lanes = window.serialLanes
 		if (!sel || !top) return
-		const opts = Array.prototype.map.call(top.options, function (o) { return [o.value, o.textContent] })
-		const have = Array.prototype.map.call(sel.options, function (o) { return [o.value, o.textContent] })
-		if (JSON.stringify(opts) !== JSON.stringify(have)) {
-			sel.textContent = ''
-			opts.forEach(function (o) {
-				const n = mk('option', '', o[1])
-				n.value = o[0]
-				sel.appendChild(n)
-			})
-		}
+		const opts = readProtoOptions(top)
+		const have = readProtoOptions(sel)
+		if (JSON.stringify(opts) !== JSON.stringify(have)) writeProtoOptions(sel, opts)
 		const want = lanes ? lanes.protocolOf(sid) : top.value
 		if (want && sel.value !== want) sel.value = want
 		const h = hub()

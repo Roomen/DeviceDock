@@ -9997,6 +9997,69 @@ html[data-layout='modern'] .mdn-mcp-panel .mdn-mcp-port { flex: 0 0 112px; width
 html[data-layout='modern'] .mdn-mcp-panel .mdn-mcp-cfg { font-size: var(--fs-small); padding: 12px 14px; }
 html[data-layout='modern'] .mdn-mcp-panel .mdn-mcp-sub { margin-top: 8px; }
 
+/* 协议来源面板：来源卡片 → 包行 → 信任 / 启用。字节与摘要是等宽小字，动作只有一个主按钮。 */
+.mdn-src-panel { display: flex; flex-direction: column; gap: 12px; }
+.mdn-src-intro { margin: 0; font-size: var(--fs-small); line-height: 1.5; color: var(--text-secondary); }
+.mdn-src-add { display: flex; align-items: center; gap: 8px; }
+.mdn-src-add .form-control { flex: 1 1 auto; min-width: 0; }
+.mdn-src-add .btn { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.mdn-src-list { display: flex; flex-direction: column; gap: 12px; }
+.mdn-src-card {
+	display: flex; flex-direction: column; gap: 8px;
+	padding: 12px; border: 1px solid var(--border-color);
+	border-radius: var(--radius-lg); background: var(--bg-surface);
+}
+.mdn-src-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mdn-src-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.mdn-src-name { font-size: var(--fs-body-lg); font-weight: 600; color: var(--text-primary); }
+.mdn-src-sha, .mdn-src-digest {
+	padding: 1px 6px; border-radius: var(--radius-xs);
+	background: var(--bg-code); color: var(--text-muted);
+	font-family: var(--font-mono); font-size: var(--fs-micro);
+}
+.mdn-src-busy { font-size: var(--fs-micro); color: var(--accent); }
+.mdn-src-head-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.mdn-src-icon-btn {
+	display: inline-flex; align-items: center; justify-content: center;
+	width: 28px; height: 28px; padding: 0;
+	border: 1px solid transparent; border-radius: var(--radius-sm);
+	background: transparent; color: var(--text-secondary);
+}
+.mdn-src-icon-btn:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.mdn-src-icon-btn:disabled { opacity: .4; }
+.mdn-src-icon-btn.is-danger { color: var(--danger); border-color: var(--danger); }
+.mdn-src-url { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-muted); overflow-wrap: anywhere; }
+.mdn-src-err { font-size: var(--fs-small); line-height: 1.4; color: var(--danger); overflow-wrap: anywhere; }
+.mdn-src-note { font-size: var(--fs-small); line-height: 1.4; color: var(--warning); }
+.mdn-src-pkgs { display: flex; flex-direction: column; gap: 8px; }
+.mdn-src-pkg {
+	display: flex; flex-direction: column; gap: 6px;
+	padding: 10px 12px; border: 1px solid var(--border-light);
+	border-radius: var(--radius-sm); background: var(--bg-body);
+}
+.mdn-src-pkg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mdn-src-pkg-name { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
+.mdn-src-ver { font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-secondary); }
+.mdn-src-provides { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mdn-src-provides-label { font-size: var(--fs-micro); color: var(--text-muted); }
+.mdn-src-chip {
+	padding: 2px 8px; border-radius: var(--radius-xs);
+	background: var(--accent-light); color: var(--accent);
+	font-size: var(--fs-small);
+}
+.mdn-src-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mdn-src-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+.mdn-src-empty-block {
+	display: flex; flex-direction: column; gap: 6px;
+	padding: 16px; border: 1px dashed var(--border-color); border-radius: var(--radius-lg);
+}
+.mdn-src-empty-title { font-size: var(--fs-body-lg); font-weight: 600; color: var(--text-primary); }
+.mdn-src-empty { font-size: var(--fs-small); line-height: 1.5; color: var(--text-secondary); }
+@media (max-width: 560px) {
+	.mdn-src-add { flex-wrap: wrap; }
+	.mdn-src-add .btn { width: 100%; justify-content: center; }
+}
+
 html[data-layout='modern'] .mdn-mcp-port:disabled {
 	background: var(--bg-code); color: var(--text-secondary); opacity: 1;
 }
