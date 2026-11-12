@@ -1,12 +1,29 @@
-node_modules/
-dist/
-.staging/
-desktop/**/target/
-.DS_Store
-/extensions/*/
-/extensions/installed.json
-/dist-core/
-/desktop/node_modules/
-/desktop/src-tauri/gen/
+/.vscode
+/.gitea_token
 
-/desktop/release/
+# host-side cross-test build artifacts (do not commit binaries)
+tools/sk-cross-test/sk_c_mirror
+tools/sk-cross-test/*.o
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+
+# herdr 多 agent 协作的简报/报告产物，不入库
+/.herdr-task
+
+# 冒烟测试输出
+tools/smoke-out
+
+# 桌面客户端(Tauri)：网页文件的复制件、依赖与构建产物
+/desktop/dist
+/desktop/node_modules
+/desktop/src-tauri/target
+/desktop/src-tauri/gen
+/desktop/release
+# Windows 便携更新的共享协议 crate 与 helper：本地编译产物同样不入库
+/desktop/portable-update-common/target
+/desktop/portable-updater/target

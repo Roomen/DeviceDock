@@ -1,40 +1,59 @@
 [package]
-name = "devicedock"
-version = "0.2.0"
+name = "serial-debug"
+# 应用版本不写在这里：desktop/scripts/tauri.mjs 每次从 js/version.js 读出后经 --config 传给 tauri
+version = "0.0.0"
 edition = "2021"
 publish = false
+
 [lib]
-name = "devicedock_lib"
+name = "serial_debug_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
-[features]
-default = []
-native-smoke = []
-native-ble = ["dep:bluest", "dep:uuid", "dep:tokio-util"]
-native-spp = []
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
 cc = "1"
+tauri-build = { version = "2", features = [] }
+
 [dependencies]
-tauri = { version = "2", features = [] }
+# macOSPrivateApi: true(tauri.conf.json)对应的 feature；2.12.1 起它本身是空操作，但 tauri-build 仍会核对两边是否一致
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-base64 = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
-futures-util = "0.3"
 serialport = "4"
-bluest = { version = "0.6.9", optional = true }
-uuid = { version = "1", features = ["serde"], optional = true }
-tokio = { version = "1", features = ["net", "time", "sync", "rt", "macros", "process", "io-util"] }
-axum = "0.8"
 tauri-plugin-updater = "2"
-portable-update-common = { path = "../portable-update-common" }
+# 本地 MCP 服务：官方 Rust SDK + axum 承载 Streamable HTTP(只绑 127.0.0.1)
+rmcp = { version = "3.8", features = ["server", "transport-streamable-http-server", "macros", "schemars"] }
+axum = "0.8"
+tokio = { version = "1", features = ["net", "time", "sync", "rt", "macros"] }
+tokio-util = "0.7"
 getrandom = "0.4"
-tokio-util = { version = "0.7", optional = true }
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Foundation", "Win32_System_Registry", "Win32_Devices_Communication", "Win32_Devices_Bluetooth", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security", "Win32_Networking_WinSock"] }
+bluest = "0.6.9"
+futures-util = "0.3"
+uuid = { version = "1", features = ["serde"] }
+subtle = "2"
+schemars = "1"
+# Windows 便携版应用内更新：计划/结果格式、载荷读取与验签、进程查询与 helper 共用
+portable-update-common = { path = "../portable-update-common" }
 
 [dev-dependencies]
+# 测试里构造真实便携 ZIP 载荷
 zip = { version = "4.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# 真实 MCP 客户端(仅测试)：对假窗口桥做协议互通验证
+rmcp = { version = "3.8", features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
+reqwest = "0.13"
+tower = { version = "0.5", features = ["util"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS 26+ 的液态玻璃(NSGlassEffectView)：窗口透明 + 玻璃视图垫在 WebView 下面
+window-vibrancy = "0.8"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Foundation", "Win32_System_Registry", "Win32_Devices_Communication", "Win32_Devices_Bluetooth", "Win32_Networking_WinSock"] }
+
+[profile.release]
+codegen-units = 8
+lto = "thin"
+opt-level = "s"
+strip = true

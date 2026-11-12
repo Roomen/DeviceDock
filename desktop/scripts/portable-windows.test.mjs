@@ -12,8 +12,8 @@ function fixture(tag = 'portable test') {
 	const desktop = mkdtempSync(join(tmpdir(), tag + '-'))
 	const binaryDir = join(desktop, 'src-tauri', 'target', TARGET, 'release')
 	mkdirSync(binaryDir, { recursive: true })
-	writeFileSync(join(binaryDir, 'devicedock.exe'), 'test executable')
-	writeFileSync(join(binaryDir, 'devicedock-updater.exe'), 'test helper')
+	writeFileSync(join(binaryDir, 'serial-debug.exe'), 'test executable')
+	writeFileSync(join(binaryDir, 'serial-debug-updater.exe'), 'test helper')
 	for (const channel of ['main', 'dev']) {
 		mkdirSync(join(desktop, 'release', channel), { recursive: true })
 		writeFileSync(join(desktop, 'release', channel, 'old.zip'), channel)
@@ -34,19 +34,19 @@ test('ZIP stages program, update helper and instructions; replaces only selected
 		const result = packageWindows({ ...options, env: {}, run(command, args, config) {
 			assert.equal(command, 'powershell.exe')
 			assert.ok(args.includes('-NonInteractive'))
-			staging = config.env.DEVICEDOCK_ZIP_STAGE
-			assert.deepEqual(readdirSync(staging).sort(), ['DeviceDock.exe', 'README.txt', 'devicedock-updater.exe'])
-			assert.equal(readFileSync(join(staging, 'DeviceDock.exe'), 'utf8'), 'test executable')
-			assert.equal(readFileSync(join(staging, 'devicedock-updater.exe'), 'utf8'), 'test helper')
+			staging = config.env.SERIAL_ZIP_STAGE
+			assert.deepEqual(readdirSync(staging).sort(), ['README.txt', 'Serial Debug.exe', 'serial-debug-updater.exe'])
+			assert.equal(readFileSync(join(staging, 'Serial Debug.exe'), 'utf8'), 'test executable')
+			assert.equal(readFileSync(join(staging, 'serial-debug-updater.exe'), 'utf8'), 'test helper')
 			const readme = readFileSync(join(staging, 'README.txt'), 'utf8')
 			assert.match(readme, /WebView2/)
-			assert.match(readme, /devicedock-updater\.exe/)
+			assert.match(readme, /serial-debug-updater\.exe/)
 			assert.match(readme, /应用内更新/)
-			writeFileSync(config.env.DEVICEDOCK_ZIP_OUT, 'mock archive')
+			writeFileSync(config.env.SERIAL_ZIP_OUT, 'mock archive')
 			return { status: 0 }
 		} })
 		assert.equal(readFileSync(result, 'utf8'), 'mock archive')
-		assert.deepEqual(readdirSync(join(options.desktop, 'release', 'dev')), ['DeviceDock_1.2.3_windows_x64.zip'])
+		assert.deepEqual(readdirSync(join(options.desktop, 'release', 'dev')), ['Serial-Debug_1.2.3_windows_x64.zip'])
 		assert.equal(readFileSync(join(options.desktop, 'release', 'main', 'old.zip'), 'utf8'), 'main')
 		assert.equal(existsSync(staging), false)
 	} finally { rmSync(options.desktop, { recursive: true, force: true }) }
@@ -57,7 +57,7 @@ test('archiving failure preserves previous artifacts and cleans temporary files'
 	let staging
 	try {
 		assert.throws(() => packageWindows({ ...options, env: {}, run(command, args, config) {
-			staging = config.env.DEVICEDOCK_ZIP_STAGE
+			staging = config.env.SERIAL_ZIP_STAGE
 			return { status: 1 }
 		} }), /ZIP 打包失败/)
 		assert.equal(existsSync(staging), false)
@@ -82,7 +82,7 @@ test('signing runs the pinned Tauri CLI with the target version and keeps .sig n
 		let signEnv
 		const result = packageWindows({ ...options, env, run(command, args, config) {
 			if (command === 'powershell.exe') {
-				writeFileSync(config.env.DEVICEDOCK_ZIP_OUT, 'mock archive')
+				writeFileSync(config.env.SERIAL_ZIP_OUT, 'mock archive')
 				return { status: 0 }
 			}
 			// signer sign：私钥只经环境变量传递，绝不出现在命令行参数里(ps 可见)
@@ -100,8 +100,8 @@ test('signing runs the pinned Tauri CLI with the target version and keeps .sig n
 		assert.equal(signArgs[signArgs.indexOf('--app-version') + 1], '1.2.3')
 		assert.equal(signEnv.TAURI_SIGNING_PRIVATE_KEY, 'secret-key-value', '私钥经子进程环境变量传递')
 		assert.match(result, /windows_x64\.zip$/)
-		assert.deepEqual(readdirSync(join(options.desktop, 'release', 'dev')).sort(), ['DeviceDock_1.2.3_windows_x64.zip', 'DeviceDock_1.2.3_windows_x64.zip.sig'])
-		assert.equal(readFileSync(join(options.desktop, 'release', 'dev', 'DeviceDock_1.2.3_windows_x64.zip.sig'), 'utf8').trim(), 'c2lnbmF0dXJl')
+		assert.deepEqual(readdirSync(join(options.desktop, 'release', 'dev')).sort(), ['Serial-Debug_1.2.3_windows_x64.zip', 'Serial-Debug_1.2.3_windows_x64.zip.sig'])
+		assert.equal(readFileSync(join(options.desktop, 'release', 'dev', 'Serial-Debug_1.2.3_windows_x64.zip.sig'), 'utf8').trim(), 'c2lnbmF0dXJl')
 	} finally { rmSync(options.desktop, { recursive: true, force: true }) }
 })
 
@@ -113,7 +113,7 @@ test('a private key file is read and passed through the environment, not the com
 		let seen
 		packageWindows({ ...options, env: { TAURI_UPDATER_PUBLIC_KEY: 'public', TAURI_SIGNING_PRIVATE_KEY: keyFile }, run(command, args, config) {
 			if (command === 'powershell.exe') {
-				writeFileSync(config.env.DEVICEDOCK_ZIP_OUT, 'mock archive')
+				writeFileSync(config.env.SERIAL_ZIP_OUT, 'mock archive')
 				return { status: 0 }
 			}
 			seen = { args, env: config.env }
@@ -131,7 +131,7 @@ test('signing failure fails the build instead of publishing an unsigned update',
 		const env = { TAURI_UPDATER_PUBLIC_KEY: 'public', TAURI_SIGNING_PRIVATE_KEY: 'secret-key' }
 		assert.throws(() => packageWindows({ ...options, env, run(command, args, config) {
 			if (command === 'powershell.exe') {
-				writeFileSync(config.env.DEVICEDOCK_ZIP_OUT, 'mock archive')
+				writeFileSync(config.env.SERIAL_ZIP_OUT, 'mock archive')
 				return { status: 0 }
 			}
 			return { status: 1 }
@@ -145,13 +145,13 @@ test('no public key means an unsigned local ZIP is still produced', () => {
 	try {
 		const result = packageWindows({ ...options, env: { TAURI_SIGNING_PRIVATE_KEY: 'secret-key' }, run(command, args, config) {
 			if (command === 'powershell.exe') {
-				writeFileSync(config.env.DEVICEDOCK_ZIP_OUT, 'mock archive')
+				writeFileSync(config.env.SERIAL_ZIP_OUT, 'mock archive')
 				return { status: 0 }
 			}
 			throw new Error('signing must not run without a public key')
 		} })
 		assert.ok(existsSync(result))
-		assert.deepEqual(readdirSync(join(options.desktop, 'release', 'dev')), ['DeviceDock_1.2.3_windows_x64.zip'])
+		assert.deepEqual(readdirSync(join(options.desktop, 'release', 'dev')), ['Serial-Debug_1.2.3_windows_x64.zip'])
 	} finally { rmSync(options.desktop, { recursive: true, force: true }) }
 })
 
@@ -160,13 +160,13 @@ test('Windows PowerShell produces an extractable ZIP with program, helper and RE
 	try {
 		const archive = packageWindows(options)
 		const extracted = join(options.desktop, 'extracted')
-		const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $env:DEVICEDOCK_ZIP_OUT -DestinationPath $env:DEVICEDOCK_ZIP_EXTRACT'], {
-			encoding: 'utf8', env: { ...process.env, DEVICEDOCK_ZIP_OUT: archive, DEVICEDOCK_ZIP_EXTRACT: extracted }
+		const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $env:SERIAL_ZIP_OUT -DestinationPath $env:SERIAL_ZIP_EXTRACT'], {
+			encoding: 'utf8', env: { ...process.env, SERIAL_ZIP_OUT: archive, SERIAL_ZIP_EXTRACT: extracted }
 		})
 		assert.equal(result.status, 0, result.stderr)
-		assert.deepEqual(readdirSync(extracted).sort(), ['DeviceDock.exe', 'README.txt', 'devicedock-updater.exe'])
-		assert.equal(readFileSync(join(extracted, 'DeviceDock.exe'), 'utf8'), 'test executable')
-		assert.equal(readFileSync(join(extracted, 'devicedock-updater.exe'), 'utf8'), 'test helper')
+		assert.deepEqual(readdirSync(extracted).sort(), ['README.txt', 'Serial Debug.exe', 'serial-debug-updater.exe'])
+		assert.equal(readFileSync(join(extracted, 'Serial Debug.exe'), 'utf8'), 'test executable')
+		assert.equal(readFileSync(join(extracted, 'serial-debug-updater.exe'), 'utf8'), 'test helper')
 	} finally { rmSync(options.desktop, { recursive: true, force: true }) }
 })
 
@@ -191,12 +191,12 @@ test('absolute CARGO_TARGET_DIR packages the helper from that directory', () => 
 		process.env.CARGO_TARGET_DIR = absolute
 		const dir = join(absolute, options.target, 'release')
 		mkdirSync(dir, { recursive: true })
-		writeFileSync(join(dir, 'devicedock.exe'), 'abs executable')
-		writeFileSync(join(dir, 'devicedock-updater.exe'), 'abs helper')
+		writeFileSync(join(dir, 'serial-debug.exe'), 'abs executable')
+		writeFileSync(join(dir, 'serial-debug-updater.exe'), 'abs helper')
 		packageWindows({ ...options, env: {}, run(command, args, config) {
-			assert.equal(readFileSync(join(config.env.DEVICEDOCK_ZIP_STAGE, 'DeviceDock.exe'), 'utf8'), 'abs executable')
-			assert.equal(readFileSync(join(config.env.DEVICEDOCK_ZIP_STAGE, 'devicedock-updater.exe'), 'utf8'), 'abs helper')
-			writeFileSync(config.env.DEVICEDOCK_ZIP_OUT, 'archive')
+			assert.equal(readFileSync(join(config.env.SERIAL_ZIP_STAGE, 'Serial Debug.exe'), 'utf8'), 'abs executable')
+			assert.equal(readFileSync(join(config.env.SERIAL_ZIP_STAGE, 'serial-debug-updater.exe'), 'utf8'), 'abs helper')
+			writeFileSync(config.env.SERIAL_ZIP_OUT, 'archive')
 			return { status: 0 }
 		} })
 	} finally {
@@ -213,12 +213,12 @@ test('relative CARGO_TARGET_DIR follows Cargo src-tauri working directory', () =
 		process.env.CARGO_TARGET_DIR = 'custom-target'
 		const dir = join(options.desktop, 'src-tauri', 'custom-target', options.target, 'release')
 		mkdirSync(dir, { recursive: true })
-		writeFileSync(join(dir, 'devicedock.exe'), 'custom-target executable')
-		writeFileSync(join(dir, 'devicedock-updater.exe'), 'custom-target helper')
+		writeFileSync(join(dir, 'serial-debug.exe'), 'custom-target executable')
+		writeFileSync(join(dir, 'serial-debug-updater.exe'), 'custom-target helper')
 		packageWindows({ ...options, env: {}, run(command, args, config) {
-			assert.equal(readFileSync(join(config.env.DEVICEDOCK_ZIP_STAGE, 'DeviceDock.exe'), 'utf8'), 'custom-target executable')
-			assert.equal(readFileSync(join(config.env.DEVICEDOCK_ZIP_STAGE, 'devicedock-updater.exe'), 'utf8'), 'custom-target helper')
-			writeFileSync(config.env.DEVICEDOCK_ZIP_OUT, 'archive')
+			assert.equal(readFileSync(join(config.env.SERIAL_ZIP_STAGE, 'Serial Debug.exe'), 'utf8'), 'custom-target executable')
+			assert.equal(readFileSync(join(config.env.SERIAL_ZIP_STAGE, 'serial-debug-updater.exe'), 'utf8'), 'custom-target helper')
+			writeFileSync(config.env.SERIAL_ZIP_OUT, 'archive')
 			return { status: 0 }
 		} })
 	} finally {

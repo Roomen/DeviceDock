@@ -7,7 +7,7 @@ edition = "2021"
 publish = false
 
 [[bin]]
-name = "devicedock-updater"
+name = "serial-debug-updater"
 path = "src/main.rs"
 
 [dependencies]

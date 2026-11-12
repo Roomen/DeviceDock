@@ -17,8 +17,8 @@ export function compareVersions(a, b) {
 // bundle_type 为空，插件先找 windows-x86_64-{installer} 再回落到 windows-x86_64。
 // 载荷就是可手动使用的便携 ZIP，helper 从 ZIP 里取主程序并替换 EXE。
 export const PLATFORM_PACKAGES = {
-	'darwin-aarch64': name => `DeviceDock_${name.version}_macos_arm64.app.tar.gz`,
-	'windows-x86_64': name => `DeviceDock_${name.version}_windows_x64.zip`
+	'darwin-aarch64': name => `Serial-Debug_${name.version}_macos_arm64.app.tar.gz`,
+	'windows-x86_64': name => `Serial-Debug_${name.version}_windows_x64.zip`
 }
 
 export function createManifest({ directory, version, channel, notes = '', previous, pubDate = new Date().toISOString() }) {
@@ -35,7 +35,7 @@ export function createManifest({ directory, version, channel, notes = '', previo
 		if (!signature || !/^[A-Za-z0-9+/=]+$/.test(signature)) throw new Error(`更新包签名无效: ${name}`)
 		entries[platform] = {
 			signature,
-			url: `https://github.com/Roomen/DeviceDock/releases/download/${tag}/${encodeURIComponent(name)}`
+			url: `https://github.com/Roomen/web-serial-debug/releases/download/${tag}/${encodeURIComponent(name)}`
 		}
 	}
 	return { version, notes, pub_date: pubDate, platforms: entries }

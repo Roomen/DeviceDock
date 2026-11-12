@@ -6,7 +6,7 @@ on:
     branches: [dev]
     tags: [desktop-main-v*]
     paths:
-      - package.json
+      - js/version.js
       - .github/workflows/desktop-release.yml
   workflow_dispatch:
     inputs:
@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: node --test desktop/scripts/desktop-resources.test.mjs desktop/scripts/updater-manifest.test.mjs desktop/scripts/prune-dev-releases.test.mjs desktop/scripts/portable-windows.test.mjs
+      - run: node --test desktop/scripts/updater-manifest.test.mjs desktop/scripts/installer-templates.test.mjs desktop/scripts/prune-dev-releases.test.mjs desktop/scripts/portable-windows.test.mjs
       - id: meta
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,10 +50,10 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          version=$(node -p "require('./package.json').version")
+          version=$(node -e "const m=require('fs').readFileSync('js/version.js','utf8').match(/APP_VERSION\s*=\s*['\"](\d+\.\d+\.\d+)['\"]/);if(!m)process.exit(1);console.log(m[1])")
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             if [ "$REF_NAME" != "desktop-main-v$version" ]; then
-              echo "::error::Release tag must match package.json"; exit 1
+              echo "::error::Release tag must match js/version.js"; exit 1
             fi
             main_sha=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
             if [ "$GITHUB_SHA" != "$main_sha" ]; then
@@ -75,7 +75,7 @@ jobs:
           publish=true
           if gh release view "desktop-$REF_NAME-v$version" > /dev/null 2>&1; then
             publish=false
-            echo "::notice::desktop-$REF_NAME-v$version already released; bump package.json to publish again"
+            echo "::notice::desktop-$REF_NAME-v$version already released; bump js/version.js to publish again"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "channel=$REF_NAME" >> "$GITHUB_OUTPUT"
@@ -97,7 +97,6 @@ jobs:
             name: windows-x64
     runs-on: ${{ matrix.os }}
     env:
-      RUSTUP_TOOLCHAIN: stable
       RELEASE_CHANNEL: ${{ needs.prepare.outputs.channel }}
       TAURI_UPDATER_PUBLIC_KEY: ${{ needs.prepare.outputs.updater == 'true' && vars.TAURI_UPDATER_PUBLIC_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
@@ -109,63 +108,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
-      - name: Configure npm cache and inspect public compiler identity
-        id: compiler
-        run: node desktop/scripts/cache-key.mjs
-      - name: Restore npm cache
-        id: npm-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          path: |
-            ${{ runner.temp }}/devicedock-npm-cache/_cacache
-          key: npm-download-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'desktop/package-lock.json') }}
-          restore-keys: |
-            npm-download-v1-${{ runner.os }}-${{ runner.arch }}-
-      - name: Restore cargo-source cache
-        id: cargo-source-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/registry/src/
-            ~/.cargo/git/db/
-          key: cargo-source-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}
-          restore-keys: |
-            cargo-source-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.rust }}-
-      - name: Restore cargo-target cache
-        id: cargo-target-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
-        with:
-          path: |
-            desktop/src-tauri/target/
-            !desktop/src-tauri/target/**/bundle/**
-            !desktop/src-tauri/target/**/*.app/**
-            !desktop/src-tauri/target/**/*.dmg
-            !desktop/src-tauri/target/**/*.tar.gz
-            !desktop/src-tauri/target/**/*.zip
-            !desktop/src-tauri/target/**/*.sig
-            !desktop/src-tauri/target/**/devicedock
-            !desktop/src-tauri/target/**/devicedock.exe
-            !desktop/src-tauri/target/**/devicedock-updater
-            !desktop/src-tauri/target/**/devicedock-updater.exe
-            !desktop/src-tauri/target/**/deps/*devicedock*
-            !desktop/src-tauri/target/**/deps/*portable_updater*
-            !desktop/src-tauri/target/**/build/devicedock-*/**
-            !desktop/src-tauri/target/**/build/portable-updater-*/**
-            !desktop/src-tauri/target/**/.fingerprint/devicedock-*/**
-            !desktop/src-tauri/target/**/.fingerprint/portable-updater-*/**
-            !desktop/src-tauri/target/**/incremental/devicedock*/**
-            !desktop/src-tauri/target/**/incremental/portable_updater*/**
-          key: cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}-
-            cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-
-      - run: npm ci
+          workspaces: desktop/src-tauri
+          key: ${{ matrix.target }}
       - name: Import Developer ID certificate into temporary keychain
         if: runner.os == 'macOS' && needs.prepare.outputs.apple == 'true'
         env:
@@ -193,14 +142,6 @@ jobs:
       - name: Verify portable ZIP packaging
         if: runner.os == 'Windows'
         run: node --test desktop/scripts/portable-windows.test.mjs
-      - name: Verify native driver build
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --features native-ble,native-spp --lib
-      - name: Verify Windows test activation manifest
-        if: success() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py --verify-test-manifests
-      - name: Diagnose Windows test loader
-        if: failure() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py
       - name: Build desktop artifacts
         working-directory: desktop
         shell: bash
@@ -219,10 +160,7 @@ jobs:
           fi
           [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           [ -n "$TAURI_UPDATER_PUBLIC_KEY" ] || unset TAURI_UPDATER_PUBLIC_KEY
-          npm run build -- --features native-ble,native-spp --target ${{ matrix.target }}
-      - name: Verify Windows application activation manifest
-        if: success() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py --verify-app-manifests
+          npm run build -- --target ${{ matrix.target }}
       - name: Verify portable update artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -237,7 +175,7 @@ jobs:
           import { tmpdir } from 'node:os';
           import { spawnSync } from 'node:child_process';
           const dir = join('desktop', 'release', process.env.RELEASE_CHANNEL);
-          const zips = readdirSync(dir).filter((n) => /^DeviceDock_\d+\.\d+\.\d+_windows_x64\.zip$/.test(n));
+          const zips = readdirSync(dir).filter((n) => /^Serial-Debug_\d+\.\d+\.\d+_windows_x64\.zip$/.test(n));
           if (zips.length !== 1) throw new Error(`expected exactly one portable ZIP, found ${zips.length}`);
           const zip = join(dir, zips[0]);
           if (process.env.UPDATER === 'true') {
@@ -252,9 +190,9 @@ jobs:
           const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $env:Z -DestinationPath $env:D'], { env: { ...process.env, Z: zip, D: out } });
           if (r.status !== 0) throw new Error('portable ZIP cannot be extracted');
           const entries = readdirSync(out).sort();
-          const needed = ['DeviceDock.exe', 'README.txt', 'devicedock-updater.exe'];
+          const needed = ['Serial Debug.exe', 'README.txt', 'serial-debug-updater.exe'];
           for (const name of needed) if (!entries.includes(name)) throw new Error(`portable ZIP is missing ${name}`);
-          if (readFileSync(join(out, 'DeviceDock.exe')).length < 1024) throw new Error('portable ZIP program looks truncated');
+          if (readFileSync(join(out, 'Serial Debug.exe')).length < 1024) throw new Error('portable ZIP program looks truncated');
           rmSync(out, { recursive: true, force: true });
           console.log('portable ZIP contents verified: ' + entries.join(', '));
           JS
@@ -309,9 +247,9 @@ jobs:
           let notes = (e.RELEASE_NOTES || '').trim();
           if (!notes) notes = e.CHANNEL === 'dev'
             ? `预览版，构建自 dev 分支 ${e.GITHUB_SHA.slice(0, 7)}。\n\n${(e.COMMIT_MESSAGE || '').split('\n')[0]}`
-            : `DeviceDock ${e.VERSION}`;
-          if (e.APPLE !== 'true') notes += '\n\n> macOS 安装包未经 Apple 签名公证：首次打开被拦截时点「完成」，到「系统设置 → 隐私与安全性」底部点「仍要打开」并输入密码。若仍提示「已损坏」，在终端执行 `xattr -cr "/Applications/DeviceDock.app"` 后再打开。';
-          notes += '\n\nWindows 提供 ZIP 免安装版：解压后运行 DeviceDock.exe，需要系统已安装 Microsoft Edge WebView2 Runtime。程序内可直接检查并安装更新(下载、验签后在退出时替换程序并自动重启)；也可以手动关闭程序后解压新版覆盖。';
+            : `Serial Debug ${e.VERSION}`;
+          if (e.APPLE !== 'true') notes += '\n\n> macOS 安装包未经 Apple 签名公证：首次打开被拦截时点「完成」，到「系统设置 → 隐私与安全性」底部点「仍要打开」并输入密码。若仍提示「已损坏」，在终端执行 `xattr -cr "/Applications/Serial Debug.app"` 后再打开。';
+          notes += '\n\nWindows 提供 ZIP 免安装版：解压后运行 Serial Debug.exe，需要系统已安装 Microsoft Edge WebView2 Runtime。程序内可直接检查并安装更新(下载、验签后在退出时替换程序并自动重启)；也可以手动关闭程序后解压新版覆盖。';
           if (e.UPDATER !== 'true') notes += '\n\n> 此版本未启用应用内更新，新版本请到 Releases 页下载。';
           writeFileSync('release-notes.md', notes + '\n');
           JS

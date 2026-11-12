@@ -133,6 +133,9 @@ fn drain(release: OwnerRelease<()>) -> Result<(), String> {
 		Err("BLE 系统操作尚未结束，已请求取消，请稍后重试释放".into())
 	}
 }
+pub fn release_owner(state: &BleState, label: &str) -> Result<(), String> {
+	drain(state.release(label))
+}
 pub fn release_destroyed(state: &BleState, label: &str) {
 	let release = state.release(label);
 	tauri::async_runtime::spawn_blocking(move || {
@@ -146,6 +149,36 @@ pub async fn ble_release_owned(webview: tauri::Webview, state: State<'_, BleStat
 		.await
 		.map_err(|_| "BLE 回收任务失败")??;
 	Ok(state.owners.owner(webview.label()).begin(None)?.generation)
+}
+// One Write Request / Write Command carries at most ATT_MTU - 3 bytes. bluest's max_write_len
+// returns exactly that on both hosts (CoreBluetooth maximumWriteValueLength(.withoutResponse),
+// WinRT MaxPduSize - 3), so writes with response stay single ATT writes, never prepare/execute.
+// 20 is the ATT_MTU 23 floor every link supports; 512 is the GATT attribute-value ceiling, so a
+// larger trusted value (ATT_MTU 517 -> 514 on Windows) is capped to 512. Values below 20 or above
+// the u16 ATT_MTU bound (Windows' MaxPduSize - 3 wrapping around) are untrusted and fall back to 20.
+const BLE_MIN_WRITE_LEN: usize = 20;
+const BLE_MAX_WRITE_LEN: usize = 512;
+const BLE_MAX_REPORTED_WRITE_LEN: usize = u16::MAX as usize - 3;
+fn write_chunk_len(reported: Option<usize>) -> usize {
+	match reported {
+		Some(len) if (BLE_MIN_WRITE_LEN..=BLE_MAX_REPORTED_WRITE_LEN).contains(&len) => len.min(BLE_MAX_WRITE_LEN),
+		_ => BLE_MIN_WRITE_LEN,
+	}
+}
+// A pending CoreBluetooth connect never times out by itself. Dropping bluest's connect future
+// issues cancelPeripheralConnection, so close/timeout physically stops the attempt instead of
+// leaving it retrying in the background while holding the claim and the update barrier.
+const BLE_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const BLE_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(20);
+// Cleanup must always finish: an unbounded wait here holds the claim forever.
+const BLE_UNSUBSCRIBE_WAIT: Duration = Duration::from_secs(2);
+const BLE_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+async fn bounded<T>(work: impl std::future::Future<Output = Result<T, String>>, cancel: &CancellationToken, limit: Duration, timeout: &str) -> Result<T, String> {
+	tokio::select! {
+		biased;
+		_ = cancel.cancelled() => Err("BLE 操作已取消".into()),
+		result = tokio::time::timeout(limit, work) => result.map_err(|_| timeout.to_string())?,
+	}
 }
 fn current(op: &OwnerOperation, cancel: &CancellationToken) -> Result<(), String> {
 	if op.is_current() && !cancel.is_cancelled() {
@@ -349,6 +382,8 @@ pub async fn ble_open(
 			}),
 		);
 	}
+	// Expose the handle before connecting, so the page can cancel a connect that is still pending.
+	let _ = on_event.send(serde_json::json!({ "type": "opening", "handle": id }));
 	let app = webview.app_handle().clone();
 	let (reply, reply_rx) = oneshot::channel();
 	tauri::async_runtime::spawn(async move {
@@ -361,29 +396,44 @@ pub async fn ble_open(
 		let result: Result<(), String> = async {
 			let device = device.as_ref().map_err(|_| "BLE 设备已不可用，请重新扫描")?;
 			current(&op, &cancel)?;
-			adapter.connect_device(device).await.map_err(|_| "BLE 连接失败，请检查设备与系统权限")?;
+			bounded(
+				async { adapter.connect_device(device).await.map_err(|_| "BLE 连接失败，请检查设备与系统权限".to_string()) },
+				&cancel,
+				BLE_CONNECT_TIMEOUT,
+				"BLE 连接超时：设备未响应，请确认设备在附近并处于可连接状态",
+			)
+			.await?;
 			current(&op, &cancel)?;
-			let services = device.discover_services().await.map_err(|_| "BLE 服务发现失败")?;
-			let mut chars: Vec<Characteristic> = Vec::new();
-			let mut views = Vec::new();
-			for service in &services {
-				current(&op, &cancel)?;
-				let service_uuid = service.uuid_async().await.map_err(|_| "BLE 服务信息不可用")?;
-				for c in service.discover_characteristics().await.map_err(|_| "BLE 特征发现失败")? {
-					if chars.len() >= 1024 {
-						return Err("BLE 特征数量过多".into());
+			let (chars, views) = bounded(
+				async {
+					let services = device.discover_services().await.map_err(|_| "BLE 服务发现失败")?;
+					let mut chars: Vec<Characteristic> = Vec::new();
+					let mut views = Vec::new();
+					for service in &services {
+						current(&op, &cancel)?;
+						let service_uuid = service.uuid_async().await.map_err(|_| "BLE 服务信息不可用")?;
+						for c in service.discover_characteristics().await.map_err(|_| "BLE 特征发现失败")? {
+							if chars.len() >= 1024 {
+								return Err("BLE 特征数量过多".to_string());
+							}
+							let characteristic = c.uuid_async().await.map_err(|_| "BLE 特征信息不可用")?;
+							let props = c.properties().await.map_err(|_| "BLE 特征属性不可用")?.to_bits();
+							views.push(CharacteristicView {
+								id: chars.len(),
+								service: service_uuid,
+								characteristic,
+								props,
+							});
+							chars.push(c);
+						}
 					}
-					let characteristic = c.uuid_async().await.map_err(|_| "BLE 特征信息不可用")?;
-					let props = c.properties().await.map_err(|_| "BLE 特征属性不可用")?.to_bits();
-					views.push(CharacteristicView {
-						id: chars.len(),
-						service: service_uuid,
-						characteristic,
-						props,
-					});
-					chars.push(c);
-				}
-			}
+					Ok((chars, views))
+				},
+				&cancel,
+				BLE_DISCOVERY_TIMEOUT,
+				"BLE 服务发现超时，请重试",
+			)
+			.await?;
 			current(&op, &cancel)?;
 			if reply
 				.take()
@@ -481,7 +531,13 @@ pub async fn ble_open(
 								_operation,
 							} => {
 								let result = async {
-									for chunk in data.chunks(20) {
+									// Read per frame: the ATT MTU can grow after connect (Windows MaxPduSizeChanged).
+									let chunk_len = write_chunk_len(
+										std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tx.max_write_len()))
+											.ok()
+											.and_then(Result::ok),
+									);
+									for chunk in data.chunks(chunk_len) {
 										current(&op, &cancel)?;
 										let result = if profile.response {
 											tx.write(chunk).await
@@ -514,23 +570,34 @@ pub async fn ble_open(
 			// Notification-stream Drop requests unsubscribe asynchronously on both hosts.
 			// Observe it before releasing the connection/claim, preventing a late CCCD-disable
 			// from racing a new connection. Unknown close state remains busy/retryable.
-			while device.is_connected().await {
-				if matches!(rx.is_notifying().await, Ok(false)) {
-					break;
+			// Bound every native query, not just the loop: on Windows is_notifying reads the CCCD
+			// and may not return while the link is going down.
+			let deadline = tokio::time::Instant::now() + BLE_UNSUBSCRIBE_WAIT;
+			let _ = tokio::time::timeout_at(deadline, async {
+				while device.is_connected().await {
+					if !matches!(rx.is_notifying().await, Ok(true)) {
+						break;
+					}
+					tokio::time::sleep(Duration::from_millis(20)).await;
 				}
-				tokio::time::sleep(Duration::from_millis(20)).await;
-			}
+			})
+			.await;
 			result
 		}
 		.await;
 		// All characteristic handles/notification guards above are dropped before close.
 		let _ = on_event.send(serde_json::json!({"type":"lost"}));
 		if let Ok(device) = &device {
-			while adapter.disconnect_device(device).await.is_err() {
-				if !device.is_connected().await {
+			// CoreBluetooth reports didDisconnect only for a live connection: calling
+			// disconnect_device after the link already dropped (or while a connect was just
+			// cancelled) waits forever. Only disconnect a connected device and bound each try;
+			// while it stays connected keep the claim and retry, never report a release that
+			// did not happen (the page then sees close failure and stays retryable).
+			while device.is_connected().await {
+				if matches!(tokio::time::timeout(BLE_DISCONNECT_TIMEOUT, adapter.disconnect_device(device)).await, Ok(Ok(()))) {
 					break;
 				}
-				tokio::time::sleep(Duration::from_secs(1)).await;
+				tokio::time::sleep(Duration::from_millis(500)).await;
 			}
 		}
 		drop(device); // Windows closes here, after the last GATT child was dropped.
@@ -615,6 +682,29 @@ pub async fn ble_close(webview: tauri::Webview, state: State<'_, BleState>, hand
 #[cfg(test)]
 mod tests {
 	use super::*;
+	#[test]
+	fn write_chunk_len_follows_reported_limit_and_falls_back_to_20() {
+		assert_eq!(write_chunk_len(Some(244)), 244);
+		assert_eq!(write_chunk_len(Some(20)), 20);
+		assert_eq!(write_chunk_len(Some(512)), 512);
+		assert_eq!(write_chunk_len(None), 20);
+		assert_eq!(write_chunk_len(Some(0)), 20);
+		assert_eq!(write_chunk_len(Some(19)), 20);
+		// Trusted large values (Windows ATT_MTU 517 -> 514, u16 max MTU -> 65532) cap at 512.
+		assert_eq!(write_chunk_len(Some(513)), 512);
+		assert_eq!(write_chunk_len(Some(514)), 512);
+		assert_eq!(write_chunk_len(Some(65532)), 512);
+		// Beyond any u16 ATT_MTU, including Windows MaxPduSize - 3 wrapping in release builds.
+		assert_eq!(write_chunk_len(Some(65533)), 20);
+		assert_eq!(write_chunk_len(Some(usize::MAX - 2)), 20);
+		let data: Vec<u8> = (0..1380u32).map(|i| (i % 251) as u8).collect();
+		let chunks: Vec<&[u8]> = data.chunks(write_chunk_len(Some(244))).collect();
+		assert_eq!(chunks.iter().map(|c| c.len()).collect::<Vec<_>>(), vec![244, 244, 244, 244, 244, 160]);
+		assert_eq!(chunks.concat(), data);
+		let capped: Vec<&[u8]> = data.chunks(write_chunk_len(Some(514))).collect();
+		assert_eq!(capped.iter().map(|c| c.len()).collect::<Vec<_>>(), vec![512, 512, 356]);
+		assert_eq!(capped.concat(), data);
+	}
 	#[tokio::test]
 	async fn pause_terminates_wait_for_adapter_even_before_ready() {
 		let cancel = CancellationToken::new();
@@ -633,6 +723,20 @@ mod tests {
 		};
 		let (result, _) = tokio::join!(waiting, pause);
 		assert!(!result.unwrap());
+	}
+	#[tokio::test]
+	async fn bounded_native_waits_end_on_close_or_timeout() {
+		let cancel = CancellationToken::new();
+		let closing = async {
+			tokio::task::yield_now().await;
+			cancel.cancel();
+		};
+		let (result, _) = tokio::join!(bounded(std::future::pending::<Result<(), String>>(), &cancel, Duration::from_secs(60), "timeout"), closing);
+		assert_eq!(result.unwrap_err(), "BLE 操作已取消");
+		let cancel = CancellationToken::new();
+		let result = bounded(std::future::pending::<Result<(), String>>(), &cancel, Duration::from_millis(10), "timeout").await;
+		assert_eq!(result.unwrap_err(), "timeout");
+		assert_eq!(bounded(async { Ok::<_, String>(7) }, &cancel, Duration::from_secs(1), "timeout").await.unwrap(), 7);
 	}
 	#[test]
 	fn stopping_scan_keeps_generation_and_claim_until_task_drains() {

@@ -5,11 +5,11 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { compareVersions, createManifest } from './updater-manifest.mjs'
 import { promotePointer } from './channel-pointer.mjs'
-import { macSigningConfig, updaterConfig, verifyMacReleaseJobs } from './release-config.mjs'
+import { macSigningConfig, updaterConfig } from './release-config.mjs'
 
 function packages(dir, version, names) {
 	for (const name of names) {
-		const file = `DeviceDock_${version}_${name}`
+		const file = `Serial-Debug_${version}_${name}`
 		writeFileSync(join(dir, file), 'package')
 		writeFileSync(join(dir, file + '.sig'), 'c2lnbmF0dXJl\n')
 	}
@@ -27,14 +27,14 @@ test('manifest covers macOS installer update and Windows portable update, nothin
 		assert.equal(manifest.platforms['windows-x86_64-nsis'], undefined)
 		assert.equal(manifest.platforms['windows-x86_64-msi'], undefined)
 		assert.equal(manifest.platforms['darwin-x86_64'], undefined)
-		assert.match(manifest.platforms['windows-x86_64'].url, /desktop-dev-v1\.71\.0\/DeviceDock_1\.71\.0_windows_x64\.zip$/)
+		assert.match(manifest.platforms['windows-x86_64'].url, /desktop-dev-v1\.71\.0\/Serial-Debug_1\.71\.0_windows_x64\.zip$/)
 		assert.throws(() => createManifest({ ...args, previous: { version: '1.71.0' } }), /必须高于/)
 		assert.throws(() => createManifest({ ...args, previous: { version: '2.0.0' } }), /必须高于/)
 		// 任一平台的签名无效都失败(先坏 Windows 的签名，macOS 的仍有效)
-		writeFileSync(join(dir, 'DeviceDock_1.71.0_windows_x64.zip.sig'), 'not a signature !!')
-		assert.throws(() => createManifest(args), /签名无效: DeviceDock_1\.71\.0_windows_x64\.zip/)
+		writeFileSync(join(dir, 'Serial-Debug_1.71.0_windows_x64.zip.sig'), 'not a signature !!')
+		assert.throws(() => createManifest(args), /签名无效: Serial-Debug_1\.71\.0_windows_x64\.zip/)
 		// 签名文件缺失也是失败，不是跳过该平台
-		rmSync(join(dir, 'DeviceDock_1.71.0_macos_arm64.app.tar.gz.sig'))
+		rmSync(join(dir, 'Serial-Debug_1.71.0_macos_arm64.app.tar.gz.sig'))
 		assert.throws(() => createManifest(args), /ENOENT/)
 	} finally { rmSync(dir, { recursive: true, force: true }) }
 })
@@ -44,12 +44,12 @@ test('a manifest missing either platform fails instead of publishing a partial o
 	try {
 		// 只有 Windows 包：macOS 客户端必须也拿不到半份清单，构建直接失败
 		packages(dir, '1.71.0', ['windows_x64.zip'])
-		assert.throws(() => createManifest({ directory: dir, version: '1.71.0', channel: 'main' }), /缺少更新包: DeviceDock_1\.71\.0_macos_arm64\.app\.tar\.gz/)
+		assert.throws(() => createManifest({ directory: dir, version: '1.71.0', channel: 'main' }), /缺少更新包: Serial-Debug_1\.71\.0_macos_arm64\.app\.tar\.gz/)
 		// 只有 macOS 包：同样失败
-		rmSync(join(dir, 'DeviceDock_1.71.0_windows_x64.zip'))
-		rmSync(join(dir, 'DeviceDock_1.71.0_windows_x64.zip.sig'))
+		rmSync(join(dir, 'Serial-Debug_1.71.0_windows_x64.zip'))
+		rmSync(join(dir, 'Serial-Debug_1.71.0_windows_x64.zip.sig'))
 		packages(dir, '1.71.0', ['macos_arm64.app.tar.gz'])
-		assert.throws(() => createManifest({ directory: dir, version: '1.71.0', channel: 'main' }), /缺少更新包: DeviceDock_1\.71\.0_windows_x64\.zip/)
+		assert.throws(() => createManifest({ directory: dir, version: '1.71.0', channel: 'main' }), /缺少更新包: Serial-Debug_1\.71\.0_windows_x64\.zip/)
 	} finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
@@ -122,18 +122,4 @@ test('signature version binding is requested so a new version cannot pair with a
 	const unsigned = updaterConfig('dev', { TAURI_UPDATER_PUBLIC_KEY: 'public' }, 'darwin')
 	assert.equal(unsigned.bundle.createUpdaterArtifacts, false)
 	assert.equal(unsigned.plugins.updater.requireSignedVersion, true)
-})
-
-test('signed macOS targets include app and fail fast on missing updater archive or signature',()=>{
- const config=updaterConfig('main',{TAURI_UPDATER_PUBLIC_KEY:'public',TAURI_SIGNING_PRIVATE_KEY:'fixture'},'darwin')
- assert.deepEqual(config.bundle.targets,['app','dmg'])
- const directory=mkdtempSync(join(tmpdir(),'mac-release-gate-'))
- try{
-  const name='DeviceDock_0.1.2_macos_arm64',dmg=join(directory,name+'.dmg'),archive=join(directory,name+'.app.tar.gz');writeFileSync(dmg,'dmg')
-  const jobs=[{name:name+'.dmg',from:dmg}]
-  assert.throws(()=>verifyMacReleaseJobs(jobs,true),/archive missing/)
-  writeFileSync(archive,'archive');jobs.push({name:name+'.app.tar.gz',from:archive});assert.throws(()=>verifyMacReleaseJobs(jobs,true),/signature missing/)
-  writeFileSync(archive+'.sig','');assert.throws(()=>verifyMacReleaseJobs(jobs,true),/signature missing/)
-  writeFileSync(archive+'.sig','fixture-signature');verifyMacReleaseJobs(jobs,true);verifyMacReleaseJobs([],false)
- }finally{rmSync(directory,{recursive:true,force:true})}
 })

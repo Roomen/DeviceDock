@@ -219,7 +219,6 @@ impl Claims {
         }
     }
 
-    #[cfg(test)]
     pub fn contains(&self, key: &str) -> bool {
         self.map.lock().unwrap().contains_key(key)
     }

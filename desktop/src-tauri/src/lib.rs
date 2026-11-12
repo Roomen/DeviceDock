@@ -1,162 +1,329 @@
+mod ble;
+mod classic;
+// 桌面客户端外壳：加载与网页版同一份静态页面(desktop/scripts/stage-web.mjs 复制进 dist)，只补网页在 WebView 里缺的能力：
+// 原生串口(serial.rs，前端 js/transport-native-serial.js)、下载落盘、多窗口、原生菜单(menu.rs)与窗口外观。
+// 页面功能与网页版一致，平台差异只走 js/platform.js，页面侧胶水在 js/native-shell.js。
 mod lease;
 mod mcp;
-mod mcp_settings;
+mod menu;
+mod portable;
 mod serial;
 mod updater;
-mod portable;
-mod extensions;
-mod native_plugins;
-#[cfg(feature = "native-ble")]
-mod ble;
-#[cfg(feature = "native-spp")]
-mod classic;
-use tauri::{Manager,Emitter};
-mod menu;
-#[cfg(feature="native-smoke")]
-static NATIVE_SMOKE_STAGE:std::sync::Mutex<Option<String>>=std::sync::Mutex::new(None);
-#[cfg(feature="native-smoke")]
-fn record_native_smoke_stage(stage:&str) {
- if std::env::var("DEVICEDOCK_SMOKE_MODE").as_deref()==Ok("native-plugins") {eprintln!("native-plugin-smoke stage: {stage}");*NATIVE_SMOKE_STAGE.lock().unwrap()=Some(stage.to_string());}
+mod winstate;
+
+use tauri::webview::{DownloadEvent, NewWindowResponse};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_opener::OpenerExt;
+
+const MAIN: &str = "main";
+// 新窗口相对参考窗口错开的距离(逻辑像素)
+const CASCADE: f64 = 28.0;
+// macOS 一体化标题栏：红绿灯浮在页面左上(左侧导航栏顶部)，纵向与顶栏 46px 的中线对齐；页面按 html[data-platform='macos'] 留出空位
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS: (f64, f64) = (8.0, 15.0);
+
+// macOS 26+ 的液态玻璃：窗口与 WebView 透明，NSGlassEffectView 垫在 WebView 下面(window-vibrancy)，
+// 页面只给左侧导航、连接栏、状态栏上色(html[data-glass='liquid']，见 css/style.css 的桌面客户端外壳段)。
+// 系统没有这个类(26 以下)或 AppKit 版本不够时窗口保持不透明，外观与之前完全一致，最低系统仍是 11.0。
+#[cfg(target_os = "macos")]
+fn liquid_glass_supported() -> bool {
+	// 类不存在时按类名取用会 panic，所以先按名字查一遍；版本号是 window-vibrancy 自己的判据，两边一致才不会白透明
+	objc2::runtime::AnyClass::get(c"NSGlassEffectView").is_some() && unsafe { objc2_app_kit::NSAppKitVersionNumber } >= 2685.0
 }
-#[cfg(feature="native-smoke")]
-#[tauri::command]
-fn native_smoke_stage(stage:String) {if stage.len()<120 && stage.bytes().all(|c|c.is_ascii_alphanumeric() || b"-_:".contains(&c)){record_native_smoke_stage(&stage);}}
-#[cfg(feature = "native-smoke")]
-#[tauri::command]
-fn native_smoke_complete(app:tauri::AppHandle,result:serde_json::Value) {
- let pass=result["pass"]==true;
- let _=std::fs::write(std::env::temp_dir().join("devicedock-host-native-smoke.json"),result.to_string());
- app.exit(if pass {0}else{1});
+
+#[cfg(not(target_os = "macos"))]
+fn liquid_glass_supported() -> bool {
+	false
 }
-#[tauri::command]
-fn host_capabilities() -> serde_json::Value {
- serde_json::json!({"serial": cfg!(not(any(target_os = "android",target_os = "ios"))), "ble":cfg!(feature = "native-ble"), "nativePlugins":cfg!(any(target_os="macos",target_os="linux",windows)), "spp":cfg!(all(feature = "native-spp",any(target_os = "macos",windows)))})
+
+// 建窗后、显示前调用(都在主线程)：失败不 panic，页面照旧按实色画，窗口透明只是多一层桌面背景
+#[cfg(target_os = "macos")]
+fn apply_liquid_glass(window: &WebviewWindow) {
+	let options = window_vibrancy::LiquidGlassOptions::default();
+	if let Err(e) = window_vibrancy::apply_liquid_glass(window, options) {
+		eprintln!("液态玻璃未启用：{e:?}");
+	}
 }
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+
+#[cfg(not(target_os = "macos"))]
+fn apply_liquid_glass(_window: &WebviewWindow) {}
+
+// 同名文件已存在时按「名称 (n).扩展名」顺延，与浏览器下载的习惯一致
+fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+	let first = dir.join(name);
+	if !first.exists() {
+		return first;
+	}
+	let p = std::path::Path::new(name);
+	let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("download");
+	let ext = p.extension().and_then(|s| s.to_str()).map(|e| format!(".{}", e)).unwrap_or_default();
+	for i in 1.. {
+		let c = dir.join(format!("{} ({}){}", stem, i, ext));
+		if !c.exists() {
+			return c;
+		}
+	}
+	unreachable!()
+}
+
+// 第一个窗口固定叫 main(窗口位置大小只记它的，见 winstate.rs)，其余取最小的空闲 main-N
+fn next_label(app: &AppHandle) -> String {
+	if app.get_webview_window(MAIN).is_none() {
+		return MAIN.to_string();
+	}
+	(2..).map(|n| format!("main-{}", n)).find(|l| app.get_webview_window(l).is_none()).unwrap()
+}
+
+// 新开的窗口跟参考窗口(聚焦的，没有就任取一个)同大小、向右下错开；参考窗口最大化或全屏时不跟它的尺寸
+fn cascade_from(app: &AppHandle) -> Option<(LogicalPosition<f64>, LogicalSize<f64>)> {
+	let w = menu::focused_window(app).or_else(|| app.webview_windows().into_values().next())?;
+	if w.is_fullscreen().unwrap_or(false) || w.is_maximized().unwrap_or(false) || w.is_minimized().unwrap_or(false) {
+		return None;
+	}
+	let scale = w.scale_factor().ok()?;
+	let pos = w.outer_position().ok()?.to_logical::<f64>(scale);
+	let size = w.inner_size().ok()?.to_logical::<f64>(scale);
+	Some((LogicalPosition::new(pos.x + CASCADE, pos.y + CASCADE), size))
+}
+
+fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+	updater::with_window_creation(app, || build_window(app))
+}
+
+fn build_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
+	let label = next_label(app);
+	build_window_with_session(app, &label, None)
+}
+
+fn build_window_with_session(app: &AppHandle, label: &str, session: Option<&std::collections::HashMap<String, String>>) -> tauri::Result<WebviewWindow> {
+	let handle = app.clone();
+	let opener = app.clone();
+	let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
+		.title("Serial Debug")
+		.min_inner_size(960.0, 600.0)
+		// Tauri 的文件拖放处理会吞掉页面的 HTML5 drop(固件拖拽卡、快捷发送拖动排序)，页面不用 Tauri 的拖放事件
+		.disable_drag_drop_handler()
+		// 页面里 target="_blank" 的外部链接(GitHub、反馈)交给系统浏览器，不在客户端里开新窗口
+		.on_new_window(move |url, _features| {
+			if matches!(url.scheme(), "http" | "https" | "mailto") {
+				let _ = opener.opener().open_url(url.as_str(), None::<&str>);
+			}
+			NewWindowResponse::Deny
+		})
+		// 页面里的导出、固件产物都是 <a download> + blob：存进系统「下载」目录，再通知页面提示保存位置
+		.on_download(move |webview, event| {
+			match event {
+				DownloadEvent::Requested { destination, .. } => {
+					let name = destination
+						.file_name()
+						.and_then(|s| s.to_str())
+						.filter(|s| !s.is_empty())
+						.unwrap_or("download")
+						.to_string();
+					if let Ok(dir) = handle.path().download_dir() {
+						*destination = unique_path(&dir, &name);
+					}
+				}
+				DownloadEvent::Finished { path, success, .. } => {
+					// 只通知发起下载的那个窗口，多开时别的窗口不弹提示
+					let _ = webview.emit_to(webview.label(), "app-download", serde_json::json!({ "path": path, "success": success }));
+				}
+				_ => {}
+			}
+			true
+		});
+	let native_instance = serde_json::to_string(&format!("{}:{}", std::process::id(), label)).unwrap();
+	builder = builder.initialization_script(format!("window.__APP_NATIVE_INSTANCE_KEY__={native_instance};"));
+	if let Some(session) = session {
+		builder = builder.initialization_script(updater::session_script(session));
+	}
+	// 液态玻璃：窗口与 WebView 透明，页面首屏前就能读到标志(js/platform.js 写 html[data-glass='liquid']，不会先画实色再变透明)
+	let glass = liquid_glass_supported();
+	if glass {
+		// 一律先隐藏建窗：玻璃垫在 WebView 下面之后才显示，免得先闪一下透明的空窗口(主窗口另外还要等位置设好)
+		builder = builder
+			.transparent(true)
+			.visible(false)
+			.initialization_script("window.__APP_WINDOW_GLASS__ = true");
+	}
+	// main 的大小(逻辑像素)与位置由 winstate 还原并钳进目标屏工作区(没存过就居中)；其余窗口跟着参考窗口错开
+	let mut restore = None;
+	match (label != MAIN).then(|| cascade_from(app)).flatten() {
+		Some((pos, size)) => builder = builder.position(pos.x, pos.y).inner_size(size.width, size.height),
+		None if label == MAIN => {
+			let saved = winstate::load(app);
+			let (areas, primary) = winstate::areas(app);
+			let (size, pos) = winstate::plan(saved, &areas, primary);
+			// 先隐藏建出来，位置设好再显示，免得在别的屏上闪一下
+			builder = builder.inner_size(size.0, size.1).visible(false);
+			restore = Some((pos, saved.map(|s| s.maximized).unwrap_or(false)));
+		}
+		None => builder = builder.inner_size(winstate::DEFAULT_SIZE.0, winstate::DEFAULT_SIZE.1).center(),
+	}
+	#[cfg(target_os = "macos")]
+	{
+		builder = builder
+			.title_bar_style(tauri::TitleBarStyle::Overlay)
+			.hidden_title(true)
+			.traffic_light_position(LogicalPosition::new(TRAFFIC_LIGHTS.0, TRAFFIC_LIGHTS.1));
+	}
+	let window = builder.build()?;
+	if glass {
+		apply_liquid_glass(&window);
+	}
+	if let Some((pos, maximized)) = restore {
+		winstate::place(&window, pos, maximized);
+		window.show()?;
+	} else if glass {
+		// main-N 只按错开的位置建窗，这里补上显示
+		window.show()?;
+	}
+	#[cfg(target_os = "windows")]
+	window.hide_menu()?;
+	Ok(window)
+}
+
+// 双击一体化标题栏的空白处：按系统设置「连按窗口标题栏以」缩放 / 最小化 / 不动作(默认缩放)
+#[tauri::command]
+fn titlebar_double_click(window: tauri::WebviewWindow) {
+	#[cfg(target_os = "macos")]
+	{
+		let action = std::process::Command::new("defaults")
+			.args(["read", "-g", "AppleActionOnDoubleClick"])
+			.output()
+			.ok()
+			.filter(|o| o.status.success())
+			.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+			.unwrap_or_default();
+		match action.as_str() {
+			"Minimize" => {
+				let _ = window.minimize();
+				return;
+			}
+			"None" => return,
+			_ => {}
+		}
+	}
+	let _ = if window.is_maximized().unwrap_or(false) {
+		window.unmaximize()
+	} else {
+		window.maximize()
+	};
+}
+
 pub fn run() {
- #[cfg(feature="native-smoke")] record_native_smoke_stage("runtime-build");
- let builder = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build()).manage(mcp::McpState::default()).manage(serial::SerialState::default()).manage(updater::UpdateState::default()).manage(extensions::ExtensionState::default()).manage(native_plugins::NativePluginState::default())
- .register_uri_scheme_protocol("devicedock-native",|context,request|native_plugins::response(context.app_handle(),request.uri().path()))
- .register_uri_scheme_protocol("devicedock-extension",|context,request| {
-  match context.app_handle().path().app_data_dir() {Ok(root)=>extensions::response(&root.join("extensions-v1"),request.uri().path()),Err(_)=>tauri::http::Response::builder().status(404).body(Vec::new()).unwrap()}
- });
- #[cfg(feature = "native-ble")]
- let builder = builder.manage(ble::BleState::default());
- #[cfg(feature = "native-spp")]
- let builder = builder.manage(classic::ClassicState::default());
- let builder=builder.setup(|app|{
-  #[cfg(feature="native-smoke")] record_native_smoke_stage("setup-entered");
-  app.set_menu(menu::build(app.handle())?)?;
-  #[cfg(feature="native-smoke")] record_native_smoke_stage("setup-menu-built");
-  if !portable::startup_gate(app.handle()) {app.handle().exit(0);return Ok(())}
-  #[cfg(feature="native-smoke")] record_native_smoke_stage("setup-startup-gate-passed");
-  if let Some(handoff)=updater::read_handoff(app.handle()) {
-   for (label,session) in handoff.windows {build_window(app.handle(),&label,Some(&session))?;}
-   updater::remove_handoff(app.handle());
-  } else {build_window(app.handle(),"main",None)?;}
-  #[cfg(feature="native-smoke")]
-  {
-   record_native_smoke_stage("setup-window-built");
-   let handle=app.handle().clone();
-   std::thread::spawn(move||{std::thread::sleep(std::time::Duration::from_secs(30));let stage=NATIVE_SMOKE_STAGE.lock().unwrap().clone();let _=std::fs::write(std::env::temp_dir().join("devicedock-host-native-smoke.json"),serde_json::json!({"pass":false,"error":"native webview smoke timed out","lastStage":stage}).to_string());handle.exit(2);});
-  }
-  Ok(())
- }).on_menu_event(|app,event|{let id=event.id().as_ref();if id=="new-window"{let _=host_new_window(app.clone());}else if let Some(w)=app.webview_windows().into_values().find(|w|w.is_focused().unwrap_or(false)){let _=w.emit("app-menu",id);}}).on_page_load(|_webview,_payload| {
-  #[cfg(feature="native-smoke")] record_native_smoke_stage(if matches!(_payload.event(),tauri::webview::PageLoadEvent::Started){"page-load-started"}else{"page-load-finished"});
-  if matches!(_payload.event(),tauri::webview::PageLoadEvent::Started){mcp::release(&_webview.state::<mcp::McpState>(),_webview.label());let release=_webview.state::<native_plugins::NativePluginState>().release(_webview.label());tauri::async_runtime::spawn(native_plugins::finish_release(release));}
-  #[cfg(feature="native-smoke")]
-  if matches!(_payload.event(),tauri::webview::PageLoadEvent::Finished) && _webview.label()=="main" {
-   if std::env::var("DEVICEDOCK_SMOKE_MODE").as_deref()==Ok("sources"){let _=_webview.eval(include_str!("../../../tests/native-sources-smoke.js"));return}
-   if std::env::var("DEVICEDOCK_SMOKE_MODE").as_deref()==Ok("mcp"){let _=_webview.eval(include_str!("../../../tests/native-mcp-smoke.js"));return}
-   use sha2::Digest;
-   let fixture=std::env::var("DEVICEDOCK_SMOKE_BUNDLE").ok().and_then(|path|std::fs::read_to_string(path).ok()).unwrap_or_else(||include_str!("../../../tests/fixtures/trusted-package.json").to_string());
-   let hash=format!("{:x}",sha2::Sha256::digest(fixture.as_bytes()));
-   let template=if std::env::var("DEVICEDOCK_SMOKE_MODE").as_deref()==Ok("native-plugins"){include_str!("../../../tests/native-plugins-smoke.js")}else{include_str!("../../../tests/native-cache-smoke.js")};
-   let script=template
-    .replace("__FIXTURE_JSON__",&serde_json::to_string(&fixture).unwrap())
-    .replace("__FIXTURE_HASH__",&serde_json::to_string(&hash).unwrap());
-   record_native_smoke_stage("script-dispatch");
-   if _webview.eval(&script).is_err(){record_native_smoke_stage("script-eval-error");}
-  }
- });
- builder.invoke_handler(tauri::generate_handler![
-  #[cfg(feature = "native-smoke")]
-  native_smoke_complete,
-  #[cfg(feature="native-smoke")]
-  native_smoke_stage,
-  #[cfg(feature = "native-smoke")]
-  native_smoke_window_tool,
-  #[cfg(feature = "native-smoke")]
-  mcp::native_smoke_rpc,
-  #[cfg(feature = "native-smoke")]
-  updater::native_smoke_update_cycle,
-  mcp::mcp_register,mcp::mcp_reveal_token,mcp::mcp_regenerate_token,mcp::mcp_start,mcp::mcp_stop,mcp::mcp_commit,mcp::mcp_reply,
-  native_plugins::native_plugin_install,native_plugins::native_plugin_list,native_plugins::native_plugin_trust,native_plugins::native_plugin_revoke,native_plugins::native_plugin_start,native_plugins::native_plugin_call,native_plugins::native_plugin_stop,native_plugins::native_plugin_uninstall,native_plugins::native_plugin_page,native_plugins::native_plugin_release_owned,
-  host_new_window,host_capabilities, serial::serial_list, serial::serial_open, serial::serial_ack_receive, serial::serial_write,
-  serial::serial_set_signals, serial::serial_close, serial::serial_release_owned,
-  updater::app_update_check, updater::app_update_install, updater::app_update_ack, updater::app_update_result, extensions::extension_install, extensions::extension_download, extensions::extension_read_asset,
-  #[cfg(feature = "native-ble")]
-  ble::ble_release_owned,
-  #[cfg(feature = "native-ble")]
-  ble::ble_scan,
-  #[cfg(feature = "native-ble")]
-  ble::ble_scan_stop,
-  #[cfg(feature = "native-ble")]
-  ble::ble_open,
-  #[cfg(feature = "native-ble")]
-  ble::ble_start,
-  #[cfg(feature = "native-ble")]
-  ble::ble_write,
-  #[cfg(feature = "native-ble")]
-  ble::ble_close,
-  #[cfg(feature = "native-spp")]
-  classic::classic_release_owned,
-  #[cfg(feature = "native-spp")]
-  classic::classic_devices,
-  #[cfg(feature = "native-spp")]
-  classic::classic_discover,
-  #[cfg(feature = "native-spp")]
-  classic::classic_open,
-  #[cfg(feature = "native-spp")]
-  classic::classic_write,
-  #[cfg(feature = "native-spp")]
-  classic::classic_close
- ]).on_window_event(|window,event| {
-  if let tauri::WindowEvent::Destroyed = event {
-   mcp::release(&window.state::<mcp::McpState>(),window.label());
-   let release=window.state::<native_plugins::NativePluginState>().release(window.label());tauri::async_runtime::spawn(native_plugins::finish_release(release));
-   serial::release_destroyed(&window.state::<serial::SerialState>(),window.label());
-   #[cfg(feature = "native-ble")]
-   ble::release_destroyed(&window.state::<ble::BleState>(),window.label());
-   #[cfg(feature = "native-spp")]
-   classic::release_destroyed(&window.state::<classic::ClassicState>(),window.label());
-  }
- }).build(tauri::generate_context!()).expect("DeviceDock runtime failed").run(|app,event| {
-  if let tauri::RunEvent::ExitRequested{api,code,..}=event {
-   static EXITING:std::sync::atomic::AtomicU8=std::sync::atomic::AtomicU8::new(0);
-   if EXITING.load(std::sync::atomic::Ordering::SeqCst)!=2 {api.prevent_exit();}
-   if EXITING.compare_exchange(0,1,std::sync::atomic::Ordering::SeqCst,std::sync::atomic::Ordering::SeqCst).is_ok() {app.state::<native_plugins::NativePluginState>().begin_shutdown();let app=app.clone();let exit_code=code.unwrap_or(0);tauri::async_runtime::spawn(async move{app.state::<native_plugins::NativePluginState>().release_all().await;EXITING.store(2,std::sync::atomic::Ordering::SeqCst);app.exit(exit_code);});}
-  }
- });
-}
-
-fn build_window(app:&tauri::AppHandle,label:&str,session:Option<&std::collections::HashMap<String,String>>)->tauri::Result<()> {
- let handle=app.clone();
- let mut builder=tauri::WebviewWindowBuilder::new(app,label,tauri::WebviewUrl::App("index.html".into())).title("DeviceDock").inner_size(1320.,860.).min_inner_size(700.,540.).on_download(move |webview,event|{match event{
-  tauri::webview::DownloadEvent::Requested{destination,..}=>{let name=destination.file_name().and_then(|n|n.to_str()).unwrap_or("download").to_string();if let Ok(dir)=handle.path().download_dir(){*destination=unique_path(&dir,&name);}},
-  tauri::webview::DownloadEvent::Finished{success,..}=>{let _=webview.emit("app-download",serde_json::json!({"success":success}));},_=>{}}true});
- if let Some(session)=session{builder=builder.initialization_script(updater::session_script(session));}
- builder.build()?;Ok(())
-}
-#[tauri::command]
-fn host_new_window(app:tauri::AppHandle)->Result<(),String>{updater::with_window_creation(&app,||{let windows=app.webview_windows();let index=(2..).find(|n|!windows.contains_key(&format!("main-{n}"))).unwrap();build_window(&app,&format!("main-{index}"),None)}).map_err(|_|"Cannot create window during update".into())}
-
-fn unique_path(dir:&std::path::Path,name:&str)->std::path::PathBuf{let p=std::path::Path::new(name);let name=p.file_name().unwrap_or(std::ffi::OsStr::new("download"));let first=dir.join(name);if !first.exists(){return first}let stem=p.file_stem().and_then(|s|s.to_str()).unwrap_or("download");let ext=p.extension().and_then(|s|s.to_str()).map(|s|format!(".{s}")).unwrap_or_default();for i in 1..{let next=dir.join(format!("{stem} ({i}){ext}"));if !next.exists(){return next}}unreachable!()}
-
-#[cfg(feature="native-smoke")]
-#[tauri::command]
-fn native_smoke_window_tool(app:tauri::AppHandle,enabled:bool)->Result<(),String>{
- let window=app.get_webview_window("main-2").ok_or("second smoke window missing")?;
- let action=if enabled{r#"await app.host.enable({schemaVersion:1,id:'org.test.window',name:'fixture',version:'1.0.0',apiVersion:1,kind:'plugin',entry:'index.js',platforms:['desktop'],capabilities:[],license:'MIT',integrity:{'index.js':'sha256-'+'0'.repeat(64)}},'fixture',true,async()=>({activate(api){api.registerMcpTool({name:'org.test.window.tool',description:'smoke',inputSchema:{type:'object',properties:{}}},()=>({ok:true}))}}))"#}else{"await app.host.disable('org.test.window')"};
- window.eval(format!("(async()=>{{const app=(await import('./src/app.js')).application;{action}}})()" )).map_err(|_|"smoke window eval failed".into())
+	let app = tauri::Builder::default()
+		.plugin(tauri_plugin_opener::init())
+		.plugin(tauri_plugin_updater::Builder::new().build())
+		.manage(serial::SerialState::default())
+		.manage(classic::ClassicState::default())
+		.manage(ble::BleState::default())
+		.manage(mcp::McpState::default())
+		.manage(winstate::WinState::default())
+		.manage(updater::UpdateState::default())
+		.invoke_handler(tauri::generate_handler![
+			ble::ble_scan,
+			ble::ble_scan_stop,
+			ble::ble_open,
+			ble::ble_start,
+			ble::ble_write,
+			ble::ble_close,
+			ble::ble_release_owned,
+			classic::classic_devices,
+			classic::classic_discover,
+			classic::classic_open,
+			classic::classic_write,
+			classic::classic_close,
+			classic::classic_release_owned,
+			serial::serial_list,
+			serial::serial_open,
+			serial::serial_ack_receive,
+			serial::serial_write,
+			serial::serial_set_signals,
+			serial::serial_close,
+			serial::serial_release_owned,
+			menu::menu_sync,
+			updater::app_update_check,
+			updater::app_update_install,
+			updater::app_update_ack,
+			updater::app_update_result,
+			mcp::mcp_status,
+			mcp::mcp_enable,
+			mcp::mcp_disable,
+			mcp::mcp_reveal_token,
+			mcp::mcp_regenerate_token,
+			mcp::mcp_register,
+			mcp::mcp_window_state,
+			mcp::mcp_unregister,
+			mcp::mcp_commit,
+			mcp::mcp_reply,
+			titlebar_double_click
+		])
+		.on_window_event(|window, event| {
+			if let tauri::WindowEvent::Destroyed = event {
+				serial::release_destroyed(&window.state::<serial::SerialState>(), window.label());
+				classic::release_destroyed(&window.state::<classic::ClassicState>(), window.label());
+				ble::release_destroyed(&window.state::<ble::BleState>(), window.label());
+				mcp::release_window(&window.app_handle(), &window.state::<mcp::McpState>(), window.label());
+			}
+			// 只记 main 的大小位置：多开的 main-N 每次都相对当前窗口错开，记下来反而会叠在旧位置上
+			if window.label() == MAIN && matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) | tauri::WindowEvent::CloseRequested { .. }) {
+				if let Some(w) = window.app_handle().get_webview_window(MAIN) {
+					winstate::record(&w);
+				}
+			}
+		})
+		.on_menu_event(|app, event| {
+			let id = event.id().as_ref();
+			if id == menu::NEW_WINDOW {
+				let _ = open_window(app);
+			} else {
+				menu::dispatch(app, id);
+			}
+		})
+		.setup(|app| {
+			// Windows 便携版：上一次更新还没结束时不要打开窗口，免得和替换过程抢同一个 EXE
+			#[cfg(windows)]
+			if !portable::startup_gate(app.handle()) {
+				std::process::exit(0);
+			}
+			// 上次启用过本地 MCP 服务时只登记「等已登录窗口」，真正监听要等页面注册
+			app.state::<mcp::McpState>().init(app.handle());
+			let m = menu::build(app.handle())?;
+			app.set_menu(m)?;
+			if let Some(handoff) = updater::read_handoff(app.handle()) {
+				let mut sessions: Vec<_> = handoff.windows.into_iter().collect();
+				sessions.sort_by_key(|(label, _)| if label == MAIN { 0 } else { label[5..].parse::<u32>().unwrap_or(u32::MAX) });
+				for (label, session) in sessions {
+					updater::with_window_creation(app.handle(), || build_window_with_session(app.handle(), &label, Some(&session)))?;
+				}
+				updater::remove_handoff(app.handle());
+			} else {
+				open_window(app.handle())?;
+			}
+			Ok(())
+		})
+		.build(tauri::generate_context!())
+		.expect("启动客户端失败");
+	app.run(|app, event| {
+		// macOS 习惯：关掉最后一个窗口不退出，点 Dock 图标再开一个(有最小化的窗口就还原它)；⌘Q / Dock「退出」走 terminate，不经这里
+		#[cfg(target_os = "macos")]
+		match event {
+			tauri::RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
+			tauri::RunEvent::Reopen {
+				has_visible_windows: false, ..
+			} => match app.webview_windows().into_values().next() {
+				Some(w) => {
+					let _ = w.unminimize();
+					let _ = w.set_focus();
+				}
+				None => {
+					let _ = open_window(app);
+				}
+			},
+			_ => {}
+		}
+		#[cfg(not(target_os = "macos"))]
+		let _ = (app, event);
+	});
 }

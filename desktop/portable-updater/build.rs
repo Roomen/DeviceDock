@@ -5,5 +5,5 @@ fn main() {
 	let pubkey = std::env::var("TAURI_UPDATER_PUBLIC_KEY").unwrap_or_default();
 	let pubkey = pubkey.trim();
 	println!("cargo:rerun-if-env-changed=TAURI_UPDATER_PUBLIC_KEY");
-	println!("cargo:rustc-env=DEVICEDOCK_UPDATER_PUBKEY={pubkey}");
+	println!("cargo:rustc-env=SERIAL_UPDATER_PUBKEY={pubkey}");
 }

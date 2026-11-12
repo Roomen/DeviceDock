@@ -12,13 +12,13 @@ pub mod signature;
 /// 计划 / 结果格式版本，任一方不认识就不动作
 pub const FORMAT: u32 = 1;
 /// helper 在安装目录与暂存目录里的文件名
-pub const HELPER_FILE: &str = "devicedock-updater.exe";
+pub const HELPER_FILE: &str = "serial-debug-updater.exe";
 /// 已验签的更新载荷(便携 ZIP)在暂存目录里的文件名
 pub const PAYLOAD_FILE: &str = "payload.zip";
 /// 计划文件名(helper 从命令行只收这一个绝对路径)
 pub const PLAN_FILE: &str = "plan.json";
 /// 载荷里主程序条目的固定名字(发布流水线打包时用这个名字)
-pub const EXE_ENTRY: &str = "DeviceDock.exe";
+pub const EXE_ENTRY: &str = "Serial Debug.exe";
 /// 载荷里的说明文件条目，可缺省
 pub const README_ENTRY: &str = "README.txt";
 /// helper 把结果写进应用数据目录，下次启动由客户端读取并删除
@@ -130,7 +130,7 @@ pub fn validate_plan(plan: &Plan, plan_path: &Path) -> Result<(), String> {
 		return Err("安装目录与暂存目录相同".into());
 	}
 	if plan.install_dir.parent().is_none() {
-		return Err("不能更新磁盘根目录里的程序，请把 DeviceDock 放在单独文件夹".into());
+		return Err("不能更新磁盘根目录里的程序，请把 Serial Debug 放在单独文件夹".into());
 	}
 	if !plan.install_dir.is_dir() {
 		return Err("安装目录不存在或不是文件夹".into());
@@ -392,7 +392,7 @@ mod tests {
 			format: FORMAT,
 			operation_id: "0123456789abcdef".into(),
 			install_dir: install,
-			exe_name: "DeviceDock.exe".into(),
+			exe_name: "Serial Debug.exe".into(),
 			payload: stage.join(PAYLOAD_FILE),
 			signature: "c2ln".into(),
 			data_dir: data,
@@ -430,7 +430,7 @@ mod tests {
 		p.exe_name = "..\\evil.exe".into();
 		assert!(validate_plan(&p, &plan_file).is_err());
 		let mut p = plan(&tmp);
-		p.exe_name = "DeviceDock.txt".into();
+		p.exe_name = "Serial Debug.txt".into();
 		assert!(validate_plan(&p, &plan_file).is_err());
 		let mut p = plan(&tmp);
 		p.version = "1.2".into();

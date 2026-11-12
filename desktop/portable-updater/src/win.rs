@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// 由 build.rs 从构建环境注入；没有配置签名时为空，helper 会拒绝所有更新
-const PUBKEY: &str = env!("DEVICEDOCK_UPDATER_PUBKEY");
+const PUBKEY: &str = env!("SERIAL_UPDATER_PUBKEY");
 
 /// 只认一个普通文件路径参数：不做引号解析、不支持开关，避免把参数当命令解释
 fn plan_argument() -> Result<PathBuf, String> {

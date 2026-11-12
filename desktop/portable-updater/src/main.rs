@@ -15,7 +15,7 @@ fn main() {
 	}
 	#[cfg(not(windows))]
 	{
-		eprintln!("devicedock-updater 只用于 Windows 便携版更新，当前平台不能执行替换");
+		eprintln!("serial-debug-updater 只用于 Windows 便携版更新，当前平台不能执行替换");
 		std::process::exit(3);
 	}
 }

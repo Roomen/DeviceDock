@@ -111,7 +111,7 @@ pub fn apply(store: &impl Store, target: &Path, bytes: &[u8], operation_id: &str
 	// 2. 旧程序改名做备份
 	if let Err(e) = store.rename(target, &backup) {
 		let _ = store.remove(&staged);
-		return Err(format!("无法替换正在使用的程序，请先退出所有 DeviceDock 窗口：{e}"));
+		return Err(format!("无法替换正在使用的程序，请先退出所有 Serial Debug 窗口：{e}"));
 	}
 	// 3. 新程序就位
 	if let Err(e) = store.rename(&staged, target) {
@@ -246,7 +246,7 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("pu-{tag}-{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).unwrap();
-		let exe = dir.join("DeviceDock.exe");
+		let exe = dir.join("Serial Debug.exe");
 		std::fs::write(&exe, b"old-exe").unwrap();
 		(dir, exe)
 	}
@@ -263,16 +263,16 @@ mod tests {
 		let store = FsStore;
 		apply(&store, &exe, b"new-exe", OP).unwrap();
 		assert_eq!(std::fs::read(&exe).unwrap(), b"new-exe");
-		assert_eq!(names(&dir), HashSet::from(["DeviceDock.exe".to_string()]));
+		assert_eq!(names(&dir), HashSet::from(["Serial Debug.exe".to_string()]));
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	#[test]
 	fn successful_replacement_leaves_other_rounds_backups_alone() {
 		let (dir, exe) = fixture("other-old");
-		std::fs::write(dir.join("DeviceDock.exe.old-deadbeefdeadbeef"), b"previous-round").unwrap();
+		std::fs::write(dir.join("Serial Debug.exe.old-deadbeefdeadbeef"), b"previous-round").unwrap();
 		apply(&FsStore, &exe, b"new-exe", OP).unwrap();
-		assert!(dir.join("DeviceDock.exe.old-deadbeefdeadbeef").exists(), "其它轮次的备份不是本次能确认成功的东西，不能删");
+		assert!(dir.join("Serial Debug.exe.old-deadbeefdeadbeef").exists(), "其它轮次的备份不是本次能确认成功的东西，不能删");
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -284,7 +284,7 @@ mod tests {
 		let err = apply(&store, &exe, b"new-exe", OP).unwrap_err();
 		assert!(err.contains("无法替换"), "{err}");
 		assert_eq!(std::fs::read(&exe).unwrap(), b"old-exe");
-		assert_eq!(names(&dir), HashSet::from(["DeviceDock.exe".to_string()]));
+		assert_eq!(names(&dir), HashSet::from(["Serial Debug.exe".to_string()]));
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -296,7 +296,7 @@ mod tests {
 		let err = apply(&store, &exe, b"new-exe", OP).unwrap_err();
 		assert!(err.contains("已恢复原版本"), "{err}");
 		assert_eq!(std::fs::read(&exe).unwrap(), b"old-exe");
-		assert_eq!(names(&dir), HashSet::from(["DeviceDock.exe".to_string()]));
+		assert_eq!(names(&dir), HashSet::from(["Serial Debug.exe".to_string()]));
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -329,7 +329,7 @@ mod tests {
 		let err = apply(&Short(&store), &exe, b"new-exe", OP).unwrap_err();
 		assert!(err.contains("已保留原程序"), "{err}");
 		assert_eq!(std::fs::read(&exe).unwrap(), b"old-exe");
-		assert_eq!(names(&dir), HashSet::from(["DeviceDock.exe".to_string()]));
+		assert_eq!(names(&dir), HashSet::from(["Serial Debug.exe".to_string()]));
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -340,7 +340,7 @@ mod tests {
 		let err = apply(&CorruptAfter(&store, Cell::new(0)), &exe, b"new-exe", OP).unwrap_err();
 		assert!(err.contains("校验失败") && err.contains("已恢复原版本"), "{err}");
 		assert_eq!(std::fs::read(&exe).unwrap(), b"old-exe");
-		assert_eq!(names(&dir), HashSet::from(["DeviceDock.exe".to_string()]));
+		assert_eq!(names(&dir), HashSet::from(["Serial Debug.exe".to_string()]));
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -354,7 +354,7 @@ mod tests {
 		assert!(err.contains("无法读取新版本程序"), "{err}");
 		assert!(err.contains("已恢复原版本"), "回滚成功就必须如实说恢复成功：{err}");
 		assert_eq!(std::fs::read(&exe).unwrap(), b"old-exe");
-		assert_eq!(names(&dir), HashSet::from(["DeviceDock.exe".to_string()]));
+		assert_eq!(names(&dir), HashSet::from(["Serial Debug.exe".to_string()]));
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -367,7 +367,7 @@ mod tests {
 		*store.fail_remove.borrow_mut() = Some(exe.to_str().unwrap().to_string());
 		let err = apply(&store, &exe, b"new-exe", OP).unwrap_err();
 		assert!(err.contains("原版本还原失败"), "不能报成已恢复：{err}");
-		let backup = dir.join("DeviceDock.exe.old-0123456789abcdef");
+		let backup = dir.join("Serial Debug.exe.old-0123456789abcdef");
 		assert!(err.contains(&backup.display().to_string()), "要告诉用户备份在哪：{err}");
 		assert_eq!(std::fs::read(&backup).unwrap(), b"old-exe");
 		assert_eq!(std::fs::read(&exe).unwrap(), b"new-exe", "放不进去的新文件仍在原位，用户可自行改名");
@@ -377,21 +377,21 @@ mod tests {
 	#[test]
 	fn leftover_cleanup_only_removes_partial_new_files_while_the_program_exists() {
 		let (dir, exe) = fixture("sweep");
-		std::fs::write(dir.join("DeviceDock.exe.new-dead"), b"partial").unwrap();
-		std::fs::write(dir.join("DeviceDock.exe.new-0123456789abcdef"), b"current").unwrap();
-		std::fs::write(dir.join("DeviceDock.exe.old-dead"), b"other-round").unwrap();
+		std::fs::write(dir.join("Serial Debug.exe.new-dead"), b"partial").unwrap();
+		std::fs::write(dir.join("Serial Debug.exe.new-0123456789abcdef"), b"current").unwrap();
+		std::fs::write(dir.join("Serial Debug.exe.old-dead"), b"other-round").unwrap();
 		std::fs::write(dir.join("unrelated.txt"), b"keep").unwrap();
 		let store = FsStore;
-		sweep_leftovers(&store, &dir, &["DeviceDock.exe", "README.txt"], OP);
-		assert!(!dir.join("DeviceDock.exe.new-dead").exists(), "半截的新文件可以清");
-		assert!(dir.join("DeviceDock.exe.new-0123456789abcdef").exists(), "本轮文件不能删");
-		assert!(dir.join("DeviceDock.exe.old-dead").exists(), "别的轮次的备份不能删");
+		sweep_leftovers(&store, &dir, &["Serial Debug.exe", "README.txt"], OP);
+		assert!(!dir.join("Serial Debug.exe.new-dead").exists(), "半截的新文件可以清");
+		assert!(dir.join("Serial Debug.exe.new-0123456789abcdef").exists(), "本轮文件不能删");
+		assert!(dir.join("Serial Debug.exe.old-dead").exists(), "别的轮次的备份不能删");
 		assert!(dir.join("unrelated.txt").exists());
 		// 主程序不见了：连半截的新文件也不能删(它可能是唯一剩下的可运行文件)
 		std::fs::remove_file(&exe).unwrap();
-		std::fs::write(dir.join("DeviceDock.exe.new-dead2"), b"partial").unwrap();
-		sweep_leftovers(&store, &dir, &["DeviceDock.exe", "README.txt"], OP);
-		assert!(dir.join("DeviceDock.exe.new-dead2").exists());
+		std::fs::write(dir.join("Serial Debug.exe.new-dead2"), b"partial").unwrap();
+		sweep_leftovers(&store, &dir, &["Serial Debug.exe", "README.txt"], OP);
+		assert!(dir.join("Serial Debug.exe.new-dead2").exists());
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -399,12 +399,12 @@ mod tests {
 	fn leftover_cleanup_covers_every_replaced_file_including_readme_and_helper() {
 		let (dir, _exe) = fixture("sweep-extra");
 		std::fs::write(dir.join("README.txt.new-dead"), b"partial").unwrap();
-		std::fs::write(dir.join("devicedock-updater.exe.new-dead"), b"partial").unwrap();
+		std::fs::write(dir.join("serial-debug-updater.exe.new-dead"), b"partial").unwrap();
 		std::fs::write(dir.join("README.txt"), b"current").unwrap();
 		let store = FsStore;
-		sweep_leftovers(&store, &dir, &["DeviceDock.exe", "README.txt", "devicedock-updater.exe"], OP);
+		sweep_leftovers(&store, &dir, &["Serial Debug.exe", "README.txt", "serial-debug-updater.exe"], OP);
 		assert!(!dir.join("README.txt.new-dead").exists(), "说明文件的半成品也要清");
-		assert!(!dir.join("devicedock-updater.exe.new-dead").exists(), "helper 的半成品也要清");
+		assert!(!dir.join("serial-debug-updater.exe.new-dead").exists(), "helper 的半成品也要清");
 		assert!(dir.join("README.txt").exists(), "正式文件不能动");
 		let _ = std::fs::remove_dir_all(&dir);
 	}
