@@ -94,6 +94,14 @@
 		}
 	}
 
+	// 协议函数要在该路协议 + 一次性隔离会话里跑：SEK 解析会读写 skSession 的基准水量，
+	// 双路 A/B 不能串，单路 S 也不能让插件输入污染实时会话（inLane 换入的 st 用完即丢）。
+	function inProtocolLane(sid, fn) {
+		const l = lanes()
+		if (!l || typeof l.callInIsolatedLane !== 'function') throw fail('unsupported', '宿主没有提供按路隔离的协议调用入口')
+		return l.callInIsolatedLane(sid, fn)
+	}
+
 	const api = {
 		async 'device.listPorts'() {
 			const adapter = root.SerialAdapter
@@ -121,15 +129,27 @@
 		async 'device.bleScan'(params, ctx) {
 			const ble = service('computer-ble')
 			if (!ble || !ble.scan) throw fail('unsupported', '这台电脑没有 BLE 扫描能力')
+			// 扫描所有权在启动前就登记：停用发生在扫描期间也要能等到真实收尾
+			const owner = ctx.scanOwner || (ctx.scanOwner = { ble: ble, active: false, task: null, stopping: null })
 			if (params.start === false) {
-				if (ble.stopScan) await ble.stopScan()
+				await stopBleScan(owner)
 				return { scanning: false }
 			}
-			// 扫描由宿主持有：插件关页面 / 停用时统一停掉；发现的设备以事件推给该插件
-			await ble.scan(function (d) {
-				if (d) ctx.send('device.ble', { deviceId: d.deviceId || '', name: d.name || '', rssi: typeof d.rssi === 'number' ? d.rssi : null, services: Array.isArray(d.services) ? d.services.slice(0, 16) : [] })
+			ctx.onTeardown(function () { return stopBleScan(owner) })
+			if (owner.active) return { scanning: true }
+			owner.active = true
+			const task = Promise.resolve().then(function () {
+				return ble.scan(function (d) {
+					if (d) ctx.send('device.ble', { deviceId: d.deviceId || '', name: d.name || '', rssi: typeof d.rssi === 'number' ? d.rssi : null, services: Array.isArray(d.services) ? d.services.slice(0, 16) : [] })
+				})
 			})
-			ctx.onTeardown(function () { if (ble.stopScan) ble.stopScan().catch(function () {}) })
+			owner.task = task
+			// 持续扫描的 promise 直到停止才兑现，不能 await 它把 RPC 挂住；收尾交给 teardown
+			task.catch(function (e) {
+				ctx.send('device.ble-error', { message: String(e && e.message ? e.message : e) })
+			}).then(function () {
+				if (owner.task === task) { owner.active = false; owner.task = null }
+			})
 			return { scanning: true }
 		},
 		async 'device.lanes'() {
@@ -187,7 +207,7 @@
 			const rec = ctx.claimRecord(params.claimId)
 			if (!rec) return { released: false }
 			await closeClaim(rec)
-			root.serialPortClaims.release(rec.id)
+			if (root.serialPortClaims) root.serialPortClaims.release(rec.id)
 			ctx.dropClaim(rec.id)
 			return { released: true }
 		},
@@ -224,17 +244,19 @@
 
 		async 'protocol.info'(params) {
 			const sid = requireLane(params.lane)
-			const l = lanes()
-			const id = l && l.protocolOf ? l.protocolOf(sid) : ''
-			const registry = root.DeviceDockProtocols
-			const def = id && registry && registry.get ? registry.get(id) : null
-			return {
-				lane: sid,
-				id: id,
-				name: def ? def.name : (l && l.protocolOf && l.protocolName ? l.protocolName(l.protocolOf(sid)) : ''),
-				fields: def && def.fields ? def.fields : [],
-				queries: def && def.queries ? def.queries : [],
-			}
+			return inProtocolLane(sid, function () {
+				const l = lanes()
+				const id = l && l.protocolOf ? l.protocolOf(sid) : ''
+				const registry = root.DeviceDockProtocols
+				const def = id && registry && registry.get ? registry.get(id) : null
+				return {
+					lane: sid,
+					id: id,
+					name: def ? def.name : (l && l.protocolOf && l.protocolName ? l.protocolName(l.protocolOf(sid)) : ''),
+					fields: def && def.fields ? def.fields : [],
+					queries: def && def.queries ? def.queries : [],
+				}
+			})
 		},
 		async 'protocol.call'(params) {
 			const sid = requireLane(params.lane)
@@ -248,9 +270,13 @@
 			if (!def) throw fail('not_found', '这一路没有协议')
 			if (typeof def[fn] !== 'function') throw fail('unsupported', '该协议没有 ' + fn)
 			const args = Array.isArray(params.args) ? params.args : []
-			const value = def[fn].apply(def, args)
-			// 结果必须是可 JSON 序列化的视图模型；函数 / DOM 节点一律丢掉，不把宿主对象交给插件
-			return JSON.parse(JSON.stringify(value === undefined ? null : value))
+			// inLane 里只跑同步代码，不 await；结果经 JSON 克隆剔除函数与 DOM 引用
+			const value = inProtocolLane(sid, function () { return def[fn].apply(def, args) })
+			try {
+				return JSON.parse(JSON.stringify(value === undefined ? null : value))
+			} catch (e) {
+				return null
+			}
 		},
 
 		async 'log.write'(params, ctx) {
@@ -295,6 +321,8 @@
 		async 'app.storageSet'(params, ctx) {
 			const svc = service('plugins')
 			if (!svc || !svc.storageSet) throw fail('unsupported', '插件服务尚未就绪')
+			// Rust 侧单值上限 64 KiB；在页面里先拦一次，别把超大对象序列化后送进 IPC
+			if (Rpc.estimateSize(params.value, 64 * 1024) > 64 * 1024) throw fail('too_large', '存储值超过 64 KiB')
 			await svc.storageSet(ctx.id, String(params.key || ''), params.value === undefined ? null : params.value)
 			return { ok: true }
 		},
@@ -306,6 +334,9 @@
 		},
 		async 'app.saveFile'(params) {
 			// 走页面既有的 <a download> + blob：桌面客户端由原生壳存进系统「下载」目录并提示，网页版是浏览器下载
+			if (Rpc.estimateSize(params, Rpc.LIMITS.maxExportChars) > Rpc.LIMITS.maxExportChars) {
+				throw fail('too_large', '导出内容超过 ' + Rpc.LIMITS.maxExportChars + ' 字节')
+			}
 			const name = String(params.name || 'plugin-export.txt').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120)
 			let blob
 			if (typeof params.base64 === 'string') {
@@ -348,12 +379,29 @@
 		},
 	}
 
+	// ---------- BLE 扫描所有权 ----------
+	// 停用时必须等 stopScan 与扫描任务都真实收尾，不能只发一个不等待的停止请求
+	async function stopBleScan(owner) {
+		if (owner.stopping) return owner.stopping
+		const p = (async function () {
+			if (owner.ble.stopScan) await owner.ble.stopScan()
+			if (owner.task) {
+				try { await owner.task } catch (e) { /* 扫描任务的失败由错误事件上报 */ }
+			}
+			owner.active = false
+			owner.task = null
+		})()
+		owner.stopping = p
+		try { await p } finally { owner.stopping = null }
+	}
+
 	// ---------- 插件独占的口：打开 / 读循环 / 关闭 ----------
 	async function openClaim(rec, params) {
 		if (rec.open) return
-		if (rec.opening) throw fail('bad_request', '正在打开，请稍候')
-		rec.opening = true
-		try {
+		if (rec.openTask) throw fail('bad_request', '正在打开，请稍候')
+		if (rec.cancelled) throw fail('not_found', '插件已停用')
+		// 把在飞打开记在 rec 上：停用时要等它收尾，不能让打开在视图销毁后继续完成并起读循环
+		const task = (async function () {
 			await rec.port.open({
 				baudRate: num(params.baudRate, 115200),
 				dataBits: 8,
@@ -361,14 +409,23 @@
 				parity: 'none',
 				flowControl: 'none',
 			})
+			rec.portOpened = true
+			if (rec.cancelled) return false
+			rec.open = true
+			rec.reading = true
+			rec.readTask = readClaim(rec)
+			return true
+		})()
+		rec.openTask = task
+		try {
+			const opened = await task
+			if (!opened) throw fail('not_found', '插件已停用')
 		} catch (e) {
-			throw fail('internal', '无法打开串口：' + (e && e.message ? e.message : e))
+			if (e && e.code) throw e
+			throw fail('internal', '无法打开串口：' + String(e && e.message ? e.message : e))
 		} finally {
-			rec.opening = false
+			if (rec.openTask === task) rec.openTask = null
 		}
-		rec.open = true
-		rec.reading = true
-		readClaim(rec)
 	}
 
 	// 读循环：读错误后后端会换一条新流(Chromium 行为)，换流就续读；流为 null 表示设备丢失
@@ -408,14 +465,43 @@
 	}
 
 	async function closeClaim(rec) {
+		rec.cancelled = true
 		rec.reading = false
+		// 1) 等打开收尾：打开途中停用不能留下没人管的句柄
+		if (rec.openTask) {
+			try { await rec.openTask } catch (e) { /* 打开失败也要继续把已开的口关掉 */ }
+		}
+		// 2) 取消并等待持锁的 reader，读循环结束后才关端口
 		if (rec.reader) {
 			try { await rec.reader.cancel() } catch (e) {}
 		}
-		if (rec.open) {
-			try { await rec.port.close() } catch (e) {}
+		if (rec.readTask) {
+			try { await rec.readTask } catch (e) {}
+			rec.readTask = null
+		}
+		// 3) 关闭失败要如实抛出：占用声明与 busy 源都保留，应用更新也不能放行
+		if (rec.portOpened && !rec.portClosed) {
+			await rec.port.close()
+			rec.portClosed = true
 		}
 		rec.open = false
+	}
+
+	// 停用 / 卸载 / 更新准备统一走这里：逐个等串口收尾，成功才注销声明，失败保留占用
+	async function closeClaims(ctx) {
+		const failures = []
+		const recs = ctx.claims()
+		for (let i = 0; i < recs.length; i++) {
+			const rec = recs[i]
+			try {
+				await closeClaim(rec)
+				if (root.serialPortClaims) root.serialPortClaims.release(rec.id)
+				ctx.dropClaim(rec.id)
+			} catch (e) {
+				failures.push({ claimId: rec.id, message: String(e && e.message ? e.message : e) })
+			}
+		}
+		return failures
 	}
 
 	root.PluginApi = {
@@ -425,6 +511,7 @@
 			return await fn(params || {}, ctx)
 		},
 		methods: Object.keys(api),
+		closeClaims: closeClaims,
 		keyOfPort: keyOfPort,
 		portOfKey: portOfKey,
 		visibleLanes: visibleLanes,

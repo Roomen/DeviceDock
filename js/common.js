@@ -7543,6 +7543,11 @@
 		removeLaneB: removeLaneB,
 		protocolOf: protocolIdForSid,
 		protocolName: protocolName,
+		// 插件宿主调用协议函数：换入该路协议 + 一次性隔离的 SEK 会话 / ansi 状态，
+		// 用完即丢，插件传入的字节不能改动实时会话的基准水量，双路 A/B 也不串。
+		callInIsolatedLane: function (sid, fn) {
+			return inLane(sid, { sess: null, ansi: new AnsiUp() }, fn)
+		},
 		setProtocol: setLaneProtocol,
 		transportOf: laneTransport,
 		summary: function (sid) {

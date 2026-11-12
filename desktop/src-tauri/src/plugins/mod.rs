@@ -24,15 +24,16 @@ pub const EVENT_CHANGED: &str = "plugins-changed";
 
 pub struct PluginsState {
     root: PathBuf,
-    // 插件私有存储是「读全部 → 改一项 → 原子写」，多窗口同时写要串行
-    storage: Mutex<()>,
+    // 安装事务（目录切换 + state.json）、启停 / 卸载与插件私有存储都经这把锁；
+    // 多窗口并发时不能各按旧快照读改写 state.json 再互相覆盖
+    pub tx: Mutex<()>,
 }
 
 impl PluginsState {
     pub fn init(app: &AppHandle) -> Result<Self, String> {
         let root = store::root(app)?;
         std::fs::create_dir_all(&root).map_err(|e| format!("无法创建插件目录：{e}"))?;
-        Ok(PluginsState { root, storage: Mutex::new(()) })
+        Ok(PluginsState { root, tx: Mutex::new(()) })
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -205,8 +206,8 @@ async fn download_and_stage(root: &Path, repo: &github::RepoRef) -> Result<(Mani
     let token = token::get();
     let release = github::fetch_release(repo, token.as_deref()).await?;
     let (pkg, sha_asset) = github::pick_assets(&release.assets)?;
-    let package = github::download_asset(&pkg, token.as_deref()).await?;
-    let sha_bytes = github::download_asset(&sha_asset, token.as_deref()).await?;
+    let package = github::download_asset(&pkg, token.as_deref(), repo).await?;
+    let sha_bytes = github::download_asset(&sha_asset, token.as_deref(), repo).await?;
     let expected = github::parse_sha256_file(&String::from_utf8_lossy(&sha_bytes))?;
     let actual = store::sha256_hex(&package);
     if actual != expected {
@@ -297,32 +298,43 @@ pub async fn plugin_install(app: AppHandle, state: State<'_, PluginsState>, repo
         let _ = std::fs::remove_dir_all(&staging);
         return Err("本地进程（native）插件尚未支持，请安装 web 类型插件".to_string());
     }
-    let installed = store::install_dir(&root, &m.id, &m.version, &staging);
-    let target = match installed {
-        Ok(t) => t,
+    // 目录切换与 state.json 提交在同一把锁里完成：旧版本目录一直留到状态写成功才清
+    let outcome = (|| -> Result<store::State, String> {
+        let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        let tx = store::begin_install(&root, &m.id, &m.version, &staging)?;
+        let st = store::load_and_save(&root, |st| {
+            st.plugins.insert(
+                m.id.clone(),
+                store::Entry {
+                    // 安装对话框就是本次确认：装完即可用，用户可随时在管理面板停用
+                    enabled: true,
+                    repo: format!("https://github.com/{}/{}", parsed.owner, parsed.repo),
+                    tag: release.tag_name.clone(),
+                    version: m.version.clone(),
+                    installed_at: now_secs(),
+                    capabilities: m.capabilities.clone(),
+                    package_sha256: digest.clone(),
+                },
+            );
+        });
+        match st {
+            Ok(_) => {
+                tx.commit();
+                Ok(store::load_state(&root))
+            }
+            Err(e) => {
+                tx.rollback();
+                Err(e)
+            }
+        }
+    })();
+    let st = match outcome {
+        Ok(st) => st,
         Err(e) => {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(e);
         }
     };
-    let mut st = store::load_state(&root);
-    st.plugins.insert(
-        m.id.clone(),
-        store::Entry {
-            // 安装对话框就是本次确认：装完即可用，用户可随时在管理面板停用
-            enabled: true,
-            repo: format!("https://github.com/{}/{}", parsed.owner, parsed.repo),
-            tag: release.tag_name.clone(),
-            version: m.version.clone(),
-            installed_at: now_secs(),
-            capabilities: m.capabilities.clone(),
-            package_sha256: digest,
-        },
-    );
-    if let Err(e) = store::save_state(&root, &st) {
-        let _ = std::fs::remove_dir_all(&target);
-        return Err(e);
-    }
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(build_info(&root, &m.id, st.plugins.get(&m.id)))
 }
@@ -359,12 +371,11 @@ pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>
 #[tauri::command]
 pub fn plugin_set_enabled(app: AppHandle, state: State<'_, PluginsState>, id: String, enabled: bool) -> Result<Vec<PluginInfo>, String> {
     let root = state.root().to_path_buf();
-    let mut st = store::load_state(&root);
-    {
+    store::update_state(&root, &state.tx, |st| {
         let entry = st.plugins.get_mut(&id).ok_or_else(|| "插件没有安装".to_string())?;
         entry.enabled = enabled;
-    }
-    store::save_state(&root, &st)?;
+        Ok::<(), String>(())
+    })??;
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(list_all(&root))
 }
@@ -372,9 +383,12 @@ pub fn plugin_set_enabled(app: AppHandle, state: State<'_, PluginsState>, id: St
 #[tauri::command]
 pub fn plugin_uninstall(app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Vec<PluginInfo>, String> {
     let root = state.root().to_path_buf();
-    let mut st = store::load_state(&root);
-    st.plugins.remove(&id);
-    store::save_state(&root, &st)?;
+    store::update_state(&root, &state.tx, |st| {
+        if st.plugins.remove(&id).is_none() {
+            return Err("插件没有安装".to_string());
+        }
+        Ok::<(), String>(())
+    })??;
     store::remove_plugin(&root, &id)?;
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(list_all(&root))
@@ -413,7 +427,7 @@ pub fn plugin_storage_get(state: State<'_, PluginsState>, id: String, key: Strin
     if !store::valid_storage_key(&key) {
         return Err("存储键无效".to_string());
     }
-    let _guard = state.storage.lock().map_err(|_| "插件存储被占用".to_string())?;
+    let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
     let map = store::storage_load(state.root(), &id);
     Ok(map.get(&key).cloned().unwrap_or(serde_json::Value::Null))
 }
@@ -430,7 +444,7 @@ pub fn plugin_storage_set(state: State<'_, PluginsState>, id: String, key: Strin
     if body.len() > store::MAX_STORAGE_VALUE_BYTES {
         return Err("单个存储值不能超过 64 KiB".to_string());
     }
-    let _guard = state.storage.lock().map_err(|_| "插件存储被占用".to_string())?;
+    let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
     let mut map = store::storage_load(state.root(), &id);
     if !map.contains_key(&key) && map.len() >= store::MAX_STORAGE_KEYS {
         return Err("插件存储条目已达上限".to_string());
@@ -444,7 +458,7 @@ pub fn plugin_storage_remove(state: State<'_, PluginsState>, id: String, key: St
     if !manifest::valid_id(&id) {
         return Err("插件 id 无效".to_string());
     }
-    let _guard = state.storage.lock().map_err(|_| "插件存储被占用".to_string())?;
+    let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
     let mut map = store::storage_load(state.root(), &id);
     if map.remove(&key).is_none() {
         return Ok(());

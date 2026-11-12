@@ -116,17 +116,65 @@ pub fn valid_id(id: &str) -> bool {
     b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || *c == b'.')
 }
 
-// 语义化版本：主.次.修订，可带 -预发布 与 +构建；只用于比较与显示，不参与信任判定
+// 语义化版本：主.次.修订，可带 -预发布 与 +构建；用于比较、显示，也用作落盘目录名。
+// 全串只允许 SemVer 字符集，因此 '/'、'\\'、'..'、控制字符一律进不来，拼进路径不会穿越。
+fn valid_identifiers(s: &str) -> bool {
+    !s.is_empty()
+        && s.split('.').all(|p| {
+            !p.is_empty()
+                && p.len() <= 32
+                && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+}
+
 pub fn valid_version(v: &str) -> bool {
     if v.is_empty() || v.len() > 64 {
         return false;
     }
-    let core = v.split(['-', '+']).next().unwrap_or("");
-    let parts: Vec<&str> = core.split('.').collect();
-    if parts.len() != 3 {
+    if !v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+')) {
         return false;
     }
-    parts.iter().all(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()))
+    let (core, suffix) = match v.find(['-', '+']) {
+        Some(i) => (&v[..i], &v[i..]),
+        None => (v, ""),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    if parts.len() != 3
+        || !parts.iter().all(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return false;
+    }
+    if suffix.is_empty() {
+        return true;
+    }
+    let (pre, build) = if let Some(rest) = suffix.strip_prefix('-') {
+        match rest.split_once('+') {
+            Some((a, b)) => (Some(a), Some(b)),
+            None => (Some(rest), None),
+        }
+    } else {
+        (None, suffix.strip_prefix('+'))
+    };
+    if let Some(p) = pre {
+        if !valid_identifiers(p) {
+            return false;
+        }
+    }
+    if let Some(b) = build {
+        if !valid_identifiers(b) {
+            return false;
+        }
+    }
+    true
+}
+
+// 落盘前的独立校验：版本必须是插件目录下的单个子目录名，不接受任何路径分隔符
+pub fn safe_version_component(v: &str) -> Option<&str> {
+    if valid_version(v) {
+        Some(v)
+    } else {
+        None
+    }
 }
 
 pub fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
@@ -399,6 +447,36 @@ mod tests {
         assert!(!is_newer("bad", "1.0.0"));
         assert!(valid_version("1.0.0-beta.1"));
         assert_eq!(parse_version("1.0.0-beta.1"), Some((1, 0, 0)));
+    }
+
+    #[test]
+    fn versions_cannot_contain_path_separators() {
+        // 旧实现只校验 '-' / '+' 之前的数字部分，后缀可以塞进 '../' 越出插件目录
+        for bad in [
+            "1.0.0-x/../../other",
+            "1.0.0-x/../evil",
+            "1.0.0+build/../x",
+            "1.0.0-x\\..\\y",
+            "1.0.0-..",
+            "1.0.0-",
+            "1.0.0+",
+            "1.0.0-..+x",
+            "1.0.0-x..y",
+            "1.0.0-x/evil",
+            "1.0.0 beta",
+            "1.0.0-x\u{0}y",
+            "1.0.0-/x",
+            "1.0.0-+x",
+            "../1.0.0",
+            "1.0.0/2",
+        ] {
+            assert!(!valid_version(bad), "{bad:?} 必须被拒绝");
+            assert!(safe_version_component(bad).is_none(), "{bad:?} 不能当目录名");
+        }
+        for good in ["1.0.0", "1.0.0-beta.1", "1.0.0+build.7", "1.2.3-rc.1+sha.abc", "0.0.1-0"] {
+            assert!(valid_version(good), "{good} 应被接受");
+            assert_eq!(safe_version_component(good), Some(good));
+        }
     }
 
     #[test]

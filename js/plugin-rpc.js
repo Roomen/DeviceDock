@@ -53,7 +53,7 @@
 	}
 
 	// 宿主 → 插件的事件名(插件端订阅前不需要授权，内容本身来自已授权的方法)
-	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'app.busy']
+	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'app.busy']
 
 	const ERROR_TEXT = {
 		bad_request: '请求格式不正确',
@@ -62,7 +62,63 @@
 		not_found: '对象不存在',
 		unsupported: '当前环境不支持',
 		too_large: '数据超过上限',
+		rate_limited: '插件请求过于频繁',
 		internal: '宿主内部错误',
+	}
+
+	// 消息 / 在飞 / 速率上限：插件是第三方代码，高频调用或大消息不能拖垮宿主界面。
+	// 估算大小时不拼大字符串，超过预算立即停止，避免「先分配 100MB 再拒绝」。
+	const LIMITS = {
+		maxMessageChars: 256 * 1024,
+		maxParamsChars: 128 * 1024,
+		maxExportChars: 8 * 1024 * 1024,
+		maxInflight: 8,
+		maxRequestsPerWindow: 60,
+		windowMs: 1000,
+	}
+	function estimateSize(value, budget) {
+		let total = 0
+		const stack = [value]
+		while (stack.length) {
+			const v = stack.pop()
+			if (typeof v === 'string') total += v.length
+			else if (v === null || v === undefined) total += 4
+			else if (typeof v === 'number' || typeof v === 'boolean') total += 8
+			else if (Array.isArray(v)) {
+				total += 2
+				for (let i = 0; i < v.length; i++) stack.push(v[i])
+			} else if (typeof v === 'object') {
+				const keys = Object.keys(v)
+				for (let i = 0; i < keys.length; i++) {
+					total += keys[i].length + 4
+					stack.push(v[keys[i]])
+				}
+			}
+			if (total > budget) return Infinity
+		}
+		return total
+	}
+	function newAdmissionState() {
+		return { windowStart: 0, windowCount: 0, inflight: 0 }
+	}
+	// 纯函数：给定每个插件实例的计数状态与当前时间，决定是否准入；准入即在飞 +1
+	function admission(state, now, limits) {
+		const l = limits || LIMITS
+		const s = state || newAdmissionState()
+		if (s.inflight >= l.maxInflight) {
+			return { ok: false, state: s, error: { code: 'rate_limited', message: '同时在飞的插件请求过多' } }
+		}
+		if (now - s.windowStart >= l.windowMs) {
+			return { ok: true, state: { windowStart: now, windowCount: 1, inflight: s.inflight + 1 } }
+		}
+		if (s.windowCount >= l.maxRequestsPerWindow) {
+			return { ok: false, state: s, error: { code: 'rate_limited', message: '插件请求过于频繁，请稍后再试' } }
+		}
+		return { ok: true, state: { windowStart: s.windowStart, windowCount: s.windowCount + 1, inflight: s.inflight + 1 } }
+	}
+	function releaseInflight(state) {
+		const s = state || newAdmissionState()
+		return { windowStart: s.windowStart, windowCount: s.windowCount, inflight: Math.max(0, s.inflight - 1) }
 	}
 
 	function isObject(v) {
@@ -70,12 +126,19 @@
 	}
 
 	// 插件 → 宿主：{ __devicedock: 1, id, method, params }
-	function validateRequest(msg) {
+	function validateRequest(msg, opts) {
+		const limits = (opts && opts.limits) || LIMITS
 		if (!isObject(msg) || msg.__devicedock !== PROTOCOL) return { ok: false, error: { code: 'bad_request', message: ERROR_TEXT.bad_request } }
+		if (estimateSize(msg, limits.maxMessageChars) > limits.maxMessageChars) {
+			return { ok: false, error: { code: 'too_large', message: '插件请求消息超过 ' + limits.maxMessageChars + ' 字符' } }
+		}
 		if (typeof msg.id !== 'string' || !msg.id || msg.id.length > 64) return { ok: false, error: { code: 'bad_request', message: '请求缺少 id' } }
 		if (typeof msg.method !== 'string' || !msg.method) return { ok: false, error: { code: 'bad_request', message: '请求缺少 method' } }
 		const params = msg.params === undefined ? {} : msg.params
 		if (!isObject(params)) return { ok: false, error: { code: 'bad_request', message: 'params 必须是对象' } }
+		if (estimateSize(params, limits.maxParamsChars) > limits.maxParamsChars) {
+			return { ok: false, error: { code: 'too_large', message: '插件请求参数超过 ' + limits.maxParamsChars + ' 字符' } }
+		}
 		return { ok: true, id: msg.id, method: msg.method, params: params }
 	}
 
@@ -121,6 +184,15 @@
 		return (Array.isArray(caps) ? caps : []).map(function (id) {
 			return { id: id, text: CAPABILITY_TEXT[id] || '未定义的能力：' + id }
 		})
+	}
+	// 已加载的 iframe 是否必须整套重载：逐版本确认过的包摘要或授权集合一旦变化，
+	// 旧代码不能继续用新能力表授权（同版本重装也是新的一次信任）
+	function pluginChanged(a, b) {
+		if (!a || !b) return true
+		if (a.version !== b.version || a.entry !== b.entry) return true
+		if ((a.packageSha256 || '') !== (b.packageSha256 || '')) return true
+		const norm = function (v) { return (Array.isArray(v) ? v.slice().sort() : []).join('|') }
+		return norm(a.capabilities) !== norm(b.capabilities)
 	}
 	// 版本之间的能力变化：更新确认要显示新增(更要注意)与移除
 	function changedCapabilities(oldCaps, newCaps) {
@@ -188,9 +260,10 @@
 
 	const lib = {
 		PROTOCOL, CAPABILITIES, CAPABILITY_TEXT, METHODS, EVENTS, ERROR_TEXT,
+		LIMITS, estimateSize, newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,
 		resultEnvelope, errorEnvelope, eventEnvelope, themePayload, capabilitySummary,
-		changedCapabilities, orderPlugins, movePlugin, movePluginTo, lanesForMode, toBytes,
+		pluginChanged, changedCapabilities, orderPlugins, movePlugin, movePluginTo, lanesForMode, toBytes,
 	}
 
 	root.DeviceDockPluginRpc = lib

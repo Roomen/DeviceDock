@@ -100,7 +100,38 @@ pub fn plugin_dir(root: &Path, id: &str) -> PathBuf {
 }
 
 pub fn version_dir(root: &Path, id: &str, version: &str) -> PathBuf {
-    plugin_dir(root, id).join(version)
+    // 版本来自 manifest / state.json 或 URL；拼进路径前一律复核，非法版本指向一个不存在的名字
+    let safe = manifest::safe_version_component(version).unwrap_or(".invalid-version");
+    plugin_dir(root, id).join(safe)
+}
+
+// 落盘前的独立校验：必须是 <root>/<id>/<version> 这个单层子目录
+pub fn checked_version_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, String> {
+    if !manifest::valid_id(id) {
+        return Err("插件 id 无效".to_string());
+    }
+    let safe = manifest::safe_version_component(version)
+        .ok_or_else(|| format!("插件版本 {version} 不合法，不能作为目录名"))?;
+    let parent = plugin_dir(root, id);
+    let dir = parent.join(safe);
+    if dir.parent() != Some(parent.as_path()) {
+        return Err("插件版本目录越界".to_string());
+    }
+    Ok(dir)
+}
+
+// state.json 的读改写：load_and_save 给已经持锁的调用方（安装事务），update_state 自己加锁。
+// 多窗口并发安装 / 启停 / 卸载不能各按旧快照覆盖。
+pub fn load_and_save<R>(root: &Path, f: impl FnOnce(&mut State) -> R) -> Result<R, String> {
+    let mut st = load_state(root);
+    let out = f(&mut st);
+    save_state(root, &st)?;
+    Ok(out)
+}
+
+pub fn update_state<R>(root: &Path, lock: &std::sync::Mutex<()>, f: impl FnOnce(&mut State) -> R) -> Result<R, String> {
+    let _guard = lock.lock().map_err(|_| "插件状态被占用".to_string())?;
+    load_and_save(root, f)
 }
 
 pub fn read_manifest(dir: &Path) -> Result<Manifest, String> {
@@ -141,28 +172,67 @@ pub fn verify_dir(dir: &Path, m: &Manifest) -> Result<u64, String> {
     Ok(total)
 }
 
-// 把临时目录换成正式版本目录：先原子改名，再清掉该插件的其它版本目录。
-// 失败时删除临时目录，原版本目录不受影响。
-pub fn install_dir(root: &Path, id: &str, version: &str, staging: &Path) -> Result<PathBuf, String> {
+// 安装事务：目录切换与 state.json 提交必须串行，旧版本目录一直留到状态持久化成功。
+// begin 只把新包放进正式位置；commit 在状态写成功后才清旧版本，rollback 恢复原状。
+pub struct InstallTx {
+    root: PathBuf,
+    id: String,
+    version: String,
+    target: PathBuf,
+    backup: Option<PathBuf>,
+    staging: PathBuf,
+}
+
+impl InstallTx {
+    #[allow(dead_code)] // 单测里核对目标目录
+    pub fn target(&self) -> &Path {
+        &self.target
+    }
+    pub fn commit(&self) {
+        prune_versions(&self.root, &self.id, &self.version);
+        if let Some(b) = &self.backup {
+            let _ = fs::remove_dir_all(b);
+        }
+        let _ = fs::remove_dir_all(&self.staging);
+    }
+    pub fn rollback(&self) {
+        let _ = fs::remove_dir_all(&self.target);
+        let _ = fs::remove_dir_all(&self.staging);
+        if let Some(b) = &self.backup {
+            if !self.target.exists() {
+                let _ = fs::rename(b, &self.target);
+            }
+        }
+    }
+}
+
+pub fn begin_install(root: &Path, id: &str, version: &str, staging: &Path) -> Result<InstallTx, String> {
+    let target = checked_version_dir(root, id, version)?;
     let plugin_root = plugin_dir(root, id);
     fs::create_dir_all(&plugin_root).map_err(|e| format!("无法创建插件目录：{e}"))?;
-    let target = version_dir(root, id, version);
     let backup = plugin_root.join(format!(".old-{version}"));
+    let mut had_target = false;
     if target.exists() {
-        // 同版本重装：先挪开再换入，避免 rename 失败在半路
+        // 同版本重装：先挪开再换入，失败还能还原
         let _ = fs::remove_dir_all(&backup);
         fs::rename(&target, &backup).map_err(|e| format!("无法替换已有插件版本：{e}"))?;
+        had_target = true;
     }
     if let Err(e) = fs::rename(staging, &target) {
         let _ = fs::remove_dir_all(staging);
-        // 旧版本目录还在备份位置：还原回去，别让一次失败把装好的插件变成空目录
-        if backup.exists() && !target.exists() {
+        if had_target && backup.exists() && !target.exists() {
             let _ = fs::rename(&backup, &target);
         }
         return Err(format!("无法放置插件文件：{e}"));
     }
-    prune_versions(root, id, version);
-    Ok(target)
+    Ok(InstallTx {
+        root: root.to_path_buf(),
+        id: id.to_string(),
+        version: version.to_string(),
+        target,
+        backup: if had_target { Some(backup) } else { None },
+        staging: staging.to_path_buf(),
+    })
 }
 
 // 只保留当前版本目录：storage.json 等文件不在清理范围内
@@ -288,23 +358,111 @@ mod tests {
     }
 
     #[test]
-    fn install_prunes_other_versions_and_keeps_storage() {
+    fn install_commit_prunes_other_versions_and_keeps_storage() {
         let root = tmpdir("install");
         let staging = root.join("staging");
         fs::create_dir_all(&staging).unwrap();
         fs::write(staging.join("index.html"), b"x").unwrap();
-        install_dir(&root, "hello", "1.0.0", &staging).unwrap();
-        assert!(version_dir(&root, "hello", "1.0.0").exists());
+        let tx = begin_install(&root, "hello", "1.0.0", &staging).unwrap();
+        assert!(tx.target().exists());
+        tx.commit();
         fs::write(plugin_dir(&root, "hello").join(STORAGE_FILE), b"{}").unwrap();
         let staging2 = root.join("staging2");
         fs::create_dir_all(&staging2).unwrap();
         fs::write(staging2.join("index.html"), b"y").unwrap();
-        install_dir(&root, "hello", "2.0.0", &staging2).unwrap();
+        let tx2 = begin_install(&root, "hello", "2.0.0", &staging2).unwrap();
+        // 状态还没提交之前旧版本必须仍在，失败时才能回滚到它
+        assert!(version_dir(&root, "hello", "1.0.0").exists());
+        tx2.commit();
         assert!(version_dir(&root, "hello", "2.0.0").exists());
         assert!(!version_dir(&root, "hello", "1.0.0").exists());
         assert!(plugin_dir(&root, "hello").join(STORAGE_FILE).exists());
         remove_plugin(&root, "hello").unwrap();
         assert!(!plugin_dir(&root, "hello").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rollback_restores_the_previous_version() {
+        let root = tmpdir("rollback");
+        let staging = root.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(staging.join("index.html"), b"old").unwrap();
+        begin_install(&root, "hello", "1.0.0", &staging).unwrap().commit();
+        let staging2 = root.join("staging2");
+        fs::create_dir_all(&staging2).unwrap();
+        fs::write(staging2.join("index.html"), b"new").unwrap();
+        // 同版本重装：先备份旧目录；state.json 保存失败时 rollback 要还原旧文件
+        let tx = begin_install(&root, "hello", "1.0.0", &staging2).unwrap();
+        assert_eq!(fs::read(tx.target().join("index.html")).unwrap(), b"new");
+        tx.rollback();
+        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"old");
+        assert!(!root.join("hello/.old-1.0.0").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rollback_of_a_new_version_keeps_the_installed_one() {
+        let root = tmpdir("rollback-new");
+        let first = root.join("s1");
+        fs::create_dir_all(&first).unwrap();
+        fs::write(first.join("index.html"), b"v1").unwrap();
+        begin_install(&root, "hello", "1.0.0", &first).unwrap().commit();
+        let second = root.join("s2");
+        fs::create_dir_all(&second).unwrap();
+        fs::write(second.join("index.html"), b"v2").unwrap();
+        let tx = begin_install(&root, "hello", "2.0.0", &second).unwrap();
+        tx.rollback();
+        assert_eq!(fs::read(version_dir(&root, "hello", "1.0.0").join("index.html")).unwrap(), b"v1");
+        assert!(!version_dir(&root, "hello", "2.0.0").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn version_paths_cannot_escape_the_plugin_dir() {
+        let root = tmpdir("version-path");
+        assert!(checked_version_dir(&root, "hello", "1.0.0-x/../../other").is_err());
+        assert!(checked_version_dir(&root, "hello", "../evil").is_err());
+        assert!(begin_install(&root, "hello", "1.0.0-x/../../other", &root.join("staging")).is_err());
+        // 非法版本也绝不会被拼成可穿越的路径
+        let dir = version_dir(&root, "hello", "1.0.0-x/../../other");
+        assert_eq!(dir, plugin_dir(&root, "hello").join(".invalid-version"));
+        let ok = checked_version_dir(&root, "hello", "1.0.0-beta.1+sha.7").unwrap();
+        assert_eq!(ok.parent(), Some(plugin_dir(&root, "hello").as_path()));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn state_updates_are_serialized_across_threads() {
+        let root = tmpdir("state-lock");
+        let lock = std::sync::Mutex::new(());
+        let shared = std::sync::Arc::new((root.clone(), lock));
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let shared = shared.clone();
+            handles.push(std::thread::spawn(move || {
+                let (root, lock) = &*shared;
+                update_state(root, lock, |st| {
+                    st.plugins.insert(
+                        format!("p{i}"),
+                        Entry {
+                            enabled: true,
+                            repo: String::new(),
+                            tag: String::new(),
+                            version: "1.0.0".to_string(),
+                            installed_at: i,
+                            capabilities: vec![],
+                            package_sha256: String::new(),
+                        },
+                    );
+                })
+                .unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(load_state(&root).plugins.len(), 8, "并发写不能互相覆盖");
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -1,6 +1,7 @@
 // GitHub 侧：仓库地址解析、release 与资产选择、带令牌的 API / 资产下载。
 // 只认 github.com 的公开仓库地址；令牌可选，用于私有仓库与 API 限额。
 use serde::Deserialize;
+use reqwest::redirect::Policy;
 
 pub const API_ROOT: &str = "https://api.github.com";
 // 单包下载上限：与解压上限一致，下载阶段就拒绝，不把超大资产读进内存
@@ -78,9 +79,14 @@ pub fn parse_repo_url(raw: &str) -> Result<RepoRef, String> {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Asset {
+    // GitHub release 资产 id：下载走 API 的 /assets/<id>，不信任包元数据里的 browser_download_url
+    #[serde(default)]
+    pub id: u64,
     pub name: String,
     #[serde(default)]
     pub size: u64,
+    // 保留字段仅用于诊断 / 测试：下载一律走 asset_api_url，不读这个值
+    #[allow(dead_code)]
     #[serde(default)]
     pub browser_download_url: String,
 }
@@ -151,10 +157,44 @@ fn api_error(status: u16, token_set: bool) -> String {
     }
 }
 
+// 下载可能被 GitHub 重定向到对象存储；只跟到白名单域名，别把初始请求里的 Bearer 令牌带到别处。
+// reqwest 对 bearer_auth 标记的敏感头在跨 host 重定向时会自动剥离，这里再限制重定向目标本身。
+pub fn allowed_redirect_host(host: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    matches!(h.as_str(), "api.github.com" | "github.com" | "objects.githubusercontent.com" | "release-assets.githubusercontent.com" | "github-releases.githubusercontent.com")
+        || h.ends_with(".githubusercontent.com")
+}
+
+pub fn redirect_target_allowed(url: &str) -> bool {
+    match reqwest::Url::parse(url) {
+        Ok(u) => u.scheme() == "https" && allowed_redirect_host(u.host_str().unwrap_or("")),
+        Err(_) => false,
+    }
+}
+
+pub fn redirect_policy() -> Policy {
+    Policy::custom(|attempt| {
+        if attempt.previous().len() > 5 {
+            return attempt.error("插件下载重定向次数过多");
+        }
+        let url = attempt.url();
+        if url.scheme() != "https" || !allowed_redirect_host(url.host_str().unwrap_or("")) {
+            return attempt.error("插件下载被重定向到不受信任的地址");
+        }
+        attempt.follow()
+    })
+}
+
+// 初始下载 URL 也校验一遍：只认 api.github.com 的资产接口
+pub fn asset_api_url(owner: &str, repo: &str, id: u64) -> String {
+    format!("{API_ROOT}/repos/{owner}/{repo}/releases/assets/{id}")
+}
+
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(120))
+        .redirect(redirect_policy())
         .build()
         .map_err(|e| format!("无法创建网络客户端：{e}"))
 }
@@ -207,14 +247,20 @@ async fn download_with(url: &str, token: Option<&str>, accept: &str) -> Result<V
     Ok(out)
 }
 
-pub async fn download_asset(asset: &Asset, token: Option<&str>) -> Result<Vec<u8>, String> {
-    if asset.browser_download_url.is_empty() {
-        return Err("发布资产没有下载地址".to_string());
+pub async fn download_asset(asset: &Asset, token: Option<&str>, repo: &RepoRef) -> Result<Vec<u8>, String> {
+    if asset.id == 0 {
+        return Err("发布资产缺少 id，无法安全下载".to_string());
     }
     if asset.size > MAX_DOWNLOAD_BYTES {
         return Err("发布资产超过 64 MiB".to_string());
     }
-    download_with(&asset.browser_download_url, token, "application/octet-stream").await
+    // 用仓库坐标 + 资产 id 自己拼 API 地址：release 元数据里的 browser_download_url 不被信任，
+    // 即使发布方把它换成第三方地址也不会有令牌发过去。
+    let url = asset_api_url(&repo.owner, &repo.repo, asset.id);
+    if !redirect_target_allowed(&url) {
+        return Err("资产下载地址不在 GitHub API 域名上".to_string());
+    }
+    download_with(&url, token, "application/octet-stream").await
 }
 
 #[cfg(test)]
@@ -222,7 +268,7 @@ mod tests {
     use super::*;
 
     fn asset(name: &str) -> Asset {
-        Asset { name: name.to_string(), size: 10, browser_download_url: format!("https://x/{name}") }
+        Asset { id: 42, name: name.to_string(), size: 10, browser_download_url: format!("https://x/{name}") }
     }
 
     #[test]
@@ -284,5 +330,37 @@ mod tests {
         assert_eq!(parse_sha256_file(&format!("{hex}  devicedock-plugin.zip\n")).unwrap(), hex);
         assert!(parse_sha256_file("").is_err());
         assert!(parse_sha256_file("sha256-abc").is_err());
+    }
+
+    #[test]
+    fn asset_urls_are_built_from_the_api_not_release_metadata() {
+        let r = RepoRef { owner: "o".into(), repo: "r".into(), tag: None };
+        assert_eq!(
+            asset_api_url(&r.owner, &r.repo, 987),
+            "https://api.github.com/repos/o/r/releases/assets/987"
+        );
+        // 被替换过的 browser_download_url 完全不参与下载
+        let evil = Asset { id: 7, name: "devicedock-plugin.zip".into(), size: 1, browser_download_url: "https://evil.example/steal".into() };
+        assert!(!redirect_target_allowed(&evil.browser_download_url));
+        assert!(redirect_target_allowed(&asset_api_url(&r.owner, &r.repo, evil.id)));
+    }
+
+    #[test]
+    fn redirects_are_limited_to_github_hosts() {
+        assert!(redirect_target_allowed("https://objects.githubusercontent.com/x"));
+        assert!(redirect_target_allowed("https://release-assets.githubusercontent.com/x"));
+        assert!(redirect_target_allowed("https://cdn.githubusercontent.com/x"));
+        for bad in [
+            "https://evil.example/x",
+            "http://api.github.com/x",
+            "https://api.github.com.evil.example/x",
+            "https://github.com@evil.example/x",
+            "file:///etc/passwd",
+            "not a url",
+        ] {
+            assert!(!redirect_target_allowed(bad), "{bad} 不能跟随");
+        }
+        assert!(allowed_redirect_host("API.GITHUB.COM"));
+        assert!(!allowed_redirect_host("api.github.com.evil.example"));
     }
 }

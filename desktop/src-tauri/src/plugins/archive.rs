@@ -1,5 +1,6 @@
 // 插件包解压：只落普通文件与目录，严格防路径穿越、符号链接与超大文件。
 // 上限与 manifest.rs 共用同一组常量；解压到调用方给的临时目录，失败由调用方整目录删除。
+use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -54,9 +55,62 @@ impl Budget {
     }
 }
 
+// 跨平台路径表：大小写不敏感的文件系统（macOS / Windows 默认）里 index.html 与 INDEX.html
+// 指向同一个文件，按解压顺序覆盖会让 manifest.integrity 与实际内容不一致。重复条目、大小写碰撞、
+// 以及「先写文件再把它当目录用」全部拒绝，写入本身也用 create_new 独占创建。
+#[derive(Default)]
+struct PathTable {
+    files: HashSet<String>,
+    dirs: HashSet<String>,
+}
+
+impl PathTable {
+    fn ancestors(rel: &str) -> Vec<String> {
+        let parts: Vec<&str> = rel.split('/').collect();
+        (1..parts.len())
+            .map(|i| parts[..i].join("/").to_lowercase())
+            .collect()
+    }
+    fn add_file(&mut self, rel: &str) -> Result<(), String> {
+        let n = rel.to_lowercase();
+        if self.files.contains(&n) {
+            return Err(format!("包内有重复或大小写碰撞的文件：{rel}"));
+        }
+        if self.dirs.contains(&n) {
+            return Err(format!("包内路径同时是文件与目录：{rel}"));
+        }
+        for a in Self::ancestors(rel) {
+            if self.files.contains(&a) {
+                return Err(format!("包内把文件当目录用：{rel}"));
+            }
+            self.dirs.insert(a);
+        }
+        self.files.insert(n);
+        Ok(())
+    }
+    fn add_dir(&mut self, rel: &str) -> Result<(), String> {
+        let n = rel.to_lowercase();
+        if self.files.contains(&n) {
+            return Err(format!("包内路径同时是文件与目录：{rel}"));
+        }
+        for a in Self::ancestors(rel) {
+            if self.files.contains(&a) {
+                return Err(format!("包内把文件当目录用：{rel}"));
+            }
+            self.dirs.insert(a);
+        }
+        self.dirs.insert(n);
+        Ok(())
+    }
+}
+
 // 复制一个条目：按块读，超过单文件上限立即中止，不把整包读进内存
 fn copy_limited<R: Read>(reader: &mut R, dest: &Path) -> Result<u64, String> {
-    let mut out = std::fs::File::create(dest).map_err(|e| format!("无法写入包内文件：{e}"))?;
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|e| format!("无法写入包内文件（可能重名）：{e}"))?;
     let mut buf = vec![0u8; 64 * 1024];
     let mut written: u64 = 0;
     loop {
@@ -81,6 +135,7 @@ pub fn extract_zip(bytes: &[u8], root: &Path) -> Result<Extracted, String> {
         return Err(format!("包内文件超过 {MAX_FILES} 个"));
     }
     let mut budget = Budget::new();
+    let mut paths = PathTable::default();
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(|e| format!("zip 条目损坏：{e}"))?;
         let name = entry.name().to_string();
@@ -97,12 +152,14 @@ pub fn extract_zip(bytes: &[u8], root: &Path) -> Result<Extracted, String> {
         }
         let dest = target(root, &rel)?;
         if is_dir {
+            paths.add_dir(&rel)?;
             std::fs::create_dir_all(&dest).map_err(|e| format!("无法创建目录：{e}"))?;
             continue;
         }
         if entry.size() > MAX_FILE_BYTES {
             return Err(format!("包内文件过大：{rel}"));
         }
+        paths.add_file(&rel)?;
         ensure_parent(&dest)?;
         let written = copy_limited(&mut entry, &dest)?;
         budget.take(&rel, written)?;
@@ -114,6 +171,7 @@ pub fn extract_tar_gz(bytes: &[u8], root: &Path) -> Result<Extracted, String> {
     let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes));
     let mut archive = tar::Archive::new(gz);
     let mut budget = Budget::new();
+    let mut paths = PathTable::default();
     let entries = archive.entries().map_err(|e| format!("不是有效的 tar.gz 包：{e}"))?;
     for entry in entries {
         let mut entry = entry.map_err(|e| format!("tar 条目损坏：{e}"))?;
@@ -126,6 +184,7 @@ pub fn extract_tar_gz(bytes: &[u8], root: &Path) -> Result<Extracted, String> {
                 continue;
             }
             let dest = target(root, &rel)?;
+            paths.add_dir(&rel)?;
             std::fs::create_dir_all(&dest).map_err(|e| format!("无法创建目录：{e}"))?;
             continue;
         }
@@ -137,6 +196,7 @@ pub fn extract_tar_gz(bytes: &[u8], root: &Path) -> Result<Extracted, String> {
             return Err(format!("包内文件过大：{path}"));
         }
         let dest = target(root, &path)?;
+        paths.add_file(&path)?;
         ensure_parent(&dest)?;
         let written = copy_limited(&mut entry, &dest)?;
         budget.take(&path, written)?;
@@ -215,6 +275,54 @@ mod tests {
         let dir = tmpdir("zip-abs");
         let bytes = zip_with(&[("/tmp/escape.js", b"x")]);
         assert!(extract_zip(&bytes, &dir).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_duplicate_and_case_colliding_zip_entries() {
+        // zip crate 在读归档时就拒绝完全同名的条目；路径表再兜一层，tar 也一样
+        let mut table = PathTable::default();
+        table.add_file("index.html").unwrap();
+        assert!(table.add_file("index.html").unwrap_err().contains("重复"));
+
+        let dir = tmpdir("zip-case");
+        let collision = zip_with(&[("index.html", b"a"), ("INDEX.html", b"b")]);
+        let err = extract_zip(&collision, &dir).unwrap_err();
+        assert!(err.contains("大小写碰撞"), "{err}");
+        // 大小写不敏感的系统上不能靠后者覆盖前者
+        assert_eq!(std::fs::read(dir.join("index.html")).unwrap(), b"a");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_nested_case_collisions_and_file_as_dir() {
+        let dir = tmpdir("zip-nested-case");
+        let nested = zip_with(&[("js/app.js", b"a"), ("JS/APP.js", b"b")]);
+        assert!(extract_zip(&nested, &dir).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let dir = tmpdir("zip-file-dir");
+        let bad = zip_with(&[("a", b"x"), ("a/b.js", b"y")]);
+        assert!(extract_zip(&bad, &dir).unwrap_err().contains("目录"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_duplicate_tar_gz_entries() {
+        let dir = tmpdir("tar-dup");
+        let dup = tar_gz(vec![
+            (tar::EntryType::Regular, "index.html", b"a"),
+            (tar::EntryType::Regular, "index.html", b"b"),
+        ]);
+        assert!(extract_tar_gz(&dup, &dir).unwrap_err().contains("重复"));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let dir = tmpdir("tar-case");
+        let collision = tar_gz(vec![
+            (tar::EntryType::Regular, "index.html", b"a"),
+            (tar::EntryType::Regular, "INDEX.html", b"b"),
+        ]);
+        assert!(extract_tar_gz(&collision, &dir).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

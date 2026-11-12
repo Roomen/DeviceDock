@@ -30,6 +30,9 @@
 	let plugins = []
 	let order = []
 	const views = new Map()
+	// 停用 / 重装时的资源收尾：未完成或失败的释放都要挡住应用更新，也挡住同一插件的新 iframe
+	const pendingReleases = new Map()
+	let reloadTask = Promise.resolve()
 	let railBox = null
 	let dragId = ''
 	let dropTarget = null
@@ -114,6 +117,8 @@
 
 	// ---------- 视图与 iframe ----------
 	function ensureView(plugin) {
+		// 上一次停用还在收尾：不能让新 iframe 拿着新授权跑在还没释放的串口上
+		if (pendingReleases.has(plugin.id)) return null
 		let view = views.get(plugin.id)
 		if (view) return view
 		const el = mk('div', 'app-view plugin-view')
@@ -132,6 +137,7 @@
 		view = {
 			plugin: plugin, el: el, iframe: iframe, ready: false, closed: false,
 			claims: new Map(), busy: new Map(), busySeq: 0, teardowns: [], ctx: null,
+			admission: Rpc.newAdmissionState(),
 		}
 		view.ctx = makeContext(view)
 		iframe.addEventListener('load', function () {
@@ -157,19 +163,43 @@
 		box.appendChild(mk('div', 'plugin-fallback-text', '可在「配置 → 插件」里重新安装或停用它。'))
 		view.el.appendChild(box)
 	}
+	// 停用 / 卸载 / 重装 / 更新准备统一走这里：iframe 立刻拿下，串口与扫描的收尾必须等完。
+	// 关闭失败时保留 serialPortClaims 占用声明与 busy 源，应用更新不能提前放行。
+	function releaseView(view) {
+		const teardowns = view.teardowns.slice()
+		view.teardowns = []
+		const cleanup = teardowns.map(function (fn) {
+			return Promise.resolve().then(fn).catch(function () { /* 清理失败也会由串口关闭结果兜住 */ })
+		})
+		return Promise.all([
+			Promise.all(cleanup),
+			Api.closeClaims ? Api.closeClaims(view.ctx) : Promise.resolve([]),
+		]).then(function (res) {
+			const failures = res[1] || []
+			if (!failures.length && root.serialPortClaims && root.serialPortClaims.releasePlugin) {
+				root.serialPortClaims.releasePlugin(view.plugin.id)
+			}
+			return { ok: failures.length === 0, failures: failures }
+		})
+	}
 	function destroyView(id) {
 		const view = views.get(id)
-		if (!view) return
+		if (!view) return Promise.resolve({ ok: true, failures: [] })
 		view.closed = true
-		view.teardowns.forEach(function (fn) { try { fn() } catch (e) {} })
-		view.teardowns = []
-		view.claims.forEach(function (rec) { try { rec.reading = false; if (rec.port && rec.open) rec.port.close().catch(function () {}) } catch (e) {} })
-		view.claims.clear()
-		view.busy.clear()
-		if (root.serialPortClaims && root.serialPortClaims.releasePlugin) root.serialPortClaims.releasePlugin(id)
 		view.iframe.removeAttribute('src')
 		view.el.remove()
 		views.delete(id)
+		view.busy.clear()
+		const label = (view.plugin.name || id)
+		const entry = { promise: null, failed: false, label: label + ' · 正在释放串口' }
+		entry.promise = releaseView(view).then(function (res) {
+			entry.failed = !res.ok
+			entry.label = label + (res.ok ? ' · 已释放' : ' · 串口释放失败')
+			if (res.ok) pendingReleases.delete(id)
+			return res
+		})
+		pendingReleases.set(id, entry)
+		return entry.promise
 	}
 	function platformInfo() {
 		return {
@@ -188,9 +218,18 @@
 			id: plugin.id, name: plugin.name, version: plugin.version, capabilities: plugin.capabilities || [],
 			send: function (name, payload) { post(view, Rpc.eventEnvelope(name, payload)) },
 			theme: themeState,
-			onTeardown: function (fn) { if (typeof fn === 'function') view.teardowns.push(fn) },
+			onTeardown: function (fn) {
+				if (typeof fn !== 'function') return
+				// 视图已经关掉（异步调用晚到）时立刻执行，别把清理动作留在一个没人收集的队列里
+				if (view.closed) { Promise.resolve().then(fn).catch(function () {}); return }
+				view.teardowns.push(fn)
+			},
 			claim: function (claimId) {
-				const rec = { id: claimId, ctx: ctx, port: null, open: false, reading: false, reader: null, mode: 'exclusive' }
+				const rec = {
+					id: claimId, ctx: ctx, port: null, open: false, reading: false, reader: null,
+					mode: 'exclusive', openTask: null, readTask: null, portOpened: false,
+					portClosed: false, cancelled: false,
+				}
 				view.claims.set(claimId, rec)
 				return rec
 			},
@@ -227,8 +266,16 @@
 			if (id) post(view, Rpc.errorEnvelope(id, req.error.code, req.error.message))
 			return
 		}
+		// 每插件实例的在飞 / 速率上限：失控的第三方代码不能靠高频 RPC（含被拒的方法）拖慢界面
+		const adm = Rpc.admission(view.admission, Date.now(), Rpc.LIMITS)
+		if (!adm.ok) {
+			post(view, Rpc.errorEnvelope(req.id, adm.error.code, adm.error.message))
+			return
+		}
+		view.admission = adm.state
 		const denied = Rpc.authorize(view.plugin.capabilities || [], req.method)
 		if (denied) {
+			view.admission = Rpc.releaseInflight(view.admission)
 			post(view, Rpc.errorEnvelope(req.id, denied.code, denied.message))
 			return
 		}
@@ -239,6 +286,8 @@
 			const code = e && e.code ? e.code : 'internal'
 			const message = String(e && e.message ? e.message : e)
 			post(view, Rpc.errorEnvelope(req.id, code, message))
+		} finally {
+			view.admission = Rpc.releaseInflight(view.admission)
 		}
 	}
 
@@ -394,9 +443,15 @@
 	}
 
 	// ---------- 视图切换 ----------
-	function openPlugin(id) {
+	async function openPlugin(id) {
 		const plugin = byId(id)
 		if (!plugin || !plugin.enabled || !plugin.supported || plugin.error) return
+		// 同版本重装 / 停用后立刻重新打开：等旧 iframe 的资源收尾完成再加载新包
+		const pending = pendingReleases.get(id)
+		if (pending) {
+			const res = await pending.promise
+			if (!res.ok) return
+		}
 		const view = ensureView(plugin)
 		if (!view) return
 		// 视图切换只有一份实现(index.html 的 AppViews)：它按 id 切 .app-view 并写回存下的视图
@@ -415,35 +470,39 @@
 		return true
 	}
 
-	async function reload() {
+		// 同版本重装但包摘要或授权集合变了：旧 iframe 不能继续用新能力表授权
+	function viewNeedsReload(view, next) {
+		return Rpc.pluginChanged(view.plugin, next)
+	}
+
+	async function doReload() {
 		let list = []
 		try { list = (await svc.list()) || [] } catch (e) { list = [] }
-		// 记下此刻显示中的视图 id：被停用/卸载的插件若正是当前视图，收尾时要回通信调试
+		// 记下此刻显示中的视图 id：被停用/卸载/重装的插件若正是当前视图，收尾后决定回退还是重载
 		const activeEl = doc.querySelector('#views .app-view.active')
 		const activeViewId = activeEl ? activeEl.id : ''
-		const keep = new Set()
-		list.forEach(function (p) { keep.add(p.id) })
+		const releases = []
 		// 停用 / 卸载 / 不再支持：立刻销毁 iframe 与订阅
 		Array.from(views.keys()).forEach(function (id) {
 			const next = list.filter(function (p) { return p.id === id })[0]
-			if (!next || !next.enabled || !next.supported || next.error) destroyView(id)
+			if (!next || !next.enabled || !next.supported || next.error) releases.push(destroyView(id))
 		})
 		plugins = list
 		loadOrder()
 		renderRail()
-		// 已存在的视图跟着新 manifest 走（版本变了要重新加载页面）
+		// 已存在的视图跟着新 manifest 走：版本 / 入口 / 包摘要 / 能力任一变化都要整页重载
 		views.forEach(function (view, id) {
 			const next = list.filter(function (p) { return p.id === id })[0]
 			if (!next) return
-			if (next.version !== view.plugin.version || next.entry !== view.plugin.entry) {
-				destroyView(id)
-				return
-			}
+			if (viewNeedsReload(view, next)) { releases.push(destroyView(id)); return }
 			view.plugin = next
 		})
-		// 当前看的就是被停用/卸载的插件视图（节点已被销毁）：回通信调试
+		// 串口 / BLE 扫描收尾完成前不重建视图，也不放行应用更新
+		await Promise.all(releases)
 		if (activeViewId.indexOf(VIEW_PREFIX) === 0 && !doc.getElementById(activeViewId)) {
-			if (root.AppViews && root.AppViews.switchTo) root.AppViews.switchTo('view-serial')
+			const match = visible().filter(function (p) { return viewIdOf(p.id) === activeViewId })[0]
+			if (match) await openPlugin(match.id)
+			else if (root.AppViews && root.AppViews.switchTo) root.AppViews.switchTo('view-serial')
 		}
 		ensureHooks()
 		// 存下的视图是插件页时（刷新后）恢复它：插件视图是动态建的，index.html 的启动脚本那时还看不到它
@@ -454,12 +513,19 @@
 		if (saved.indexOf(VIEW_PREFIX) === 0) {
 			if (root.AppViews) root.AppViews.initialSaved = ''
 			const plugin = visible().filter(function (p) { return viewIdOf(p.id) === saved })[0]
-			if (plugin) openPlugin(plugin.id)
+			if (plugin) await openPlugin(plugin.id)
 		}
 	}
 
+	// 多个 plugins-changed 事件 / 管理面板刷新同时到达时串行执行，避免重叠销毁与重建
+	function reload() {
+		reloadTask = reloadTask.catch(function () {}).then(doReload)
+		return reloadTask
+	}
+
 	function isBusyForUpdate() {
-		let busy = false
+		// 在飞或失败的释放都算忙：串口没确认释放前应用更新不能开始
+		let busy = pendingReleases.size > 0
 		views.forEach(function (view) { if (view.busy.size) busy = true })
 		return busy
 	}
@@ -491,6 +557,13 @@
 		isBusyForUpdate: isBusyForUpdate,
 		release: async function () {
 			Array.from(views.keys()).forEach(destroyView)
+			const results = await Promise.all(Array.from(pendingReleases.values(), function (e) { return e.promise }))
+			const failed = results.filter(function (r) { return !r.ok })
+			if (failed.length) {
+				const why = []
+				failed.forEach(function (r) { r.failures.forEach(function (f) { why.push(f.message) }) })
+				throw new Error('插件串口未确认释放：' + why.join('；'))
+			}
 		},
 		reload: reload,
 		busyLabels: function () {
@@ -498,6 +571,7 @@
 			views.forEach(function (view) {
 				view.busy.forEach(function (label) { labels.push(view.plugin.name + ' · ' + label) })
 			})
+			pendingReleases.forEach(function (entry) { labels.push(entry.label) })
 			return labels
 		},
 	})
