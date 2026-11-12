@@ -418,6 +418,9 @@
 	async function reload() {
 		let list = []
 		try { list = (await svc.list()) || [] } catch (e) { list = [] }
+		// 记下此刻显示中的视图 id：被停用/卸载的插件若正是当前视图，收尾时要回通信调试
+		const activeEl = doc.querySelector('#views .app-view.active')
+		const activeViewId = activeEl ? activeEl.id : ''
 		const keep = new Set()
 		list.forEach(function (p) { keep.add(p.id) })
 		// 停用 / 卸载 / 不再支持：立刻销毁 iframe 与订阅
@@ -438,9 +441,8 @@
 			}
 			view.plugin = next
 		})
-		const active = doc.querySelector('#activity-rail .rail-plugin.active')
-		if (active && !byId(active.dataset.plugin)) {
-			// 当前看的就是被停用的插件：回通信调试
+		// 当前看的就是被停用/卸载的插件视图（节点已被销毁）：回通信调试
+		if (activeViewId.indexOf(VIEW_PREFIX) === 0 && !doc.getElementById(activeViewId)) {
 			if (root.AppViews && root.AppViews.switchTo) root.AppViews.switchTo('view-serial')
 		}
 		ensureHooks()
