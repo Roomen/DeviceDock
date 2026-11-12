@@ -6539,7 +6539,8 @@
 			})
 			localStorage.setItem(COLLAPSED_KEY, JSON.stringify(state))
 		}
-		function setCollapsed(pane, collapsed) {
+		//opts.silent: 只改界面不写回 localStorage（窄屏强制收起时用，宽屏偏好要保持原样）
+		function setCollapsed(pane, collapsed, opts) {
 			const sidebar = sidebarOf(pane)
 			if (!sidebar) return
 			const body = sidebar.querySelector('.collapse')
@@ -6560,7 +6561,8 @@
 				icon.classList.toggle('icon-chevron-right', pointRight)
 				icon.classList.toggle('icon-chevron-left', !pointRight)
 			}
-			saveSidebarState()
+			//窄屏不写回：右栏在窄屏是临时展开的面板（点日志行也会打开），不该改掉用户的宽屏偏好
+			if (!(opts && opts.silent) && !isNarrow()) saveSidebarState()
 		}
 
 		document.querySelectorAll('.toggle-button[data-pane]').forEach(function (bar) {
@@ -6623,6 +6625,23 @@
 			const state = JSON.parse(localStorage.getItem(COLLAPSED_KEY) || '{}')
 			if (state['serial-tools'] === false) setCollapsed('right', true)
 		} catch (e) {}
+
+		//窄屏：右栏在窄屏是盖住日志区的浮层，首屏（含刷新恢复）必须收起，否则日志与发送区看不见；
+		//这里只改界面、不写回 COLLAPSED_KEY，宽屏偏好原样保留，回到宽屏时按它还原
+		let widePrefExpanded = null
+		function applyNarrowDefault() {
+			if (isNarrow()) {
+				if (widePrefExpanded === null) widePrefExpanded = !isCollapsed('right')
+				if (!isCollapsed('right')) setCollapsed('right', true, { silent: true })
+			} else if (widePrefExpanded !== null) {
+				if (widePrefExpanded && isCollapsed('right')) setCollapsed('right', false, { silent: true })
+				widePrefExpanded = null
+			}
+		}
+		applyNarrowDefault()
+		const narrowMq = window.matchMedia('(max-width: 768px)')
+		if (narrowMq.addEventListener) narrowMq.addEventListener('change', applyNarrowDefault)
+		else if (narrowMq.addListener) narrowMq.addListener(applyNarrowDefault)
 	})()
 
 	// 协议解析面板：顶缝拖高度，header 只负责点击折叠(与串口发送一致)
