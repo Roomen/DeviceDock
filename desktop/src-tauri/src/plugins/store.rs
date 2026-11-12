@@ -267,6 +267,12 @@ pub struct TxRecord {
     // 兼容旧格式，等价于 new_id
     #[serde(default)]
     pub tree_sha256: String,
+    // 备份是否由**本事务**创建（swap 里把 target 改名为备份成功后才置 true 并落盘），
+    // 以及那份备份的身份摘要。清理只删「本事务创建 + 身份一致」的备份。
+    #[serde(default)]
+    pub backup_created: bool,
+    #[serde(default)]
+    pub backup_identity: String,
     // 新旧 state 条目
     #[serde(default)]
     pub previous_state: Option<Entry>,
@@ -568,7 +574,10 @@ fn state_class(root: &Path, id: &str, rec: &TxRecord) -> StateClass {
 fn registered_paths(root: &Path, id: &str, rec: &TxRecord) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = stored_path(root, &rec.target_path) { out.push(p); }
-    if let Ok(p) = stored_path(root, &rec.backup_path) { out.push(p); }
+    // 备份只有「本事务创建」时才算登记在案的副本；别人留下的 .old-* 不进清单
+    if rec.backup_created {
+        if let Ok(p) = stored_path(root, &rec.backup_path) { out.push(p); }
+    }
     if !rec.staging_path.is_empty() {
         if let Ok(p) = stored_path(root, &rec.staging_path) { out.push(p); }
     }
@@ -587,13 +596,24 @@ fn cleanup_after_commit(root: &Path, id: &str, rec: &TxRecord) -> Result<(), Str
     let backup = stored_path(root, &rec.backup_path)?;
     for path in registered_paths(root, id, rec) {
         if path == target || !path.exists() || !path.is_dir() { continue; }
+        if path == backup {
+            // 只有「本事务创建」且身份仍等于记录里的 backup_identity 才删；否则保留并记日志
+            if !rec.backup_created {
+                eprintln!("保留非本事务创建的备份 {}", path.display());
+                continue;
+            }
+            let same = matches!(identity(&path), Identity::Known(v) if v == rec.backup_identity);
+            if !same {
+                eprintln!("保留身份不一致的备份 {}（记录 {:?}）", path.display(), rec.backup_identity);
+                continue;
+            }
+        }
         fs::remove_dir_all(&path).map_err(|e| format!("无法删除本事务登记的副本 {}：{e}", path.display()))?;
     }
     if !rec.staging_path.is_empty() {
         forget_staging_lock(&rec.staging_path);
         let _ = fs::remove_file(staging_lock_path(root, &rec.staging_path));
     }
-    let _ = backup;
     Ok(())
 }
 
@@ -802,16 +822,30 @@ impl InstallTx {
         let plugin_root = plugin_dir(&self.root, &self.id);
         let backup = plugin_root.join(format!(".old-{}", self.rec.version));
         if self.target.exists() {
-            // 已存在的 .old-<version> 没有本事务的提交证据：不能删，中止安装并标待修复。
-            // 只写 .repair.json（硬门槛），不写 state —— 后续 restore_state 会覆盖 state 条目。
+            // 正常情况已在 begin_install 里拦下（不写记录）；这里只是兜底，不改任何状态。
             if backup.exists() {
-                let _ = write_repair(&self.root, &self.id, "存在未确认的旧备份，需先修复", TxStage::Prepared);
-                return Err("存在未确认的旧备份（.old 目录没有提交证据），需先修复后再安装".to_string());
+                return Err(format!("存在未确认的旧备份 .old-{}，请先在插件面板移除或手工处理", self.rec.version));
             }
             if let Err(e) = fs::rename(&self.target, &backup) {
                 let restore = fs::rename(&backup, &self.target);
                 if self.target.exists() || restore.is_ok() { return Err(format!("无法替换已有插件版本：{e}")); }
                 return Err(format!("无法替换已有插件版本：{e}；还原备份也失败：{restore:?}"));
+            }
+            // 把 target 改名为备份**成功之后**才认领这份备份，并记下它的身份。
+            // 身份直接沿用 begin_install 时算好的 old_id（就是被移走的那个目录），
+            // 避免再读一遍磁盘；落盘失败则回退这次改名，不让记录与实际不一致。
+            self.rec.backup_created = true;
+            self.rec.backup_identity = self.rec.old_id.clone();
+            if let Err(e) = write_tx(&self.root, &self.id, &self.rec) {
+                self.rec.backup_created = false;
+                self.rec.backup_identity.clear();
+                let restore = fs::rename(&backup, &self.target);
+                if restore.is_err() {
+                    // 记录没写下、改名也没退回：保留事务记录（未认领备份），交给决策表第 8 行隔离
+                    let _ = write_tx(&self.root, &self.id, &self.rec);
+                    return Err(format!("无法记录备份所有权：{e}；还原备份也失败：{restore:?}"));
+                }
+                return Err(format!("无法记录备份所有权：{e}"));
             }
         }
         let staging = self.root.join(&self.rec.staging_path);
@@ -858,6 +892,13 @@ pub fn begin_install(
     let target = checked_version_dir(root, id, version)?;
     let plugin_root = plugin_dir(root, id);
     fs::create_dir_all(&plugin_root).map_err(|e| format!("无法创建插件目录：{e}"))?;
+    // 冲突检查必须在写事务记录**之前**：不论 target 是否存在，只要已有同名 .old-<version>
+    // 就说明有一份没有本事务提交证据的旧备份。此时不动事务记录、不写 .repair.json、
+    // 不改 state、不碰 target 与备份，只让调用方释放本次 staging。
+    let backup_path = plugin_root.join(format!(".old-{version}"));
+    if backup_path.exists() {
+        return Err(format!("存在未确认的旧备份 .old-{version}，请先在插件面板移除或手工处理"));
+    }
     let new_id = tree_sha256(staging)?;
     let old_id = match identity(&target) {
         Identity::Known(v) => v,
@@ -877,6 +918,9 @@ pub fn begin_install(
         old_id,
         new_id: new_id.clone(),
         tree_sha256: new_id,
+        // 备份要在 swap 真正把 target 改名成功之后才认领；这里一律 false
+        backup_created: false,
+        backup_identity: String::new(),
         previous_state,
         expected_state: None,
     };
@@ -1281,6 +1325,10 @@ mod tests {
             old_id: old_id.into(),
             new_id: new_id.into(),
             tree_sha256: new_id.into(),
+            // 测试里构造的记录默认「备份由本事务创建」且身份就是 old_id，
+            // 与 swap 成功后的真实记录一致；需要反向场景的用例再单独置 false
+            backup_created: !old_id.is_empty(),
+            backup_identity: old_id.into(),
             previous_state: prev,
             expected_state: exp,
         }
@@ -1740,9 +1788,9 @@ mod tests {
     fn committed_record_with_matching_identity_cleans_backup() {
         let root = setup("c6-commit");
         let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
-        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
-        fs::write(plugin_dir(&root, "hello").join(".old-1.0.0/keep.txt"), b"x").unwrap();
-        let mut r = rec(&root, "oldid", &new_id, None, None);
+        // 备份是真包：身份由 content 决定，记录里必须写同一个摘要才允许删
+        let old_id = write_pkg(&plugin_dir(&root, "hello").join(".old-1.0.0"), "old", &[]);
+        let mut r = rec(&root, &old_id, &new_id, None, None);
         r.stage = TxStage::Committed;
         put_tx(&root, &r);
         let out = recover_transactions(&root);
@@ -1864,34 +1912,66 @@ mod tests {
 
 
     // ---- 回修 7 · 1：只删当前事务有证据的副本 ----
-    #[test]
-    fn reinstall_aborts_when_orphan_backup_exists() {
-        let root = setup("c7-orphan-abort");
-        // 已装 1.0.0（target 存在），旁边有一个没有提交证据的 .old-1.0.0
-        write_pkg(&version_dir(&root, "hello", "1.0.0"), "old", &[]);
-        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
-        fs::write(plugin_dir(&root, "hello").join(".old-1.0.0/keep.txt"), b"keep").unwrap();
+    // 回修 8 · 1：冲突检查前移到 begin_install，且什么都不写（不记事务、不写 .repair.json、不改 state）
+    fn assert_orphan_backup_aborts(tag: &str, with_target: bool) {
+        let root = setup(tag);
+        let target_html = if with_target {
+            let old_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "old", &[]);
+            let e = entry("1.0.0", 'a', true);
+            seed_state(&root, Some(e));
+            Some(old_id)
+        } else {
+            seed_state(&root, None);
+            None
+        };
+        // 孤立备份（没有本事务的提交证据）
+        let backup = plugin_dir(&root, "hello").join(".old-1.0.0");
+        fs::create_dir_all(&backup).unwrap();
+        fs::write(backup.join("keep.txt"), b"keep").unwrap();
         let staging = stage_pkg(&root, "x", "new");
-        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, None).unwrap();
-        let err = tx.swap().unwrap_err();
-        assert!(err.contains("未确认的旧备份"), "{err}");
-        assert!(plugin_dir(&root, "hello").join(".old-1.0.0/keep.txt").exists(), "孤立备份必须保留");
-        assert!(read_repair(&root, "hello").is_some(), "插件要标为待修复");
-        assert!(version_dir(&root, "hello", "1.0.0").join("index.html").exists(), "target 不动");
+        let err = match begin_install(&root, "hello", "1.0.0", &staging, None) {
+            Err(e) => e,
+            Ok(_) => panic!("已有孤立备份时必须中止安装"),
+        };
+        assert!(err.contains("未确认的旧备份") && err.contains(".old-1.0.0"), "{err}");
+        assert!(!tx_path(&root, "hello").exists(), "不能留下事务记录");
+        assert!(read_repair(&root, "hello").is_none(), "不能写修复标记");
+        assert_eq!(fs::read(backup.join("keep.txt")).unwrap(), b"keep", "备份内容不变");
+        if let Some(old_id) = target_html {
+            assert_eq!(identity(&version_dir(&root, "hello", "1.0.0")), Identity::Known(old_id), "target 不变");
+            let st = load_state(&root);
+            assert_eq!(st.plugins.get("hello").map(|e| e.enabled), Some(true), "插件仍可启用");
+            assert!(st.plugins.get("hello").and_then(|e| e.repair.clone()).is_none(), "state 未被改");
+        } else {
+            assert!(!version_dir(&root, "hello", "1.0.0").exists(), "target 不该被创建");
+            assert!(load_state(&root).plugins.is_empty(), "state 未被改");
+        }
+        // 调用方释放 staging（模拟 plugin_install 的错误分支）
+        drop_staging(&root, &staging);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn orphan_backup_aborts_install_with_existing_target() {
+        assert_orphan_backup_aborts("c8-orphan-target", true);
+    }
+
+    #[test]
+    fn orphan_backup_aborts_install_without_target() {
+        assert_orphan_backup_aborts("c8-orphan-notarget", false);
     }
 
     #[test]
     fn committed_cleanup_only_deletes_registered_paths() {
         let root = setup("c7-scope");
         let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
-        // 记录登记的备份（会被删）
-        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
+        // 记录登记的备份（真包 + 身份一致 → 会被删）
+        let old_id = write_pkg(&plugin_dir(&root, "hello").join(".old-1.0.0"), "old", &[]);
         // 旁边的孤立备份与未登记目录（必须保留）
         fs::create_dir_all(plugin_dir(&root, "hello").join(".old-0.9.0")).unwrap();
         fs::create_dir_all(plugin_dir(&root, "hello").join("0.8.0")).unwrap();
         fs::write(plugin_dir(&root, "hello").join("0.8.0/keep.txt"), b"x").unwrap();
-        let mut r = rec(&root, "oldid", &new_id, None, None);
+        let mut r = rec(&root, &old_id, &new_id, None, None);
         r.stage = TxStage::Committed;
         put_tx(&root, &r);
         let out = recover_transactions(&root);
@@ -1949,6 +2029,77 @@ mod tests {
         assert!(reclaimable(old, PidPolicy::Unix, true, false), "Unix：pid 已退出 + 锁空闲可清理");
         assert!(!reclaimable(old, PidPolicy::Unix, true, true), "锁被持有保留");
         assert_eq!(current_pid_policy(), if cfg!(windows) { PidPolicy::Windows } else { PidPolicy::Unix });
+    }
+
+
+    // ---- 回修 8 · 2：备份只删本事务创建且身份一致的 ----
+    #[test]
+    fn backup_not_created_by_this_tx_is_never_deleted() {
+        let root = setup("c8-backup-not-ours");
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        let old_id = write_pkg(&plugin_dir(&root, "hello").join(".old-1.0.0"), "old", &[]);
+        let mut r = rec(&root, &old_id, &new_id, None, None);
+        r.stage = TxStage::Committed;
+        // 记录声称备份存在，但 backup_created=false（不是本事务创建的）
+        r.backup_created = false;
+        r.backup_identity = old_id.clone();
+        put_tx(&root, &r);
+        let out = recover_transactions(&root);
+        assert!(out.problems.is_empty(), "{:?}", out.problems);
+        assert!(plugin_dir(&root, "hello").join(".old-1.0.0").exists(), "非本事务创建的备份必须保留");
+        assert!(!tx_path(&root, "hello").exists(), "记录本身照常收尾");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn backup_identity_mismatch_is_kept() {
+        let root = setup("c8-backup-id");
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        write_pkg(&plugin_dir(&root, "hello").join(".old-1.0.0"), "old", &[]);
+        let mut r = rec(&root, "a".repeat(64).as_str(), &new_id, None, None);
+        r.stage = TxStage::Committed;
+        r.backup_created = true;
+        r.backup_identity = "f".repeat(64); // 与实际内容不符
+        put_tx(&root, &r);
+        let out = recover_transactions(&root);
+        assert!(out.problems.is_empty(), "{:?}", out.problems);
+        assert!(plugin_dir(&root, "hello").join(".old-1.0.0").exists(), "身份不一致的备份必须保留");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn normal_upgrade_deletes_the_backup_this_tx_created() {
+        let root = setup("c8-upgrade-ok");
+        // 旧版就位
+        let old_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "old", &[]);
+        let old = entry("1.0.0", 'a', true);
+        seed_state(&root, Some(old.clone()));
+        let staging = stage_pkg(&root, "x", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, Some(old)).unwrap();
+        tx.swap().unwrap();
+        let rec_after_swap = read_tx(&tx_path(&root, "hello")).unwrap();
+        assert_eq!(rec_after_swap.backup_created, true, "swap 成功后认领备份");
+        assert_eq!(rec_after_swap.backup_identity, old_id, "备份身份就是被移走的旧 target");
+        assert!(plugin_dir(&root, "hello").join(".old-1.0.0").exists());
+        tx.write_state(entry("1.0.0", 'b', true)).unwrap();
+        tx.commit().unwrap();
+        assert!(!plugin_dir(&root, "hello").join(".old-1.0.0").exists(), "正常升级删掉本事务备份");
+        assert!(!tx_path(&root, "hello").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn new_install_never_touches_backup_path() {
+        let root = setup("c8-fresh");
+        let staging = stage_pkg(&root, "x", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, None).unwrap();
+        tx.swap().unwrap();
+        let rec_after = read_tx(&tx_path(&root, "hello")).unwrap();
+        assert_eq!(rec_after.backup_created, false, "没有旧版时不认领备份");
+        tx.write_state(entry("1.0.0", 'b', true)).unwrap();
+        tx.commit().unwrap();
+        assert!(!plugin_dir(&root, "hello").join(".old-1.0.0").exists());
+        fs::remove_dir_all(&root).unwrap();
     }
 
 }

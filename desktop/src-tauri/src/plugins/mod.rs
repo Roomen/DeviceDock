@@ -268,8 +268,13 @@ fn list_all(root: &Path, blocked: &BTreeSet<String>, active: &BTreeSet<String>) 
         }
     }
     for info in &mut out {
-        if blocked.contains(&info.id) && info.repair.is_none() {
-            info.repair = Some("恢复隔离未能持久化，本次进程内不可用".to_string());
+        // 内存禁用集合（两处隔离持久化都失败）等于「本次进程内不可用」：
+        // 既要给出原因，也不能让界面把它当成可启用的插件。
+        if blocked.contains(&info.id) {
+            if info.repair.is_none() {
+                info.repair = Some("恢复隔离未能持久化，本次进程内不可用".to_string());
+            }
+            info.enabled = false;
         }
         if active.contains(&info.id) {
             info.installing = true;
@@ -305,13 +310,17 @@ fn mark_all_installing(mut out: Vec<PluginInfo>) -> Vec<PluginInfo> {
 // 进程内门禁锁中毒 → 与 scheme 一致把全部插件标为不可用。
 fn list_all_state(state: &PluginsState) -> Vec<PluginInfo> {
     let root = state.root();
-    if state.blocked.lock().is_err() || state.active.lock().is_err() {
-        eprintln!("插件状态锁异常：本次列出全部插件时按不可用处理");
-        return mark_unavailable(list_all(root, &BTreeSet::new(), &BTreeSet::new()));
-    }
-    let blocked = state.blocked.lock().map(|b| b.clone()).unwrap_or_default();
-    let active = state.active.lock().map(|a| a.clone()).unwrap_or_default();
-    match store::read_lock(root) {
+    // 顺序固定：先拿共享锁，再在锁内读门禁（blocked / active）。
+    // 若先拷门禁再等锁，等锁期间有安装失败并把插件写进内存 blocked，本列表会用旧快照报「可用」。
+    let guard = store::read_lock(root);
+    let (blocked, active) = match (state.blocked.lock(), state.active.lock()) {
+        (Ok(b), Ok(a)) => (b.clone(), a.clone()),
+        _ => {
+            eprintln!("插件状态锁异常：本次列出全部插件时按不可用处理");
+            return mark_unavailable(list_all(root, &BTreeSet::new(), &BTreeSet::new()));
+        }
+    };
+    match guard {
         Ok(_guard) => list_all(root, &blocked, &active),
         Err(_) => mark_all_installing(list_all(root, &blocked, &active)),
     }
@@ -823,6 +832,37 @@ mod tests {
         let gates = state.serve_gates().unwrap();
         assert!(gates.blocked.contains("hello"), "持锁之后读门禁必须包含新加入的 blocked 项");
         drop(_read);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // 回修 8 · 3：plugin_list 的门禁必须在取到共享锁之后读。
+    // 旧顺序（先拷 blocked 再等锁）在「等锁期间插件被写进 blocked」时会漏掉它。
+    #[test]
+    fn list_all_state_reads_gates_inside_the_read_lock() {
+        let root = fixture("gates-in-lock");
+        let state = PluginsState {
+            root: root.clone(),
+            tx: Mutex::new(()),
+            blocked: Mutex::new(BTreeSet::new()),
+            active: Mutex::new(BTreeSet::new()),
+            unavailable: None,
+        };
+        let available = list_all_state(&state);
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].enabled, true, "正常情况下可用");
+        // 模拟「另一个窗口在等共享锁期间把插件加入 blocked」
+        state.blocked.lock().unwrap().insert("hello".to_string());
+        let after = list_all_state(&state);
+        assert_eq!(after[0].enabled, false, "锁内读门禁必须看到新加入的 blocked 项");
+        assert!(after[0].repair.as_deref().unwrap_or("").contains("锁异常")
+            || after[0].repair.is_some(), "{:?}", after[0].repair);
+        // 有排他事务在跑时：全部标 installing（共享锁拿不到）
+        let held = store::file_lock(&root).unwrap();
+        state.blocked.lock().unwrap().clear();
+        let during = list_all_state(&state);
+        assert!(during[0].installing, "拿不到共享锁时一律 installing");
+        assert_eq!(during[0].enabled, false);
+        drop(held);
         fs::remove_dir_all(&root).unwrap();
     }
 
