@@ -192,7 +192,7 @@ assert.equal(def.fields[0].write, false)
 assert.deepEqual(def.fields[1].enum, [{ value: 0, label: '0' }, { value: 1, label: '自动' }])
 assert.equal(def.queries[0].queryId, 3)
 assert.deepEqual(def.presets, [])
-assert.equal(def.tx, null)
+assert.equal(def.session, null)
 assert.equal(def.metrics, null)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x' }), /parseFrame/)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, logView: 'no' }), /logView 必须是函数/)
@@ -200,15 +200,17 @@ assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () 
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, fields: [{ key: 'a', name: 'A', type: 'u8' }] }), /类型不支持/)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, fields: [{ key: 'a', name: 'A', type: 'uint8', min: 9, max: 1 }] }), /min 大于 max/)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, fields: [{ key: 'a', name: 'A', type: 'uint8', enum: [] }] }), /enum/)
-assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, tx: { queryById: function () {} } }), /tx 缺少方法/)
-const withTx = C.normalizeProtocolDef({
+assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, session: { prepare: 'no' } }), /session.prepare 必须是函数/)
+assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, session: { idleMs: 0 } }), /session.idleMs 必须是正数/)
+const withHooks = C.normalizeProtocolDef({
 	name: 'x', parseFrame: function () {},
-	tx: {
-		queryById: function () {}, readTag: function () {}, writeRaw: function () {}, readItem: function () {},
-		bytesEqual: function () {}, hasTag: function () {}, reset: function () {}, cancel: function () {},
-	},
+	buildRead: function () {}, buildWrite: function () {}, buildQuery: function () {},
+	matchResponse: function () {}, readField: function () {},
+	session: { prepare: function () {}, keepalive: function () {}, idleMs: 20000, keepaliveTimeoutMs: 4000 },
 })
-assert.ok(withTx.tx)
+assert.ok(withHooks.buildRead && withHooks.buildWrite && withHooks.buildQuery && withHooks.matchResponse && withHooks.readField)
+assert.deepEqual(Object.keys(withHooks.session).sort(), ['idleMs', 'keepalive', 'keepaliveTimeoutMs', 'prepare'])
+assert.equal(withHooks.tx, undefined, 'tx 已从契约移除')
 
 // ---- 摘要（浏览器与 node 共用 crypto.subtle） ----
 ;(async function () {

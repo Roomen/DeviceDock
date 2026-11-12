@@ -15,7 +15,8 @@
 	const INTEGRITY_RE = /^sha256-[0-9a-f]{64}$/
 	const FIELD_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/
 	const FIELD_TYPES = ['uint8', 'uint16le', 'uint32le', 'int8', 'int16le', 'int32le', 'float32le', 'float64le', 'bcd', 'ascii', 'enum', 'bool']
-	const TEST_EXECUTOR_METHODS = ['queryById', 'readTag', 'writeRaw', 'readItem', 'bytesEqual', 'hasTag', 'reset', 'cancel']
+	// 会话钩子：协议自己的连通检查与空闲保活，都只返回 { bytes, request }，引擎不认识帧格式
+	const SESSION_HOOKS = ['prepare', 'keepalive']
 	const MAX_CATALOG_PACKAGES = 200
 	const MAX_PROVIDES = 64
 	const MAX_FIELDS = 512
@@ -398,13 +399,22 @@
 			return Object.assign({}, raw, { key: key, name: name })
 		})
 	}
-	function normalizeTestExecutor(tx) {
-		if (tx == null) return null
-		if (!isObject(tx)) fail('tx 必须是对象')
-		TEST_EXECUTOR_METHODS.forEach(function (m) {
-			if (!isFunction(tx[m])) fail('tx 缺少方法：' + m)
+	function normalizeSession(value) {
+		if (value == null) return null
+		if (!isObject(value)) fail('session 必须是对象')
+		const out = {}
+		SESSION_HOOKS.forEach(function (k) {
+			const v = value[k]
+			if (v == null) return
+			if (!isFunction(v)) fail('session.' + k + ' 必须是函数')
+			out[k] = v
 		})
-		return tx
+		;['idleMs', 'keepaliveTimeoutMs'].forEach(function (k) {
+			if (value[k] == null) return
+			if (typeof value[k] !== 'number' || !isFinite(value[k]) || value[k] <= 0) fail('session.' + k + ' 必须是正数')
+			out[k] = value[k]
+		})
+		return out
 	}
 	function normalizeProtocolDef(def) {
 		if (!isObject(def)) fail('协议对象无效')
@@ -412,7 +422,7 @@
 		if (!name) fail('协议缺少名称')
 		if (!isFunction(def.parseFrame)) fail('协议缺少 parseFrame')
 		const out = { name: name, parseFrame: def.parseFrame }
-		;['formatFrame', 'logView', 'findFrame', 'byteMap', 'buildDownFrame', 'metrics', 'buildRead', 'buildWrite', 'matchResponse', 'mountPanel'].forEach(function (k) {
+		;['formatFrame', 'logView', 'findFrame', 'byteMap', 'buildDownFrame', 'metrics', 'buildRead', 'buildWrite', 'buildQuery', 'matchResponse', 'readField', 'mountPanel'].forEach(function (k) {
 			const v = def[k]
 			if (v == null) { out[k] = null; return }
 			if (!isFunction(v)) fail('协议 ' + name + ' 的 ' + k + ' 必须是函数')
@@ -421,7 +431,7 @@
 		out.presets = Array.isArray(def.presets) ? def.presets.slice() : []
 		out.fields = normalizeFields(def.fields)
 		out.queries = normalizeQueries(def.queries)
-		out.tx = normalizeTestExecutor(def.tx)
+		out.session = normalizeSession(def.session)
 		return out
 	}
 
@@ -460,6 +470,7 @@
 		platformMatches: platformMatches,
 		normalizeProtocolDef: normalizeProtocolDef,
 		normalizeFields: normalizeFields,
+		normalizeSession: normalizeSession,
 	}
 
 	root.DeviceDockContract = api
