@@ -6,6 +6,7 @@ mod classic;
 mod lease;
 mod mcp;
 mod menu;
+mod plugins;
 mod portable;
 mod serial;
 mod updater;
@@ -221,6 +222,8 @@ pub fn run() {
 		.manage(mcp::McpState::default())
 		.manage(winstate::WinState::default())
 		.manage(updater::UpdateState::default())
+		// 插件包只经 ddplugin:// 出文件：沙箱 iframe 里的插件页面与本页面不同源，只拿到校验过的包内文件
+		.register_uri_scheme_protocol("ddplugin", |ctx, request| plugins::serve(ctx.app_handle(), &request))
 		.invoke_handler(tauri::generate_handler![
 			ble::ble_scan,
 			ble::ble_scan_stop,
@@ -257,6 +260,18 @@ pub fn run() {
 			mcp::mcp_unregister,
 			mcp::mcp_commit,
 			mcp::mcp_reply,
+			plugins::plugin_list,
+			plugins::plugin_inspect,
+			plugins::plugin_install,
+			plugins::plugin_check_update,
+			plugins::plugin_set_enabled,
+			plugins::plugin_uninstall,
+			plugins::plugin_token_status,
+			plugins::plugin_token_set,
+			plugins::plugin_token_clear,
+			plugins::plugin_storage_get,
+			plugins::plugin_storage_set,
+			plugins::plugin_storage_remove,
 			titlebar_double_click
 		])
 		.on_window_event(|window, event| {
@@ -289,6 +304,10 @@ pub fn run() {
 			}
 			// 上次启用过本地 MCP 服务时只登记「等窗口注册」，真正监听要等页面注册
 			app.state::<mcp::McpState>().init(app.handle());
+			// 插件宿主：应用数据目录下 plugins/，状态与插件私有存储都在那里
+			let plugins = plugins::PluginsState::init(app.handle())
+				.map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+			app.manage(plugins);
 			let m = menu::build(app.handle())?;
 			app.set_menu(m)?;
 			if let Some(handoff) = updater::read_handoff(app.handle()) {
