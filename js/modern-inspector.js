@@ -186,8 +186,8 @@
 		const box = el('div', 'mi-empty')
 		const icon = el('i', 'bi bi-search')
 		icon.setAttribute('aria-hidden', 'true')
-		box.append(icon, el('div', 'mi-empty-main', '点选日志行查看这一帧'), el('div', 'mi-empty-sub', '也可从剪贴板读取一段 HEX 来解析'))
-		const btn = el('button', 'btn btn-sm btn-outline-secondary mi-paste', '读取剪贴板 HEX')
+		box.append(icon, el('div', 'mi-empty-main', '点选日志行查看这一帧'))
+		const btn = el('button', 'btn btn-sm btn-outline-secondary mi-paste', '粘贴 HEX')
 		btn.type = 'button'
 		btn.addEventListener('click', function () {
 			// 驱动原 HEX 输入区的点击处理(权限判断、读剪贴板、解析)

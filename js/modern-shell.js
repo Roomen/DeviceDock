@@ -905,6 +905,20 @@
 		park($('serial-log-view-seg'), view)
 		const act = grp('mdn-grp-act')
 		park(header.querySelector('.serial-log-actions'), act)
+		// 窄屏（≤768px）工具条只留视图/过滤/列表聊天/动作，格式、分包、行数收进这个抽屉；
+		// 宽屏上它被 CSS 隐藏，工具条仍是平铺的
+		const more = mk('button', 'mdn-logbar-toggle')
+		more.type = 'button'
+		more.setAttribute('aria-expanded', 'false')
+		more.title = '显示格式、分包与行数设置'
+		more.append(icon('bi-sliders'), mk('span', 'mdn-logbar-toggle-label', '设置'))
+		listen(more, 'click', function () {
+			const open = bar.getAttribute('data-open') === '1'
+			if (open) bar.removeAttribute('data-open')
+			else bar.setAttribute('data-open', '1')
+			more.setAttribute('aria-expanded', open ? 'false' : 'true')
+		})
+		bar.appendChild(more)
 		mountFilter()
 		// 命令面板的「日志设置」点的是原设置键(随标题行隐藏)：设置已平铺在工具条上，转成聚焦到格式胶囊
 		listen($('serial-log-settings-btn'), 'click', function (e) {

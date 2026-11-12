@@ -134,7 +134,7 @@
 			title: '切换串口模式（单路/双路）',
 			feature: 'lane.dual',
 			alias: 'moshi mode dual single shuanglu danlu qiehuan',
-			detail: '当前 ' + (window.SerialHub ? window.SerialHub.mode : 'single'),
+			detail: '当前 ' + (window.SerialHub && window.SerialHub.mode === 'dual' ? '双路' : '单路'),
 			run: function () {
 				if (!window.SerialHub) return
 				if (window.SerialHub.mode === 'dual') {
@@ -185,13 +185,13 @@
 		// logType 唯一状态源在 common.js,这里不再枚举下拉框(已拆成视图/格式按钮组),直接调 setLogType
 		if (typeof window.setLogType === 'function') {
 			[
-				{ value: 'hex&text', label: 'Hex和Text' },
-				{ value: 'hex', label: 'Hex' },
-				{ value: 'text', label: 'Text' },
-				{ value: 'ansi', label: '彩色Ansi' },
-				{ value: 'hex&ansi', label: 'Hex和Ansi' },
+				{ value: 'hex&text', label: 'HEX + TEXT' },
+				{ value: 'hex', label: 'HEX' },
+				{ value: 'text', label: 'TEXT' },
+				{ value: 'ansi', label: 'ANSI 彩色' },
+				{ value: 'hex&ansi', label: 'HEX + ANSI' },
 				{ value: 'parse', label: '解析' },
-				{ value: 'hex&parse', label: 'Hex和解析' },
+				{ value: 'hex&parse', label: 'HEX + 解析' },
 				{ value: 'term', label: '终端' },
 			].forEach(function (t) {
 				list.push({

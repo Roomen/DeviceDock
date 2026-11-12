@@ -1755,14 +1755,12 @@
 		const denied = _clipReadPerm === 'denied'
 		const main = denied
 			? '权限已拒绝，请用 Ctrl/Cmd+V 粘贴'
-			: granted
-				? '点击读取剪贴板 HEX'
-				: '点击允许读取剪贴板'
+			: '点击读取剪贴板 HEX'
 		const sub = denied
-			? '可在地址栏站点设置中重新允许剪贴板 · 也可点上方日志行'
+			? '可在站点设置里重新允许剪贴板'
 			: granted
-				? '已授权，点击即读 · 也支持 Ctrl/Cmd+V · 或点上方日志行'
-				: '首次需浏览器授权一次，之后点击不再弹窗 · 也可 Ctrl/Cmd+V'
+				? '也支持 Ctrl/Cmd+V'
+				: '首次需浏览器授权'
 		return '<div class="sk-hex-empty" aria-hidden="true">' +
 			'<div class="sk-hex-empty-main"><i class="bi bi-clipboard-plus"></i><span>' + main + '</span></div>' +
 			'<div class="sk-hex-empty-sub">' + sub + '</div></div>'
