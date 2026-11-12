@@ -591,7 +591,50 @@ fn registered_paths(root: &Path, id: &str, rec: &TxRecord) -> Vec<PathBuf> {
 
 // 提交后的清理：只删本事务登记的 backup / staging / 旧版本目录，绝不按插件 id 扫目录。
 // 记录之外的孤立 .old-* 与未登记目录一律保留（report_orphan_backups 只记日志）。
+// 测试探针：只用于证明「清理发生在记录已落盘为 committed 之后」。
+// 仅在 cfg(test) 下存在，产品构建里没有这些静态变量与分支。
+#[cfg(test)]
+pub(crate) mod cleanup_probe {
+    // thread_local：cargo test 默认多线程跑，探针必须按线程隔离，否则互相覆盖
+    use std::cell::Cell;
+    thread_local! {
+        static ARM: Cell<bool> = Cell::new(false);
+        static FAIL: Cell<bool> = Cell::new(false);
+        static SAW_COMMITTED: Cell<bool> = Cell::new(false);
+        #[allow(dead_code)]
+        static SAW_BACKUP: Cell<bool> = Cell::new(false);
+    }
+    pub fn reset() {
+        ARM.with(|c| c.set(false));
+        FAIL.with(|c| c.set(false));
+        SAW_COMMITTED.with(|c| c.set(false));
+        SAW_BACKUP.with(|c| c.set(false));
+    }
+    pub fn arm(fail_cleanup: bool) {
+        ARM.with(|c| c.set(true));
+        FAIL.with(|c| c.set(fail_cleanup));
+    }
+    pub fn armed() -> bool { ARM.with(|c| c.get()) }
+    pub fn should_fail() -> bool { FAIL.with(|c| c.get()) }
+    pub fn saw_committed() -> bool { SAW_COMMITTED.with(|c| c.get()) }
+    #[allow(dead_code)]
+    pub fn saw_backup() -> bool { SAW_BACKUP.with(|c| c.get()) }
+    pub fn record(committed: bool, backup_exists: bool) {
+        SAW_COMMITTED.with(|c| c.set(committed));
+        SAW_BACKUP.with(|c| c.set(backup_exists));
+    }
+}
+
 fn cleanup_after_commit(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
+    #[cfg(test)]
+    if cleanup_probe::armed() {
+        let committed = read_tx(&tx_path(root, id)).map(|r| r.stage == TxStage::Committed).unwrap_or(false);
+        let backup_exists = stored_path(root, &rec.backup_path).map(|p| p.exists()).unwrap_or(false);
+        cleanup_probe::record(committed, backup_exists);
+        if cleanup_probe::should_fail() {
+            return Err("注入的清理失败".to_string());
+        }
+    }
     let target = stored_path(root, &rec.target_path)?;
     let backup = stored_path(root, &rec.backup_path)?;
     for path in registered_paths(root, id, rec) {
@@ -699,9 +742,14 @@ fn recover_one(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
             Ok(())
         }
         Recovery::FinishNew => {
-            // state 已是新的，只补完清理；不删 target。
+            // state 已是新的，按 commit() 的三步顺序补完：先把记录推进成 committed 并落盘，
+            // 再做清理，最后由调用方删记录。落盘失败就返回 Err 走隔离（副本一律保留）。
+            let mut committed = rec.clone();
+            committed.stage = TxStage::Committed;
+            committed.committed = true;
+            write_tx(root, id, &committed)?;
             // 清理范围限于本记录登记的路径，孤立 .old-* 与未登记目录不碰。
-            cleanup_after_commit(root, id, rec)?;
+            cleanup_after_commit(root, id, &committed)?;
             restore_state(root, id, rec.expected_state.as_ref())?;
             Ok(())
         }
@@ -824,7 +872,10 @@ impl InstallTx {
         if self.target.exists() {
             // 正常情况已在 begin_install 里拦下（不写记录）；这里只是兜底，不改任何状态。
             if backup.exists() {
-                return Err(format!("存在未确认的旧备份 .old-{}，请先在插件面板移除或手工处理", self.rec.version));
+                return Err(format!(
+                    "存在未确认的旧备份 {}：确认不再需要后手工删除该目录，再重新安装",
+                    backup.display()
+                ));
             }
             if let Err(e) = fs::rename(&self.target, &backup) {
                 let restore = fs::rename(&backup, &self.target);
@@ -897,7 +948,10 @@ pub fn begin_install(
     // 不改 state、不碰 target 与备份，只让调用方释放本次 staging。
     let backup_path = plugin_root.join(format!(".old-{version}"));
     if backup_path.exists() {
-        return Err(format!("存在未确认的旧备份 .old-{version}，请先在插件面板移除或手工处理"));
+        return Err(format!(
+            "存在未确认的旧备份 {}：确认不再需要后手工删除该目录，再重新安装",
+            backup_path.display()
+        ));
     }
     let new_id = tree_sha256(staging)?;
     let old_id = match identity(&target) {
@@ -2099,6 +2153,116 @@ mod tests {
         tx.write_state(entry("1.0.0", 'b', true)).unwrap();
         tx.commit().unwrap();
         assert!(!plugin_dir(&root, "hello").join(".old-1.0.0").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+
+    // ---- 回修 9 · 1：FinishNew 先落盘 committed，再清理 ----
+    #[test]
+    fn finish_new_persists_committed_before_cleanup() {
+        let root = setup("c9-finish-order");
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        // 第 6 行（首次安装 + state 已是新）走 FinishNew；记录里带一个登记过的 staging 目录
+        fs::create_dir_all(root.join(".staging-x")).unwrap();
+        let new = entry("1.0.0", 'b', true);
+        seed_state(&root, Some(new.clone()));
+        let r = rec(&root, "", &new_id, None, Some(new));
+        put_tx(&root, &r);
+        assert_eq!(read_tx(&tx_path(&root, "hello")).unwrap().stage, TxStage::Prepared, "恢复前还是 prepared");
+
+        cleanup_probe::reset();
+        cleanup_probe::arm(false);
+        let out = recover_transactions(&root);
+        // 先把探针值取出来再 reset（reset 会清零）
+        let saw_committed = cleanup_probe::saw_committed();
+        cleanup_probe::reset();
+
+        assert!(out.problems.is_empty(), "{:?}", out.problems);
+        assert!(saw_committed, "清理入口必须看到记录已落盘为 committed");
+        assert!(!tx_path(&root, "hello").exists(), "成功后记录被删除");
+        assert!(!root.join(".staging-x").exists(), "登记的 staging 被清理");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn finish_new_keeps_backup_when_cleanup_fails_after_committed() {
+        let root = setup("c9-finish-fail");
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        // 备份必须是真包，否则身份 Unknown 会先落到第 8 行
+        let backup = plugin_dir(&root, "hello").join(".old-1.0.0");
+        let old_id = write_pkg(&backup, "old", &[]);
+        let new = entry("1.0.0", 'b', true);
+        seed_state(&root, Some(new.clone()));
+        let mut r = rec(&root, &old_id, &new_id, None, Some(new));
+        r.backup_created = true;
+        r.backup_identity = old_id.clone();
+        put_tx(&root, &r);
+
+        cleanup_probe::reset();
+        cleanup_probe::arm(true); // 注入：清理一定失败
+        let out = recover_transactions(&root);
+        let saw_committed = cleanup_probe::saw_committed();
+        cleanup_probe::reset();
+
+        assert!(saw_committed, "清理失败之前记录已落盘为 committed");
+        assert_eq!(out.problems.len(), 1, "清理失败要隔离");
+        assert!(backup.join("index.html").exists(), "清理失败时备份保留");
+        let leftover = read_tx(&tx_path(&root, "hello")).unwrap();
+        assert_eq!(leftover.stage, TxStage::Committed, "落盘的记录已是 committed");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn finish_new_keeps_everything_when_record_write_fails() {
+        let root = setup("c9-finish-writefail");
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        let backup = plugin_dir(&root, "hello").join(".old-1.0.0");
+        let old_id = write_pkg(&backup, "old", &[]);
+        let new = entry("1.0.0", 'b', true);
+        seed_state(&root, Some(new.clone()));
+        let mut r = rec(&root, &old_id, &new_id, None, Some(new));
+        r.backup_created = true;
+        r.backup_identity = old_id.clone();
+        put_tx(&root, &r);
+
+        // 把插件子目录设成只读：write_atomic 无法在里面创建临时文件 → 推进 committed 落盘失败
+        let plugin_root = plugin_dir(&root, "hello");
+        let orig = fs::metadata(&plugin_root).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = orig.clone();
+            perms.set_mode(0o555);
+            fs::set_permissions(&plugin_root, perms).unwrap();
+        }
+
+        let out = recover_transactions(&root);
+
+        fs::set_permissions(&plugin_root, orig).unwrap();
+
+        assert_eq!(out.problems.len(), 1, "落盘失败要隔离");
+        assert!(backup.join("index.html").exists(), "记录落盘失败时备份必须保留");
+        assert!(version_dir(&root, "hello", "1.0.0").exists(), "target 不动");
+        let leftover = read_tx(&tx_path(&root, "hello")).unwrap();
+        assert_eq!(leftover.stage, TxStage::Prepared, "记录没被推进（落盘失败就返回 Err）");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- 回修 9 · 2：孤立备份错误文案给出完整路径 + 手工删除指引 ----
+    #[test]
+    fn orphan_backup_error_names_the_full_path() {
+        let root = setup("c9-msg");
+        let backup = plugin_dir(&root, "hello").join(".old-1.0.0");
+        fs::create_dir_all(&backup).unwrap();
+        let staging = stage_pkg(&root, "x", "new");
+        let err = match begin_install(&root, "hello", "1.0.0", &staging, None) {
+            Err(e) => e,
+            Ok(_) => panic!("已有孤立备份时必须中止"),
+        };
+        assert!(err.contains(&backup.display().to_string()), "错误里要有完整路径：{err}");
+        assert!(err.contains("手工删除该目录"), "要给出处置办法：{err}");
+        assert!(err.contains("再重新安装"), "{err}");
+        assert!(!err.contains("插件面板移除"), "不再提面板移除：{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 
