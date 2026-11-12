@@ -371,51 +371,9 @@
 			open: function () { open(panel) },
 		}
 	}
-	// 功耗仪连接状态：左侧导航「功耗」项的角标，已连接且不在功耗视图时再在状态栏给一枚电流芯片。
-	// 电流读数直接取 blu-power.js 按自己节奏写进 #blu-current 的文本，不另起采样；连接状态没有事件可挂，跟状态栏一起每秒看一次
-	const POWER_NAV_TITLE = '功耗分析'
-	function powerConnected() {
-		const api = window.bluApi
-		return !!(api && typeof api.isOpen === 'function' && api.isOpen())
-	}
-	function powerViewActive() {
-		const v = $('view-blu')
-		return !!(v && v.classList.contains('active'))
-	}
-	function refreshPowerBadge() {
-		const item = document.querySelector('.rail-item[data-view="view-blu"]')
-		if (!item) return
-		const on = powerConnected()
-		if (on) {
-			item.dataset.conn = 'open'
-			item.title = POWER_NAV_TITLE + ' · 功耗仪已连接'
-			item.setAttribute('aria-label', POWER_NAV_TITLE + ' · 功耗仪已连接')
-		} else if (item.dataset.conn) {
-			delete item.dataset.conn
-			item.title = POWER_NAV_TITLE
-			item.removeAttribute('aria-label')
-		}
-	}
 	const TASKS = [
-		{
-			label: '功耗仪',
-			title: '切换到功耗分析',
-			noSpin: true,
-			blocksUpdate: true,
-			running: function () { return powerConnected() && !powerViewActive() },
-			text: function () {
-				const cur = $('blu-current')
-				const t = cur ? cur.textContent.trim() : ''
-				return '⚡ ' + (t && t !== '--' ? t : '功耗仪已连接')
-			},
-			open: function () {
-				const item = document.querySelector('.rail-item[data-view="view-blu"]')
-				if (item) item.click()
-			},
-		},
 		panelTask('rw', 'sk-rw-stop', 'sk-rw-progress-bar', '随机读写'),
 		panelTask('batch', 'sk-batch-stop', 'sk-batch-progress-bar', '批量配置'),
-		panelTask('protocol', 'gz-auto-stop', 'gz-auto-progress-bar', '工位测试'),
 		panelTask('firmware', 'fw-stop', 'fw-progress', '固件升级'),
 		{
 			label: '循环发送',
@@ -435,20 +393,6 @@
 				const input = $('serial-send-content')
 				if (input) input.focus()
 			},
-		},
-		{
-			// STS 模拟启动键按下即运行/等待中
-			label: 'STS 模拟',
-			title: '打开 STS 模拟面板',
-			blocksUpdate: true,
-			running: function () {
-				return !!document.querySelector('.sts-sim-head > .ctl-toggle[aria-pressed="true"]')
-			},
-			text: function () {
-				const n = document.querySelectorAll('.sts-sim-head > .ctl-toggle[aria-pressed="true"]').length
-				return 'STS 模拟' + (n > 1 ? ' ×' + n : '') + ' 运行中'
-			},
-			open: function () { open('sts-sim') },
 		},
 		{
 			// 本地 MCP 服务(js/mcp-service.js)：只有平台提供了服务且已启用才显示，未启用不占位。
@@ -783,13 +727,11 @@
 		if (parsePanel) watch.observe(parsePanel, { attributes: true, attributeFilter: ['class'] })
 
 		initConnectBarTools()
-		refreshPowerBadge()
 		updateStatusBar()
 		// 复用后台任务/连接状态的现有 1s 刷新，不另建接收计时器。
 		// 状态栏是三个视图共用的，不在串口视图时也要刷新
 		setInterval(function () {
 			if (document.hidden) return
-			refreshPowerBadge()
 			updateStatusBar()
 			syncFrameActions()
 		}, 1000)

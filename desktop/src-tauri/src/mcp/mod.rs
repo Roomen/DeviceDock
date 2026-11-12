@@ -26,9 +26,6 @@ const MAX_PENDING_PER_WINDOW: usize = 4;
 const MAX_PENDING_TOTAL: usize = 16;
 // 页面回执上限：工具结果只应是短 JSON
 const MAX_REPLY_BYTES: usize = 1024 * 1024;
-// 设备源电压范围，与 js/blu-protocol.js 的 VDD_LOW_MV / VDD_HIGH_MV 一致
-pub const VOLTAGE_MIN_MV: u32 = 500;
-pub const VOLTAGE_MAX_MV: u32 = 5000;
 
 pub struct WindowReg {
     pub bridge_epoch: String,
@@ -801,7 +798,7 @@ mod tests {
     #[tokio::test]
     async fn commit_is_single_use() {
         let s = state_with("e1");
-        let (id, _rx) = s.begin("main", "blu_set_power", TOOL_TIMEOUT).unwrap();
+        let (id, _rx) = s.begin("main", "serial_write", TOOL_TIMEOUT).unwrap();
         assert!(s.commit("main", &id, "e1").is_ok());
         assert_eq!(s.commit("main", &id, "e1").unwrap_err().code, "already_committed");
     }

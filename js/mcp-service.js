@@ -59,9 +59,9 @@
 			'```json', configJson(status, token), '```',
 			'Claude Code 也可执行以下接入命令：',
 			'```sh', cliCommand(status, token), '```',
-			'接入后先调用 windows_list，再用 serial_state / blu_state 确认目标窗口与设备。所有操作显式指定 window；串口还需指定 lane（单路 S，双路 A/B）。',
-			'串口工具：serial_open、serial_close、serial_write、serial_read。功耗仪工具：blu_set_power、blu_set_voltage、blu_capture_start、blu_capture_stop、blu_capture_summary。',
-			'设备需先在软件中选择；功耗仪需先在软件中连接。上下电只代表命令写入，无硬件确认；结果为 unknown_after_commit 时先查询状态，不要盲目重试。',
+			'接入后先调用 windows_list，再用 serial_state 确认目标窗口与设备。所有操作显式指定 window；串口还需指定 lane（单路 S，双路 A/B）。',
+			'串口工具：serial_open、serial_close、serial_write、serial_read。',
+			'设备需先在软件中选择。',
 			'该配置含本机访问令牌，请只用于本机接入，不要提交到仓库或输出到日志。',
 		].join('\n\n')
 	}

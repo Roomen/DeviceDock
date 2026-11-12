@@ -13,7 +13,6 @@
 		'view.firmware-pack', // 固件打包视图(原始包 / 压缩包 / 双向差分)
 		'view.classic',
 		'view.ble', // USB BLE 桥仅 Windows/macOS 客户端
-		'view.power', // 功耗分析视图(BLU 电流计)
 		'lane.dual', // 双路 A/B(由画像的 lanes 推出)
 		'panel.quick-send',
 		'panel.protocol', // 协议设置与下发
@@ -21,7 +20,6 @@
 		'panel.batch', // 批量配置写入
 		'panel.firmware', // 固件升级
 		'panel.parse', // 协议解析
-		'panel.sts-sim', // STS 模拟
 		'transport.serial',
 		'transport.ble',
 		'transport.bt-classic',
@@ -192,7 +190,7 @@
 				const keys = []
 				for (let i = 0; i < win.sessionStorage.length; i++) keys.push(win.sessionStorage.key(i))
 				keys.forEach(function (key) {
-					if (/^serialWant(Open|Port)/.test(key) || key === 'stsSim.prevProtocol' || key === 'sk-batch-state.index') win.sessionStorage.removeItem(key)
+					if (/^serialWant(Open|Port)/.test(key) || key === 'sk-batch-state.index') win.sessionStorage.removeItem(key)
 				})
 			} catch (e) {}
 		}

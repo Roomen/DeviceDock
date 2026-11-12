@@ -341,10 +341,9 @@ function packHarness(timeOut, protocol) {
 		addLog: (buf, isReceive, startTime, sid, glitch) => { flushed.push({ bytes: [...buf], glitch }); sidFlushed.push(sid); times.push(Number(startTime)); parsed.push([...buf]); return addLogResult },
 		parseLogType: t => ({ parse: /parse/.test(t) }), SERIAL_PACK_MAX_BYTES: 65536, readGenBySid: { S: 0 }, resetRxWatch: () => {}, portHeldByOther: () => false
 	})
-	vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/hostproto-protocol.js'), 'utf8'), context)
 	const peekStart = source.indexOf('\tfunction peekSekIncompleteNeed(')
 	const peekEnd = source.indexOf('\n\t}\n', peekStart) + 4
-	const flushStart = source.indexOf('\tfunction hostProtoLogging(')
+	const flushStart = source.indexOf('\tfunction sekFrameStart(')
 	const flushEnd = source.indexOf('\t//对外暴露的串口接口', flushStart)
 	const zeroStart = source.indexOf('\tfunction isAllZero(')
 	const zeroEnd = source.indexOf('\n\t}\n', zeroStart) + 4
@@ -354,7 +353,7 @@ function packHarness(timeOut, protocol) {
 		${source.slice(flushStart, flushEnd)}
 		${source.slice(releaseStart, releaseEnd)}
 		globalThis.api = { dataReceived, flushPendingRx, releasePort }`, context)
-	return { api: context.api, flushed, parsed, hub, context, sidFlushed, times, H: context.window.hostProto, setAddLogResult: v => { addLogResult = v }, fire: (ms = 50) => { now += ms; const all = [...timers.values()]; timers.clear(); all.forEach(fn => fn()) } }
+	return { api: context.api, flushed, parsed, hub, context, sidFlushed, times, setAddLogResult: v => { addLogResult = v }, fire: (ms = 50) => { now += ms; const all = [...timers.values()]; timers.clear(); all.forEach(fn => fn()) } }
 }
 
 async function testPackGlitch() {
@@ -391,7 +390,7 @@ async function testPackGlitch() {
 	for (const [type, waits] of [['hex', false], ['hex&parse', true], ['parse', true], ['text', false]]) {
 		const h = packHarness(50)
 		h.context.logType = type
-		h.context.window._activeProtocol = 'gz'
+		h.context.window._activeProtocol = 'other'
 		h.api.dataReceived(half, 'S')
 		h.fire()
 		assert.equal(h.flushed.length, waits ? 0 : 1, type)
@@ -412,77 +411,6 @@ async function testPackGlitch() {
 	early.api.dataReceived(Uint8Array.of(0), 'S')
 	early.fire()
 	assert.deepEqual(early.flushed, [{ bytes: [0, 0], glitch: true }, { bytes: [0], glitch: false }])
-}
-
-function testHostProtoPack() {
-	for (const timeout of [0, 50]) {
-		const h = packHarness(timeout, 'hostproto')
-		const frame = h.H.buildFrame({ type: h.H.TYPE_EVT, cmd: 0x0280, seq: 0, payload: [1, 2, 3] })
-		const response = h.H.buildFrame({ type: h.H.TYPE_RSP, cmd: 0x020c, seq: 7, payload: [0] })
-		// A 的最后一字节未到，B 的完整帧和发送前 flush 都不得切掉 A 的半帧。
-		h.api.dataReceived(frame.slice(0, -1), 'A')
-		h.api.dataReceived(response, 'B')
-		h.fire()
-		h.api.flushPendingRx('A')
-		assert.deepEqual(h.sidFlushed, ['B'])
-		h.api.dataReceived(Uint8Array.from([frame.at(-1), ...response]), 'A')
-		assert.deepEqual(h.sidFlushed, ['B', 'A', 'A'])
-		assert.deepEqual(h.parsed, [[...response], [...frame], [...response]])
-		assert.ok(h.parsed.every(bytes => h.H.parseFrame(bytes).ok))
-		assert.equal(h.hub.getPackBuf('A').length, 0)
-
-		// 每一个可能的 read 边界，包括单独 EB，都能还原完整帧。
-		for (let split = 1; split < frame.length; split++) {
-			const before = h.parsed.length
-			h.api.dataReceived(frame.slice(0, split), 'A')
-			h.api.flushPendingRx('A')
-			h.api.dataReceived(frame.slice(split), 'A')
-			// 只有 FF 前导的块允许提前作为原始日志输出。
-			assert.ok(h.H.parseFrame(h.parsed.at(-1)).ok, 'split ' + split)
-			assert.deepEqual(h.parsed.slice(before).flat(), [...frame])
-		}
-
-		// 真实订阅者同步 TX 的顺序：完整 RX 已进入日志，不会把尾字节留到下一行。
-		h.hub.mode = 'dual'
-		h.hub.isRoutable = () => true
-		h.hub.activeSendSid = () => 'B'
-		const callbacks = []
-		h.context.window.serialApi = { _receivers: [{ sid: 'A', cb: bytes => {
-			callbacks.push([...bytes])
-			h.api.flushPendingRx('A')
-		} }] }
-		h.api.dataReceived(frame.slice(0, -1), 'A')
-		const before = h.parsed.length
-		h.api.dataReceived(frame.slice(-1), 'A')
-		assert.deepEqual(h.parsed.slice(before), [[...frame]])
-		assert.equal(callbacks.length, 2)
-		assert.equal(h.hub.getPackBuf('A').length, 0)
-
-		// 前帧补齐时同块开始的下一帧，使用本次 RX 的时间。
-		h.api.dataReceived(frame.slice(0, -1), 'A')
-		h.fire(10)
-		h.api.dataReceived(Uint8Array.from([frame.at(-1), ...response.slice(0, -1)]), 'A')
-		const firstTime = h.times.at(-1)
-		h.api.dataReceived(response.slice(-1), 'A')
-		assert.equal(h.times.at(-1), firstTime + 10)
-
-		// 日志显示异常也不能阻止原始字节进入协议订阅者。
-		const beforeError = callbacks.length
-		const originalLog = h.context.addLog
-		h.context.addLog = () => { throw new Error('synthetic render failure') }
-		h.api.dataReceived(response, 'A')
-		assert.equal(callbacks.length, beforeError + 1)
-		assert.deepEqual(callbacks.at(-1), [...response])
-		h.context.addLog = originalLog
-
-		// 半帧永久缺尾也必须有界输出，后续完整帧可重新同步。
-		h.api.dataReceived(frame.slice(0, -1), 'A')
-		h.fire()
-		h.fire(3000)
-		assert.equal(h.hub.getPackBuf('A').length, 0)
-		h.api.dataReceived(response, 'A')
-		assert.deepEqual(h.parsed.at(-1), [...response])
-	}
 }
 
 function renderHarness() {
@@ -1060,7 +988,6 @@ async function run() {
 	await testLineErrorQuiet()
 	await testLineGlitchMeta()
 	await testPackGlitch()
-	testHostProtoPack()
 	await testLogRendering()
 	await testParseRerenderIsolation()
 	await testDualLaneParseIsolation()

@@ -26,7 +26,6 @@ function makeHarness(opts) {
 	const commits = []
 	const unregistered = []
 	const writes = []
-	const bluCalls = []
 	const state = {
 		authed: opts.authed !== false,
 		running: opts.running !== false,
@@ -100,34 +99,6 @@ function makeHarness(opts) {
 		protocolName() { return 'SEK' },
 		toast() {},
 	}
-	const bluApi = {
-		powerState() {
-			return { connected: true, opening: false, sampling: false, powered: { state: 'off', source: 'commanded' }, voltageMv: 3300, recordMode: 'wave', sampleRateHz: 1000, sampleCount: 0 }
-		},
-		captureSummary() { return { ready: false, reason: 'no_samples' } },
-		setPower(on, guard) {
-			bluCalls.push('start:' + on)
-			return Promise.resolve(guard.start()).then(function (denied) {
-				if (denied) return denied
-				bluCalls.push('work:' + on)
-				return { ok: true, changed: true, powered: { state: on ? 'on' : 'off', source: 'commanded' } }
-			})
-		},
-		setVoltage(mv, guard) {
-			return Promise.resolve(guard.start()).then(function (denied) {
-				if (denied) return denied
-				bluCalls.push('volt:' + mv)
-				return { ok: true, requestedMv: mv, appliedMv: mv, clamped: false }
-			})
-		},
-		startCapture(guard) {
-			return Promise.resolve(guard.start()).then(function (denied) {
-				if (denied) return denied
-				return { ok: true, changed: true, sampling: true }
-			})
-		},
-		stopCapture() { return Promise.resolve({ ok: true, changed: false, sampling: false }) },
-	}
 	const svc = opts.service === null ? null : {
 		status() { return Promise.resolve({ running: state.running, enabled: state.running, port: 38992, url: 'http://127.0.0.1:38992/mcp' }) },
 		enable() { return Promise.resolve({}) },
@@ -164,7 +135,6 @@ function makeHarness(opts) {
 	win.SerialHub = hub
 	win.serialApi = serialApi
 	win.serialLanes = serialLanes
-	win.bluApi = bluApi
 	win.Workbench = { updateBlockers: () => [] }
 
 	const ctx = { window: win, console, setTimeout, clearTimeout, setInterval, clearInterval }
@@ -180,7 +150,7 @@ function makeHarness(opts) {
 	}
 
 	const h = {
-		win, state, order, replies, commits, writes, bluCalls, svcListeners, unregistered,
+		win, state, order, replies, commits, writes, svcListeners, unregistered,
 		lane,
 		async boot() { await flush() },
 		msg(tool, params, extra) {
@@ -377,31 +347,6 @@ test('别的路 / 别的文档的游标不被接受', async () => {
 	assert.equal(forged.result.code, 'invalid_cursor')
 })
 
-test('功耗仪：commit 由共享业务队列在开工前调用；被拒则不执行', async () => {
-	const h = makeHarness()
-	await h.boot()
-	const ok = await h.call('blu_set_power', { window: 'main', on: true })
-	assert.equal(h.commits.length, 1)
-	assert.deepEqual(h.bluCalls, ['start:true', 'work:true'])
-	assert.equal(ok.ok, true)
-
-	const denied = makeHarness({ commitResult: { ok: false, code: 'aborted' } })
-	await denied.boot()
-	const r = await denied.call('blu_set_power', { window: 'main', on: true })
-	assert.equal(r.result.code, 'aborted')
-	assert.deepEqual(denied.bluCalls, ['start:true'])
-})
-
-test('功耗仪不受串口队列阻塞（不是同一层队列）', async () => {
-	const h = makeHarness({ writeImpl: () => new Promise(() => {}) })
-	await h.boot()
-	h.lane('S').open = true
-	h.send(h.msg('serial_write', { window: 'main', lane: 'S', data: '00' }))
-	await wait(10)
-	const r = await h.call('blu_set_power', { window: 'main', on: false })
-	assert.equal(r.ok, true)
-})
-
 test('串口状态：带模式、事务钉扎与后台任务信息，不返回窗口标题', async () => {
 	const h = makeHarness()
 	await h.boot()
@@ -460,37 +405,6 @@ test('排队等待期间换了设备对象：排队的那条不执行', async ()
 	assert.ok(r, '第二条应当有回执')
 	assert.equal(r.result.code, 'lane_changed')
 	assert.equal(h.writes.length, 1, '只有第一条真正写入')
-})
-
-test('功耗仪：存储初始化等 await 期间取消，不再开始采样', async () => {
-	let releaseStorage = null
-	const calls = []
-	const h = makeHarness()
-	await h.boot()
-	// 模拟 blu-power.startSampling：commit 之后还有一段 await(Store.init)，之后必须复查 guard
-	h.win.bluApi.startCapture = function (guard) {
-		return Promise.resolve(guard.start()).then(function (denied) {
-			if (denied) return denied
-			calls.push('storage')
-			return new Promise(function (r) { releaseStorage = r }).then(function () {
-				const step = guard.step()
-				if (step) return step
-				calls.push('start')
-				return { ok: true, changed: true, sampling: true }
-			})
-		})
-	}
-	const msg = h.msg('blu_capture_start', { window: 'main' })
-	h.send(msg)
-	await wait(20)
-	assert.deepEqual(calls, ['storage'])
-	h.cancel(msg.id)
-	releaseStorage()
-	await wait(30)
-	const r = h.replyFor(msg.id)
-	assert.ok(r, '应当有回执')
-	assert.equal(r.result.code, 'aborted')
-	assert.deepEqual(calls, ['storage'], '取消后不再进入 START')
 })
 
 test('排队上限：第一条卡住时后来的请求立刻 busy，不无限堆积', async () => {

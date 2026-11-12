@@ -3,9 +3,7 @@
 // 关键约定：
 // 1. 每个变更类调用先排进「该资源的串行队列」，在队列内部再 await commit(存活/未冻结/已登录)，之后才动设备；
 //    提交点由 Rust 记下，超时后按「未执行 / 结果未知」如实回报。
-// 2. 功耗仪的操作队列在 js/blu-power.js 里(与 UI 共用)，这里只把 commit 与取消检查作为 guard 传进去，
-//    不另起一层队列，否则取消/超时后仍可能排在 UI 操作后面悄悄执行。
-// 3. 串口读走 js/mcp-ring.js 的有界环，按「文档 + 路 + 连接代次 + 字节游标」取数，不读日志 DOM。
+// 2. 串口读走 js/mcp-ring.js 的有界环，按「文档 + 路 + 连接代次 + 字节游标」取数，不读日志 DOM。
 ;(function (root) {
 	'use strict'
 	const P = root.AppPlatform
@@ -46,7 +44,7 @@
 		return { ok: false, result: Object.assign({ code: code, message: message }, extra || {}) }
 	}
 	function pass(value) { return { ok: true, result: value } }
-	// 业务函数(bluApi / guard)返回 { ok, code, message, ... }：剥掉 ok 变成工具结果
+	// 业务函数返回 { ok, code, message, ... }：剥掉 ok 变成工具结果
 	function fromApi(r) {
 		if (!r || typeof r !== 'object') return fail('internal_error', '没有结果')
 		const out = Object.assign({}, r)
@@ -512,63 +510,6 @@
 		}
 	}
 
-	function bluApiOrFail() {
-		const b = root.bluApi
-		if (!b || !b.powerState) return { error: fail('blu_unavailable', '功耗分析模块未加载') }
-		return { api: b }
-	}
-
-	async function bluState() {
-		const r = bluApiOrFail()
-		if (r.error) return r.error
-		const st = r.api.powerState()
-		return pass({
-			connected: st.connected,
-			opening: st.opening,
-			sampling: st.sampling,
-			powered: st.powered,
-			voltageMv: st.voltageMv,
-			recordMode: st.recordMode,
-			sampleRateHz: st.sampleRateHz,
-			sampleCount: st.sampleCount,
-		})
-	}
-
-	async function bluSummary() {
-		const r = bluApiOrFail()
-		if (r.error) return r.error
-		return pass(r.api.captureSummary())
-	}
-
-	// 功耗仪变更：commit 由 blu-power.js 的共享队列在真正执行前回调(guard.start)，
-	// 这里不另排一层队列，避免「先 commit 再排队」让超时的命令事后执行
-	async function bluMutate(id, call) {
-		const r = bluApiOrFail()
-		if (r.error) return r.error
-		const guard = makeGuard(id)
-		const out = await call(r.api, guard)
-		return fromApi(out)
-	}
-
-	async function bluSetPower(id, p) {
-		if (typeof p.on !== 'boolean') return fail('bad_params', 'on 必须是布尔值')
-		return bluMutate(id, function (b, guard) { return b.setPower(!!p.on, guard) })
-	}
-
-	async function bluSetVoltage(id, p) {
-		const mv = Number(p.millivolts)
-		if (!isFinite(mv) || Math.floor(mv) !== mv) return fail('bad_params', 'millivolts 必须是整数')
-		return bluMutate(id, function (b, guard) { return b.setVoltage(mv, guard) })
-	}
-
-	async function bluStart(id) {
-		return bluMutate(id, function (b, guard) { return b.startCapture(guard) })
-	}
-
-	async function bluStop(id) {
-		return bluMutate(id, function (b, guard) { return b.stopCapture(guard) })
-	}
-
 	async function bleCall(id, p, action) {
 		const ble = P.service('ble')
 		if (!ble) return fail('ble_unavailable', '当前窗口不支持 USB BLE 桥')
@@ -602,12 +543,6 @@
 		serial_close: serialClose,
 		serial_write: serialWrite,
 		serial_read: serialRead,
-		blu_state: bluState,
-		blu_set_power: bluSetPower,
-		blu_set_voltage: bluSetVoltage,
-		blu_capture_start: bluStart,
-		blu_capture_stop: bluStop,
-		blu_capture_summary: bluSummary,
 	}
 
 	for (const action of ['state', 'ports', 'devices', 'gatt', 'events', 'open', 'close', 'scan_start', 'scan_stop', 'connect', 'disconnect', 'read', 'write', 'subscribe', 'pair', 'passkey']) {

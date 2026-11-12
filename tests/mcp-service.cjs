@@ -213,8 +213,7 @@ test('一键复制给 Agent 包含完整配置与操作说明，不需要显示�
 	const text = h.copied[0]
 	assert.ok(text.includes('http://127.0.0.1:39000/mcp'))
 	assert.ok(text.includes('windows_list'))
-	assert.ok(text.includes('blu_set_power'))
-	assert.ok(text.includes('unknown_after_commit'))
+	assert.ok(text.includes('serial_read'))
 	assert.ok(!text.includes('<TOKEN>'))
 	const config = JSON.parse(text.match(/```json\n\n([\s\S]*?)\n\n```/)[1])
 	assert.equal(config.mcpServers['devicedock'].headers.Authorization, 'Bearer ' + 'a'.repeat(64))

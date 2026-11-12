@@ -127,7 +127,6 @@ const sys = { dir: '', text: '10:00:01.000 ! 未选择串口设备', hex: '' }
 	assert.equal(busy.tag, 'B 路占用')
 	assert.equal(busy.disabled, true)
 	assert.equal(M.portRowState({ owner: 'S' }).tag, '单路占用')
-	assert.equal(M.portRowState({ owner: 'BLU' }).tag, '功耗分析占用')
 	// 未在位优先于其它状态：灰显、不可选
 	assert.equal(JSON.stringify(M.portRowState({ absent: true, current: true })), JSON.stringify({ tag: '未在位', kind: 'absent', disabled: true }))
 }

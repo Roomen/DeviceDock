@@ -78,7 +78,7 @@ test('saved removed or invalid views fall back and persist serial; valid views a
   assert.equal(h.store.get('serial-debug-active-view'),'view-serial')
   assert.equal(h.els['view-serial'].classList.contains('active'),true)
  }
- for(const [saved,expected,allowed] of [['view-ble','view-ble',true],['view-emk','view-blu',true],['view-ble','view-serial',false]]){
+ for(const [saved,expected,allowed] of [['view-ble','view-ble',true],['view-emk','view-serial',true],['view-ble','view-serial',false]]){
   const h=setup(allowed,saved)
   assert.equal(h.store.get('serial-debug-active-view'),expected)
   assert.equal(h.els[expected].classList.contains('active'),true)

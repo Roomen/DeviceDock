@@ -63,11 +63,8 @@ const P = require('../js/platform.js')
 	const expectOn = ['view.serial', 'panel.protocol', 'panel.firmware', 'panel.parse', 'transport.serial', 'transport.ble', 'transport.bt-classic']
 	assert.deepEqual(on.slice().sort(), expectOn.slice().sort())
 	assert.equal(P.hasFeature(a, 'lane.dual'), false)
-	assert.equal(P.hasFeature(a, 'view.power'), false)
-	assert.equal(P.hasFeature(a, 'panel.sts-sim'), false)
 	assert.equal(P.hasFeature(a, 'panel.some-future-tool'), false, '目录外的新功能在移动端默认关闭')
 	const css = P.gatingCss(a)
-	assert.ok(css.includes('[data-feature~="view.power"]{display:none !important}'))
 	assert.ok(css.includes('[data-feature~="lane.dual"]'))
 	assert.ok(!css.includes('"panel.protocol"'))
 
@@ -148,7 +145,6 @@ function rulesOf(win) { const st = win.document.head.children.find((e) => e.id =
 	assert.equal(w.document.documentElement.dataset.runtime, 'browser')
 	assert.equal(w.document.head.children.length, 1, '只建一个门控样式节点')
 	const css = rulesOf(w)
-	assert.ok(css.includes('"view.power"'))
 	assert.ok(css.includes('"view.future-thing"'), '静态 data-feature 的目录外 id 在移动端补规则')
 	assert.ok(!css.includes('"panel.protocol"'))
 	// gate：目录外的面板 id 补规则并标在节点上，已有标记保留
@@ -217,14 +213,14 @@ console.log('platform: ok')
 		w.emit = (type, ev = {}) => (listeners[type] || []).forEach(fn => fn(ev))
 		return w
 	}
-	const w = windowWith({ appInstanceId: 'synthetic-instance', serialWantOpenS: '1', serialWantPortS: 'synthetic', 'sk-batch-state.index': '17', 'stsSim.prevProtocol': 'sek' })
+	const w = windowWith({ appInstanceId: 'synthetic-instance', serialWantOpenS: '1', serialWantPortS: 'synthetic', 'sk-batch-state.index': '17' })
 	const first = P.build(w)
 	await first.instanceReady
 	const copy = windowWith({ ...w.sessionStorage.m })
 	const second = P.build(copy)
 	await second.instanceReady
 	assert.notEqual(second.instanceId, first.instanceId)
-	for (const key of ['serialWantOpenS', 'serialWantPortS', 'sk-batch-state.index', 'stsSim.prevProtocol']) assert.equal(copy.sessionStorage.getItem(key), null)
+	for (const key of ['serialWantOpenS', 'serialWantPortS', 'sk-batch-state.index']) assert.equal(copy.sessionStorage.getItem(key), null)
 	assert.equal(w.sessionStorage.getItem('serialWantOpenS'), '1')
 	w.emit('pagehide')
 	await Promise.resolve()

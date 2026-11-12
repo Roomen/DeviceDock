@@ -27,17 +27,14 @@ function setup() {
 	return { env, service, install, events, acknowledgments, controller: createController(service, env, (s) => events.push(s)) }
 }
 
-test('busy tasks in hidden views block install; power and pinned transactions also block', async () => {
+test('busy tasks in hidden views block install; pinned transactions also block', async () => {
 	const s = setup()
 	await s.controller.check()
 	s.env.Workbench.updateBlockers = () => ['固件升级']
-	s.env.bluApi = { isOpen: () => true }
 	s.env.serialApi.isPinned = () => true
-	assert.deepEqual(blockers(s.env), ['固件升级', '协议事务', '功耗仪连接'])
+	assert.deepEqual(blockers(s.env), ['固件升级', '协议事务'])
 	assert.equal(await s.controller.install(), false)
 	assert.equal(s.controller.busy, false)
-	s.env.bluApi = { isOpen: () => false, isBusyForUpdate: () => true }
-	assert.ok(blockers(s.env).includes('功耗仪连接'), 'power device opening is also busy')
 })
 
 // 加载真实的 js/workbench.js，用真 TASKS 的 updateBlockers 断言过滤；MCP 状态由 window.McpServiceStatus 桩提供

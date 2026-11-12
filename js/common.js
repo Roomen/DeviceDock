@@ -1216,7 +1216,7 @@
 		// 平台画像外的协议不进注册表与下拉框(移动端只有 SEK)；各协议模块照常加载，只是选不到
 		if (!platformAllowsProtocol(id)) return
 		window._protocols[id] = impl
-		// 当前协议晚于日志恢复才注册(启动时 gz/wmbus 等脚本在 common.js 之后加载): 已有的解析段按它重渲
+		// 当前协议晚于日志恢复才注册(协议脚本在 common.js 之后加载): 已有的解析段按它重渲
 		if (id === window._activeProtocol || (laneProtocols && (laneProtocols.A === id || laneProtocols.B === id))) scheduleParseRerender()
 		if (!document.getElementById('serial-protocol-select')) return
 		var sel = document.getElementById('serial-protocol-select')
@@ -1304,6 +1304,36 @@
 		return window._protocols[window._activeProtocol] || null
 	}
 
+	// 存下的协议可能来自已删除的模块(对应脚本不再加载)：等协议脚本全部注册完再归一化一次，
+	// 把认不出的协议回退 SEK。否则顶栏显示 SEK、`_activeProtocol` 却停在旧 id，下发、随机读写、
+	// 批量配置与分包帧保护都会跟着错。
+	setTimeout(function () {
+		var known = function (id) { return !!(id && window._protocols[id]) }
+		var changed = false
+		if (window._activeProtocol && !known(window._activeProtocol)) {
+			window._activeProtocol = 'sek'
+			singleProtocolId = 'sek'
+			toolOptions.skProtocol = 'sek'
+			changed = true
+			try { localStorage.setItem('toolOptions', JSON.stringify(toolOptions)) } catch (e) {}
+		}
+		if (laneProtocols) {
+			;['A', 'B'].forEach(function (sid) {
+				if (laneProtocols[sid] && !known(laneProtocols[sid])) {
+					laneProtocols[sid] = 'sek'
+					changed = true
+				}
+			})
+			if (changed) persistLaneProtocols()
+		}
+		if (!changed) return
+		var sel = document.getElementById('serial-protocol-select')
+		if (sel && sel.value !== window._activeProtocol) sel.value = window._activeProtocol
+		if (typeof rebuildProtocolPresets === 'function') rebuildProtocolPresets()
+		scheduleParseRerender()
+		notifyLaneConfig()
+	}, 0)
+
 	// 协议选择器变更
 	var protocolSelectEl = document.getElementById('serial-protocol-select')
 	if (protocolSelectEl) {
@@ -1322,7 +1352,7 @@
 			}
 			// 刷新常用指令列表
 			if (typeof rebuildProtocolPresets === 'function') rebuildProtocolPresets()
-			// 下发 HEX 框是各协议共用的发送缓冲(188/WMBUS 下发也写它)，切协议后留着旧帧会被「立即下发」原样发出
+			// 下发 HEX 框是各协议共用的发送缓冲(188 下发也写它)，切协议后留着旧帧会被「立即下发」原样发出
 			const downPreviewEl = document.getElementById('serial-protocol-down-preview')
 			if (downPreviewEl) downPreviewEl.value = ''
 			// 再按新协议当前选中的常用指令重新生成, 不用手动点「生成HEX」
@@ -3524,7 +3554,7 @@
 		}
 	}
 
-	// 把选定的口绑定到会话(选择框选中后、串口列表单击都走这里)：拒绝蓝牙 RFCOMM 口与功耗仪口、
+	// 把选定的口绑定到会话(选择框选中后、串口列表单击都走这里)：拒绝蓝牙 RFCOMM 口、
 	// 正被别的会话占着的口；选用即记为已授权(能枚举的后端列出的口未必授权过，授权后 getPorts、插拔认领、刷新后自动重连才认它)；
 	// 换口前会话开着就关掉、换上新口后重开(一步完成「换设备」)，否则按 opts.open 决定是否打开。
 	// 调用方必须已持有 setOpening 锁。opts.quiet：不弹「串口已选择」(列表里单击选用很频繁)。
@@ -3545,11 +3575,6 @@
 		if (cancelled()) return false
 		if (isBluetoothSerialPort(port)) {
 			addLogErr('不支持蓝牙串口，请选择 USB 串口', sid)
-			opts.reason = 'unsupported_port'
-			return false
-		}
-		if (isBluAnalyzerPort(port)) {
-			addLogErr('这是功耗分析仪口，请到「功耗分析」页使用', sid)
 			opts.reason = 'unsupported_port'
 			return false
 		}
@@ -3850,10 +3875,6 @@
 		if (!port) return false
 		if (isBluetoothSerialPort(port)) {
 			addLogErr('不支持蓝牙串口，请选择 USB 串口', sid)
-			return false
-		}
-		if (isBluAnalyzerPort(port)) {
-			addLogErr('这是功耗分析仪口，请到「功耗分析」页使用', sid)
 			return false
 		}
 		const taken = findPortConflict(port, sid)
@@ -4212,33 +4233,18 @@
 		return false
 	}
 
-	/** 功耗分析仪 BLU（USB CDC 15A2:300A），与串口调试口互斥 */
-	function isBluAnalyzerPort(port) {
-		try {
-			const info = port && port.getInfo ? port.getInfo() : {}
-			return info.usbVendorId === 0x15A2 && info.usbProductId === 0x300A
-		} catch (e) {
-			return false
-		}
-	}
-
 	function isExcludedSerialPort(port) {
-		return isBluetoothSerialPort(port) || isBluAnalyzerPort(port)
+		return isBluetoothSerialPort(port)
 	}
 
 	function findPortConflict(port, exceptSid) {
 		if (!port) return null
-		if (isBluAnalyzerPort(port)) return 'BLU'
-		if (window.bluApi && typeof window.bluApi.ownsPort === 'function' && window.bluApi.ownsPort(port)) {
-			return 'BLU'
-		}
 		// 关闭后仍保留 session.port 是有意的: 芯片继续显示上次设备, 点打开即可重连。
 		// 已打开或尚未确认释放的口都仍被占用，不能只按设备归属判。
 		return SerialHub.busyOwnerOfPort(port, exceptSid)
 	}
 
 	function portConflictMsg(taken) {
-		if (taken === 'BLU') return '该口已被功耗分析占用'
 		if (taken === 'S') return '该口已被单路串口占用'
 		if (taken === 'A' || taken === 'B') return '该口已被' + sidName(taken) + '占用'
 		return '该口已被其它会话占用'
@@ -4250,10 +4256,6 @@
 		for (let i = 0; i < all.length; i++) {
 			if (all[i] === exceptSid) continue
 			if (SerialHub.getPort(all[i]) === port && (SerialHub.isOpen(all[i]) || SerialHub.isReleaseFailed(all[i]) || SerialHub._sess(all[i]).releaseTask)) return true
-		}
-		if (window.bluApi && typeof window.bluApi.ownsPort === 'function' &&
-			window.bluApi.ownsPort(port) && window.bluApi.isOpen()) {
-			return true
 		}
 		return false
 	}
@@ -4724,7 +4726,6 @@
 			addLogErr('不支持蓝牙串口，请选择 USB 串口')
 			return
 		}
-		if (isBluAnalyzerPort(port)) return
 		if (!port || typeof port.open !== 'function') return
 		lostPorts.delete(port)
 		// 按 port 匹配任一模式已有会话；若都不匹配，只接回当前模式里同型号的已拔出口或分配给空会话
@@ -4753,7 +4754,6 @@
 	})
 	SerialAdapter.addEventListener('disconnect', async (e) => {
 		const port = serialEventPort(e)
-		if (isBluAnalyzerPort(port)) return
 		if (port) lostPorts.add(port)
 		const sid = SerialHub.findSessionByPort(port)
 		if (!sid) return
@@ -5268,7 +5268,7 @@
 
 	//单个合并包的字节上限，超过就强制断包，避免连续流下缓冲无限增长
 	const SERIAL_PACK_MAX_BYTES = 65536
-	// SEK / hostProto 半帧在分包静默后最多再等这么久（防低波特/间隙拆帧）
+	// SEK 半帧在分包静默后最多再等这么久（防低波特/间隙拆帧）
 	const SEK_INCOMPLETE_WAIT_MAX_MS = 3000
 
 	// 若缓冲以 A9 9A 开头且声明长度未到, 返回期望总长; 已完整或非 SEK 返回 0
@@ -5297,46 +5297,15 @@
 		return need
 	}
 
-	// hostProto 日志按 CRC 校验后的帧边界输出；read() 的分块和 TX 都不是接收帧边界。
-	// 帧保护按这一路自己的协议(双路两路可以不同)，不看顶栏
-	function hostProtoLogging(sid) {
-		return protocolIdForSid(sid) === 'hostproto' && window.hostProto
-	}
-	function hostProtoIncomplete(sid, buf) {
-		const h = hostProtoLogging(sid)
-		if (!h || !buf.length) return false
-		const scan = h.scan(Uint8Array.from(buf), 0, false)
-		return scan.status === 'wait' || (scan.status === 'none' && scan.keep > 0)
-	}
-	function holdIncompleteHostProto(sid, buf) {
-		if (!hostProtoIncomplete(sid, buf)) return false
-		if (SerialHub.getSekWaitStart(sid) == null) SerialHub.setSekWaitStart(sid, Date.now())
-		return Date.now() - SerialHub.getSekWaitStart(sid) < SEK_INCOMPLETE_WAIT_MAX_MS
-	}
-	function drainHostProtoPack(sid) {
-		const h = hostProtoLogging(sid)
-		if (!h) return
-		for (;;) {
-			const buf = SerialHub.getPackBuf(sid)
-			const scan = h.scan(Uint8Array.from(buf), 0, false)
-			if (scan.status !== 'frame') return
-			const end = scan.offset + scan.total
-			const pack = buf.slice(0, end)
-			SerialHub.setPackBuf(sid, buf.slice(end))
-			flushSerialPack(pack, SerialHub.getPackStartTime(sid), sid, SerialHub.takePackGlitch(sid))
-			if (end < buf.length) SerialHub.setPackStartTime(sid, new Date())
-		}
-	}
-
 	// 二进制协议帧里可能出现 0x0A，按换行切会把帧拆坏：缓冲以 SEK 帧头开头且要按协议分包时不按行切
 	function sekFrameStart(sid, buf) {
 		return buf.length >= 2 && buf[0] === 0xA9 && buf[1] === 0x9A && wantProtocolFraming(sid)
 	}
 	// 按换行分行：缓冲里每个以 \n 结尾(含 \r\n)的完整行各成一行日志，残行留在缓冲里等后续字节或兜底超时。
-	// 同一次读回里的后续行没有更精确的到达时间，用切出时刻；hostProto 半帧和 SEK 帧交给原有的协议分包
+	// 同一次读回里的后续行没有更精确的到达时间，用切出时刻；SEK 帧交给原有的协议分包
 	function drainLinePack(sid) {
 		const buf = SerialHub.getPackBuf(sid)
-		if (hostProtoIncomplete(sid, buf) || sekFrameStart(sid, buf)) return
+		if (sekFrameStart(sid, buf)) return
 		// start 是已切走的边界(消费游标)：循环里只切每一行本身，剩余后缀等循环结束切一次。
 		// 每遇到换行就 buf.slice(start) 复制剩余后缀是平方级，64 KiB 全是换行时要复制约 21 亿个元素
 		let start = 0
@@ -5368,13 +5337,12 @@
 		if (isRowLogType(getLogTypeForSid(sid))) addLog(buf, true, startTime, sid, glitch)
 	}
 
-	// 发送前先把本口已到达、还在等分包超时的 RX 输出：订阅者（协议事务、STS 模拟）拿到字节就立即应答，
+	// 发送前先把本口已到达、还在等分包超时的 RX 输出：订阅者（协议事务）拿到字节就立即应答，
 	// 不先输出的话 TX 行会排在触发它的 RX 之前，随后到的应答还会并进同一条 RX，日志顺序与真实时序相反。
-	// 未收满的 SEK / hostProto 帧仍在等待窗口内时不切，否则解析会被拆坏。
+	// 未收满的 SEK 帧仍在等待窗口内时不切，否则解析会被拆坏。
 	function flushPendingRx(sid) {
 		const buf = SerialHub.getPackBuf(sid)
 		if (!buf.length) return
-		if (holdIncompleteHostProto(sid, buf)) return
 		const wantProto = wantProtocolFraming(sid)
 		const need = wantProto ? peekSekIncompleteNeed(buf) : 0
 		const waitStart = SerialHub.getSekWaitStart(sid)
@@ -5447,7 +5415,6 @@
 		//展开成实参会超出调用栈上限抛 RangeError，被外层当成读错误误判为断线
 		for (let i = 0; i < data.length; i++) packBuf.push(data[i])
 		if (meta && meta.lineGlitch) SerialHub.markPackGlitch(sid)
-		drainHostProtoPack(sid)
 		packBuf = SerialHub.getPackBuf(sid)
 		if (!packBuf.length) {
 			clearTimeout(SerialHub.getPackTimer(sid))
@@ -5462,7 +5429,7 @@
 				return
 			}
 		}
-		if (!lineMode && sidOpts.timeOut == 0 && !hostProtoIncomplete(sid, packBuf)) {
+		if (!lineMode && sidOpts.timeOut == 0) {
 			// 先清缓冲再输出：输出抛错(DOM 异常)时缓冲不会残留并越堆越大
 			const pack = packBuf.slice()
 			SerialHub.setPackBuf(sid, [])
@@ -5481,16 +5448,12 @@
 		//清除之前的时钟
 		clearTimeout(SerialHub.getPackTimer(sid))
 		//按换行且超时为 0：残行一直等到换行(或发送前 flushPendingRx、字节上限)；协议半帧仍按下面的等待窗口兜底
-		if (lineMode && sidOpts.timeOut == 0 && !hostProtoIncomplete(sid, packBuf) && !sekFrameStart(sid, packBuf)) return
+		if (lineMode && sidOpts.timeOut == 0 && !sekFrameStart(sid, packBuf)) return
 		const startTime = SerialHub.getPackStartTime(sid)
 		const packTimeOut = Math.max(1, sidOpts.timeOut == 0 ? 50 : sidOpts.timeOut)
 		const armFlush = () => {
 			SerialHub.setPackTimer(sid, setTimeout(() => {
 				const curBuf = SerialHub.getPackBuf(sid)
-				if (holdIncompleteHostProto(sid, curBuf)) {
-					armFlush()
-					return
-				}
 				// 协议感知: SEK 帧声明长度未到时, 在上限内继续等后续字节
 				if (wantProtocolFraming(sid)) {
 					const need = peekSekIncompleteNeed(curBuf)
@@ -5648,7 +5611,7 @@
 				if (idx !== -1) self._receivers.splice(idx, 1)
 			}
 		},
-		// BLU 指令面板的 CRLF 开关：两项都勾才算开，开关时 \r、\n 一起改
+		// 串口发送的 CRLF 开关：两项都勾才算开，开关时 \r、\n 一起改
 		getAddCRLF() {
 			return !!(toolOptions.addCR && toolOptions.addLF)
 		},
@@ -7400,7 +7363,7 @@
 		return res
 	}
 	// ===== 现代布局连接栏的串口列表(js/modern-shell.js)：选用、连接、改名都走这里，复用选择框之后的同一套绑定与打开路径 =====
-	// 某个口能不能进这一路：被别的会话占着(开着 / 未确认释放)、被功耗分析占着，或者当前模式里另一路已选着它(哪怕关着：
+	// 某个口能不能进这一路：被别的会话占着(开着 / 未确认释放)，或者当前模式里另一路已选着它(哪怕关着：
 	// 同一个口对象挂在两路上，热插拔与刷新后重连按口找会话会让 A/B 串台)
 	// 正在换上的口(端口对象 → sid)：bindSessionPort 关旧口(异步)之前预留、结束释放。关旧口期间本路的 port 还是旧口，
 	// 不预留的话另一路看不出这个口已被选用，两路会先后各自绑上同一个口
@@ -7697,7 +7660,7 @@
 			// 给上一 document 的 pagehide 释放 OS 句柄留一点时间；真正的等待靠 openSerial 的退避重试
 			await new Promise(function (resolve) { setTimeout(resolve, 150) })
 			const allPorts = await SerialAdapter.getPorts()
-			// 自动重连跳过蓝牙串口与功耗分析仪口
+			// 自动重连跳过蓝牙串口
 			const ports = allPorts.filter(function (p) { return !isExcludedSerialPort(p) })
 			if (ports.length === 0) return
 			// 预计算候选口的身份 keys（reload 后缓存为空，直接解析即可）

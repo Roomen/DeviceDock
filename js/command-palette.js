@@ -328,23 +328,6 @@
 			alias: 'gujian dabao firmware pack view',
 			run: function () { clickSel('.rail-item[data-view="view-fw-pack"]') }
 		})
-		list.push({
-			group: '视图',
-			title: '切换到功耗分析',
-			feature: 'view.power',
-			alias: 'gonghao fenxi power blu blu100k ppk view',
-			run: function () { clickSel('.rail-item[data-view="view-blu"]') }
-		})
-		list.push({
-			group: '视图',
-			title: '打开串口发送',
-			feature: 'view.power',
-			alias: 'chuankou fasong serial send sheet',
-			run: function () {
-				clickSel('.rail-item[data-view="view-blu"]')
-				if (window.bluCmdSheet && !window.bluCmdSheet.isOpen()) window.bluCmdSheet.open()
-			}
-		})
 		const themeNow = typeof window.getThemeChoice === 'function' ? window.getThemeChoice() : 'auto'
 		;[['auto', '跟随系统', 'zidong auto system'], ['light', '浅色', 'qianse liangse light'], ['dark', '深色', 'shense anse dark']].forEach(function (t) {
 			list.push({

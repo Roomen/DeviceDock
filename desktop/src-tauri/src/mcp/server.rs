@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use super::bridge::{BridgeError, WindowBridge};
-use super::{McpState, READ_TIMEOUT, TOOL_TIMEOUT, VOLTAGE_MAX_MV, VOLTAGE_MIN_MV};
+use super::{McpState, READ_TIMEOUT, TOOL_TIMEOUT};
 
 // 单次读 / 写的业务上限，和页面侧 mcp-ring.js 保持一致
 const MAX_READ_BYTES: u32 = 65536;
@@ -62,24 +62,6 @@ pub struct ReadParams {
     pub max_bytes: Option<u32>,
     /// Wait this long for new bytes (0..30000, default 0 = return immediately).
     pub timeout_ms: Option<u32>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct PowerParams {
-    /// Window label from windows_list (the window that owns the BLU analyzer connection).
-    pub window: String,
-    /// true = DUT powered, false = DUT unpowered. Idempotent on the last commanded state.
-    pub on: bool,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct VoltageParams {
-    /// Window label from windows_list.
-    pub window: String,
-    /// Source voltage in mV (500..5000). Out-of-range values are rejected, not clamped.
-    pub millivolts: u32,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -676,85 +658,6 @@ impl McpServer {
         }
     }
 
-    #[tool(
-        name = "blu_state",
-        description = "BLU power analyzer state of one window: connected, sampling, source voltage, record mode, sample count and the DUT power state. Power state has no hardware read-back: source is \"probed\" right after connect, \"commanded\" after a successful command, \"unknown\" otherwise.",
-        annotations(title = "BLU state", read_only_hint = true)
-    )]
-    async fn blu_state(&self, Parameters(p): Parameters<WindowParams>) -> Result<CallToolResult, McpError> {
-        match self.call(&p.window, "blu_state", json!({ "window": p.window }), READ_TIMEOUT).await {
-            Ok(v) => ok_result(v),
-            Err(e) => err_result(e),
-        }
-    }
-
-    #[tool(
-        name = "blu_set_power",
-        description = "Set DUT power explicitly (on=true powers up, on=false powers down). Idempotent only against the last commanded state; a probed/unknown state is never used to skip the command. Power-on writes the source voltage first and aborts if that write fails. There is no hardware acknowledgement: the result reports the commanded state.",
-        annotations(title = "Set DUT power", read_only_hint = false, destructive_hint = true, idempotent_hint = true)
-    )]
-    async fn blu_set_power(&self, Parameters(p): Parameters<PowerParams>) -> Result<CallToolResult, McpError> {
-        let params = json!({ "window": p.window, "on": p.on });
-        match self.call(&p.window, "blu_set_power", params, TOOL_TIMEOUT).await {
-            Ok(v) => ok_result(v),
-            Err(e) => err_result(e),
-        }
-    }
-
-    #[tool(
-        name = "blu_set_voltage",
-        description = "Set the analyzer source voltage in mV (500..5000). Out-of-range values are rejected. The device write result is checked; the result reports requested and applied values.",
-        annotations(title = "Set source voltage", read_only_hint = false, destructive_hint = false, idempotent_hint = true)
-    )]
-    async fn blu_set_voltage(&self, Parameters(p): Parameters<VoltageParams>) -> Result<CallToolResult, McpError> {
-        if p.millivolts < VOLTAGE_MIN_MV || p.millivolts > VOLTAGE_MAX_MV {
-            return err_result(BridgeError::new(
-                "out_of_range",
-                format!("millivolts 必须在 {VOLTAGE_MIN_MV}..={VOLTAGE_MAX_MV} 之间，收到 {}", p.millivolts),
-            ));
-        }
-        let params = json!({ "window": p.window, "millivolts": p.millivolts });
-        match self.call(&p.window, "blu_set_voltage", params, TOOL_TIMEOUT).await {
-            Ok(v) => ok_result(v),
-            Err(e) => err_result(e),
-        }
-    }
-
-    #[tool(
-        name = "blu_capture_start",
-        description = "Start a capture on the connected analyzer (requires a known source voltage). Reuses the app's existing sampler and storage; no extra sampler is created. Fails with capture_start_failed when the device command fails.",
-        annotations(title = "Start capture", read_only_hint = false, destructive_hint = false, idempotent_hint = true)
-    )]
-    async fn blu_capture_start(&self, Parameters(p): Parameters<WindowParams>) -> Result<CallToolResult, McpError> {
-        match self.call(&p.window, "blu_capture_start", json!({ "window": p.window }), TOOL_TIMEOUT).await {
-            Ok(v) => ok_result(v),
-            Err(e) => err_result(e),
-        }
-    }
-
-    #[tool(
-        name = "blu_capture_stop",
-        description = "Stop the running capture. Reports whether the stop command was written; sampling is stopped locally even if the write fails, and the result then says the device may still be measuring.",
-        annotations(title = "Stop capture", read_only_hint = false, destructive_hint = false, idempotent_hint = true)
-    )]
-    async fn blu_capture_stop(&self, Parameters(p): Parameters<WindowParams>) -> Result<CallToolResult, McpError> {
-        match self.call(&p.window, "blu_capture_stop", json!({ "window": p.window }), TOOL_TIMEOUT).await {
-            Ok(v) => ok_result(v),
-            Err(e) => err_result(e),
-        }
-    }
-
-    #[tool(
-        name = "blu_capture_summary",
-        description = "Statistics of the captured samples using the app's own stored per-chunk sums (no resampling): retained vs total sample counts, span seconds, current avg/min/max in uA, charge in uC and integrated energy in uWh. ready=false with a reason when nothing was captured.",
-        annotations(title = "Capture summary", read_only_hint = true)
-    )]
-    async fn blu_capture_summary(&self, Parameters(p): Parameters<WindowParams>) -> Result<CallToolResult, McpError> {
-        match self.call(&p.window, "blu_capture_summary", json!({ "window": p.window }), TOOL_TIMEOUT).await {
-            Ok(v) => ok_result(v),
-            Err(e) => err_result(e),
-        }
-    }
 }
 
 #[tool_handler(

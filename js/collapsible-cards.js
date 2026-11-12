@@ -1,4 +1,4 @@
-// 协议下发面板内卡片可折叠: 各协议的下行下发 / 一键工位测试
+// 协议下发面板内卡片可折叠: 各协议的下行下发 / 测试面板
 // 通过重新挂载已有 DOM 节点实现(不克隆), 不影响卡内控件的 id 与已绑定事件
 ;(function () {
 	'use strict'
@@ -7,8 +7,6 @@
 	// 首次默认状态: 未列出的卡片也按展开处理
 	const DEFAULT_COLLAPSED = {
 		'sk-down-card': false,
-		'gz-down-card': false,
-		'gz-auto-card': false,
 	}
 
 	function loadCollapseMap() {

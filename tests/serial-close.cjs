@@ -54,7 +54,7 @@ function harness() {
 		refreshActiveSendSButton: () => {}, showToast: () => {}, showMsg: () => {},
 		isAllZero: data => data.every(v => v === 0), isRowLogType: () => true, getLogTypeForSid: () => 'hex',
 		toolOptions: { addCR: false, addLF: false }, flushPendingRx: () => {},
-		isBluetoothSerialPort: () => false, isBluAnalyzerPort: () => false, findPortConflict: () => null,
+		isBluetoothSerialPort: () => false, findPortConflict: () => null,
 		collectSerialParamsFromUI: () => ({ baudRate: 9600 }), readSerialOptions: () => ({}),
 		laneOptions: { A: {}, B: {} }, SERIAL_OPTIONS_KEY: 'synthetic-options',
 		resetLaneParseSession: () => {}, sessionResetSeq: { S: 0, A: 0, B: 0 },

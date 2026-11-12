@@ -38,15 +38,15 @@ const DEF = D.DEFAULT_OPTIONS
 
 // ---- 两路协议迁移：缺失时两路都取迁移前的全局协议 ----
 {
-	assert.deepEqual(D.migrateLaneProtocols(null, 'hostproto'), { A: 'hostproto', B: 'hostproto' })
-	assert.deepEqual(D.migrateLaneProtocols(JSON.stringify({ A: 'gz', B: 'wmbus' }), 'sek'), { A: 'gz', B: 'wmbus' })
+	assert.deepEqual(D.migrateLaneProtocols(null, 'proto-b'), { A: 'proto-b', B: 'proto-b' })
+	assert.deepEqual(D.migrateLaneProtocols(JSON.stringify({ A: 'proto-a', B: 'proto-c' }), 'sek'), { A: 'proto-a', B: 'proto-c' })
 	assert.deepEqual(D.migrateLaneProtocols({ A: '', B: 7 }, ''), { A: 'sek', B: 'sek' })
 }
 
 // ---- 预设：创建、规范化、存取往返 ----
 const cfg = {
 	A: { options: { baudRate: 2400, parity: 'none' }, protocol: 'sek', label: '红外' },
-	B: { options: { baudRate: 2400, parity: 'even' }, protocol: 'hostproto', label: ' RS485 ' },
+	B: { options: { baudRate: 2400, parity: 'even' }, protocol: 'proto-b', label: ' RS485 ' },
 }
 {
 	assert.throws(() => D.makePreset('   ', cfg), /不能为空/)
@@ -102,25 +102,25 @@ const cfg = {
 {
 	const p = D.makePreset('p', cfg)
 	const cur = {
-		A: { options: { baudRate: 2400, parity: 'none' }, protocol: 'gz', label: 'A路' },
+		A: { options: { baudRate: 2400, parity: 'none' }, protocol: 'proto-a', label: 'A路' },
 		B: { options: { baudRate: 115200 }, protocol: 'sek', label: 'B路' },
 	}
-	const plan = D.planApply(p, cur, id => id !== 'hostproto')
+	const plan = D.planApply(p, cur, id => id !== 'proto-b')
 	assert.equal(plan.lanes.A.optionsChanged, false)
 	assert.equal(plan.lanes.A.protocol, 'sek')
 	assert.equal(plan.lanes.A.protocolChanged, true)
 	assert.equal(plan.lanes.B.optionsChanged, true)
 	assert.equal(plan.lanes.B.protocol, 'sek', '未注册的协议保留该路当前协议')
 	assert.equal(plan.lanes.B.protocolChanged, false)
-	assert.deepEqual(plan.unknownProtocols, ['hostproto'])
+	assert.deepEqual(plan.unknownProtocols, ['proto-b'])
 	assert.equal(plan.lanes.B.label, 'RS485')
 	assert.equal(plan.lanes.B.options.parity, 'even')
 }
 
 // ---- 单路预设：只存一路参数与协议，不存标签；与双路预设混存、同名互斥，旧的双路预设格式不变 ----
 {
-	const sp = D.makeSinglePreset(' 表端 ', { options: { baudRate: 2400, parity: 'even' }, protocol: 'hostproto', label: '不存' })
-	assert.deepEqual(sp, { name: '表端', kind: 'single', S: { options: D.normalizeOptions({ baudRate: 2400, parity: 'even' }), protocol: 'hostproto', label: '' } })
+	const sp = D.makeSinglePreset(' 表端 ', { options: { baudRate: 2400, parity: 'even' }, protocol: 'proto-b', label: '不存' })
+	assert.deepEqual(sp, { name: '表端', kind: 'single', S: { options: D.normalizeOptions({ baudRate: 2400, parity: 'even' }), protocol: 'proto-b', label: '' } })
 	assert.ok(D.isSinglePreset(sp))
 	assert.deepEqual(D.presetLanes(sp), ['S'])
 	const dp = D.makePreset('双', cfg)
@@ -136,15 +136,15 @@ const cfg = {
 	assert.deepEqual(list[2], { name: 'x', kind: 'single', S: { options: DEF, protocol: 'sek', label: '' } }, '坏项逐项回落')
 
 	// 匹配只比参数与协议；cur 缺 S(双路快照)时不算匹配
-	assert.ok(D.presetMatches(sp, { S: { options: { baudRate: 2400, parity: 'even' }, protocol: 'hostproto', label: 'A路' } }))
-	assert.ok(!D.presetMatches(sp, { S: { options: { baudRate: 2400 }, protocol: 'hostproto' } }))
+	assert.ok(D.presetMatches(sp, { S: { options: { baudRate: 2400, parity: 'even' }, protocol: 'proto-b', label: 'A路' } }))
+	assert.ok(!D.presetMatches(sp, { S: { options: { baudRate: 2400 }, protocol: 'proto-b' } }))
 	assert.ok(!D.presetMatches(sp, { A: {}, B: {} }))
 
 	const plan = D.planApply(sp, { S: { options: { baudRate: 2400, parity: 'even' }, protocol: 'sek' } }, id => id === 'sek')
 	assert.deepEqual(Object.keys(plan.lanes), ['S'])
 	assert.equal(plan.lanes.S.optionsChanged, false)
 	assert.equal(plan.lanes.S.protocol, 'sek', '未注册的协议保留当前')
-	assert.deepEqual(plan.unknownProtocols, ['hostproto'])
+	assert.deepEqual(plan.unknownProtocols, ['proto-b'])
 }
 
 console.log('dual-config: ok')

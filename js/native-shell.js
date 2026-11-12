@@ -212,7 +212,6 @@
 		'auto-scroll': function () { if (inSerial()) click($('serial-auto-scroll')) },
 		'view-serial': function () { gotoView('view-serial') },
 		'view-firmware': function () { gotoView('view-fw-pack') },
-		'view-power': function () { gotoView('view-blu') },
 		'command-palette': function () { if (root.serialCommandPalette) root.serialCommandPalette.toggle() },
 		'toggle-right-pane': function () {
 			const r = root.serialRightPane

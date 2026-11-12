@@ -55,12 +55,6 @@ function harness(opts) {
 		addLog(buf, isReceive, t, sid) { rows.push(Buffer.from(buf).toString('latin1')); rowSids.push(sid) },
 	}
 	vm.createContext(ctx)
-	if (opts.protocol === 'hostproto' || opts.loadHostProto) {
-		ctx.window.registerProtocol = () => {}
-		for (const f of ['parse-view', 'sts-ciu-protocol', 'hostproto-protocol']) {
-			vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/' + f + '.js'), 'utf8'), ctx)
-		}
-	}
 	vm.runInContext(source.slice(start, end) + '\nthis.dataReceived = dataReceived\nthis.flushPendingRx = flushPendingRx', ctx)
 	return {
 		ctx, rows, rowSids, sess, sessions,
@@ -143,34 +137,6 @@ for (const mode of ['time0', 'line']) {
 	h.advance(50)
 	assert.equal(h.rows.length, 1)
 	assert.deepEqual([...Buffer.from(h.rows[0], 'latin1')], sek)
-}
-// ---- 按换行时 hostProto 帧按 CRC 边界整帧输出，帧内 0x0A 不切，帧后的文本行照常按行 ----
-{
-	const h = harness({ log: { splitMode: 'line', timeOut: 200, logType: 'hex' }, protocol: 'hostproto' })
-	const H = h.ctx.window.hostProto
-	const frame = [...H.buildFrame({ type: H.TYPE_RSP, cmd: H.CMD.ECHO, seq: 0x0A, payload: [0, 0x0A, 0x0A], preamble: false })]
-	h.rx(frame.slice(0, 5))
-	assert.equal(h.rows.length, 0, '半帧不按换行切')
-	h.rx([...frame.slice(5), ...Buffer.from('log\r\n', 'latin1')])
-	assert.equal(h.rows.length, 2)
-	assert.deepEqual([...Buffer.from(h.rows[0], 'latin1')], frame)
-	assert.equal(h.rows[1], 'log\r\n')
-}
-
-// ---- 双路两路协议不同：A 路是 hostProto，半帧按 CRC 等齐、帧内 0x0A 不切；B 路是文本协议，同样的字节照常按换行切 ----
-{
-	const h = harness({ log: { splitMode: 'line', timeOut: 200, logType: 'hex' }, laneProtocols: { A: 'hostproto', B: 'none' }, loadHostProto: true })
-	const H = h.ctx.window.hostProto
-	const frame = [...H.buildFrame({ type: H.TYPE_RSP, cmd: H.CMD.ECHO, seq: 0x0A, payload: [0, 0x0A, 0x0A], preamble: false })]
-	// 前 8 字节里有 seq=0x0A
-	h.rx(frame.slice(0, 8), 'A')
-	h.rx(frame.slice(0, 8), 'B')
-	assert.equal(h.rowSids.filter(s => s === 'A').length, 0, 'A 路 hostProto 半帧不按换行切')
-	assert.ok(h.rowSids.includes('B'), 'B 路不是 hostProto，0x0A 照常成行')
-	h.rx(frame.slice(8), 'A')
-	const aRows = h.rows.filter((r, i) => h.rowSids[i] === 'A')
-	assert.equal(aRows.length, 1)
-	assert.deepEqual([...Buffer.from(aRows[0], 'latin1')], frame, 'A 路整帧一行')
 }
 // ---- 双路：只有 B 路协议是 SEK 时，B 路的 SEK 帧不按 0x0A 切，A 路(文本协议)照常切 ----
 {

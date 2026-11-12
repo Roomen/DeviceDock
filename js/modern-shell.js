@@ -95,7 +95,7 @@
 		return out.join(' · ')
 	}
 	// 行状态：本路已连接 / 连接中 / 本路当前设备 / 被别处占用(不可选) / 已记住但未在位
-	// s = { current, open, opening, failed, owner(sid | 'BLU' | null), absent }
+	// s = { current, open, opening, failed, owner(sid | null), absent }
 	function portRowState(s) {
 		s = s || {}
 		if (s.absent) return { tag: '未在位', kind: 'absent', disabled: true }
@@ -104,7 +104,7 @@
 		if (s.current && s.open) return { tag: '已连接', kind: 'open', disabled: false }
 		if (s.current) return { tag: '当前设备', kind: 'current', disabled: false }
 		if (s.owner) {
-			const who = s.owner === 'BLU' ? '功耗分析' : (s.owner === 'S' ? '单路' : s.owner + ' 路')
+			const who = s.owner === 'S' ? '单路' : s.owner + ' 路'
 			return { tag: who + '占用', kind: 'busy', disabled: true }
 		}
 		return { tag: '', kind: 'idle', disabled: false }

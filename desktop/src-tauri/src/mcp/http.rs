@@ -269,12 +269,6 @@ mod tests {
             "serial_ports_list",
             "serial_select",
             "serial_configure",
-            "blu_state",
-            "blu_set_power",
-            "blu_set_voltage",
-            "blu_capture_start",
-            "blu_capture_stop",
-            "blu_capture_summary",
         ] {
             assert!(body.contains(&format!("\"{name}\"")), "缺少工具 {name}: {body}");
         }
@@ -314,7 +308,7 @@ mod tests {
         let client = ().serve(transport).await.expect("MCP 客户端初始化失败");
 
         let tools = client.list_tools(None).await.expect("tools/list 失败");
-        assert_eq!(tools.tools.len(), 39);
+        assert_eq!(tools.tools.len(), 33);
         for name in ["ble_state", "ble_ports", "ble_open", "ble_scan_start", "ble_scan_stop", "ble_connect", "ble_gatt", "ble_write", "ble_pair", "ble_passkey"] {
             assert!(tools.tools.iter().any(|t| t.name == name), "missing typed BLE tool: {name}");
         }

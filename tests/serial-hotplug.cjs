@@ -67,7 +67,6 @@ function harness(mode) {
 	Object.assign(ctx, {
 		serialEventPort: (e) => e.port,
 		isBluetoothSerialPort: () => false,
-		isBluAnalyzerPort: () => false,
 		getPortIdentityKey: () => Promise.resolve(null),
 		refreshPortDisplayNames() {},
 		getPortDisplayName: (p) => 'port' + p.id,

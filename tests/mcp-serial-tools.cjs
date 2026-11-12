@@ -197,7 +197,6 @@ function harness(opts) {
 		addLogErr(m) { msgs.push(m) },
 		addLogErrSafe(m) { msgs.push(m) },
 		isBluetoothSerialPort: (p) => !!(p && p.meta && p.meta.bluetooth),
-		isBluAnalyzerPort: (p) => !!(p && p.meta && p.meta.blu),
 		isExcludedSerialPort: () => false,
 		strongIdentity: () => ({ conflict: false, snMatch: false }),
 		keyPaths: () => [],
@@ -266,7 +265,6 @@ function harness(opts) {
 		},
 	}
 	win.serialApi = serialApi
-	win.bluApi = { ownsPort: () => false }
 	win.AppPlatform = {
 		has: (id) => true,
 		service: (name) => (name === 'mcp' ? svc : null),
