@@ -963,6 +963,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "devicedock"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "bluest",
+ "cc",
+ "futures-util",
+ "getrandom 0.4.3",
+ "objc2",
+ "objc2-app-kit",
+ "portable-update-common",
+ "reqwest",
+ "rmcp",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "serialport",
+ "subtle",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tauri-plugin-updater",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "uuid",
+ "window-vibrancy",
+ "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3983,38 +4015,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.7",
-]
-
-[[package]]
-name = "serial-debug"
-version = "0.0.0"
-dependencies = [
- "axum",
- "bluest",
- "cc",
- "futures-util",
- "getrandom 0.4.3",
- "objc2",
- "objc2-app-kit",
- "portable-update-common",
- "reqwest",
- "rmcp",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "serialport",
- "subtle",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tauri-plugin-updater",
- "tokio",
- "tokio-util",
- "tower",
- "uuid",
- "window-vibrancy",
- "windows-sys 0.61.2",
- "zip",
 ]
 
 [[package]]

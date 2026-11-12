@@ -296,7 +296,7 @@
 		} else {
 			desc = portName('serial-chip')
 		}
-		const title = 'Serial Debug' + (desc ? ' — ' + desc : '')
+		const title = 'DeviceDock' + (desc ? ' — ' + desc : '')
 		if (title === lastTitle) return
 		lastTitle = title
 		win.setTitle(title).catch(function () {})

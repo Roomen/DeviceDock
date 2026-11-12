@@ -146,7 +146,7 @@ pub fn gate(data: &Path, alive: impl Fn(u32) -> Option<bool>, notify: impl Fn(&s
 	if let Some(marker) = common::read_marker(data) {
 		match common::marker_action(&marker, now, &alive) {
 			common::MarkerAction::Block => {
-				notify("Serial Debug 正在安装更新，请稍候再打开。\n如果长时间没有反应，请重新运行程序：更新过程会在退出后自动完成或回滚。");
+				notify("DeviceDock 正在安装更新，请稍候再打开。\n如果长时间没有反应，请重新运行程序：更新过程会在退出后自动完成或回滚。");
 				return false;
 			}
 			// 已失效的标记：先删标记，再按普通启动清理

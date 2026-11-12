@@ -1,5 +1,5 @@
 // 本地 MCP 服务的持久化设置：启用偏好、端口、令牌。存在应用数据目录(mcp-service.json)，不进仓库、不进 localStorage。
-// 端口固定(默认 38991)是为了让用户复制给 agent 的配置在应用重启后仍然有效；绑定失败只报错，绝不悄悄换端口。
+// 端口固定(默认 38992)是为了让用户复制给 agent 的配置在应用重启后仍然有效；绑定失败只报错，绝不悄悄换端口。
 // 令牌只在用户显式「显示 / 复制」时经命令返回，不写日志、不进页面存储；文件从创建起就是 0600，原子替换。
 use std::fs;
 use std::io::Write;
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-pub const DEFAULT_PORT: u16 = 38991;
+pub const DEFAULT_PORT: u16 = 38992;
 pub const MIN_PORT: u16 = 1024;
 pub const SETTINGS_VERSION: u32 = 1;
 const FILE_NAME: &str = "mcp-service.json";

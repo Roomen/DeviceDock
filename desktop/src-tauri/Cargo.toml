@@ -1,12 +1,12 @@
 [package]
-name = "serial-debug"
+name = "devicedock"
 # 应用版本不写在这里：desktop/scripts/tauri.mjs 每次从 js/version.js 读出后经 --config 传给 tauri
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 [lib]
-name = "serial_debug_lib"
+name = "devicedock_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -8,8 +8,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 便携包里固定的三个文件名；EXE_ENTRY 与 helper 名必须与 portable-update-common 里的常量一致
-export const EXE_ENTRY = 'Serial Debug.exe'
-export const HELPER_FILE = 'serial-debug-updater.exe'
+export const EXE_ENTRY = 'DeviceDock.exe'
+export const HELPER_FILE = 'devicedock-updater.exe'
 export const README_ENTRY = 'README.txt'
 
 export function buildTarget(args) {
@@ -28,9 +28,9 @@ export function helperBinary({ desktop, target, debug = false }) {
 }
 
 export function readmeText(version) {
-	return '\ufeffSerial Debug ' + version + '\r\n\r\n' +
-		'解压全部文件后运行 Serial Debug.exe，无需安装或管理员权限。\r\n' +
-		'serial-debug-updater.exe 是应用内更新用的助手，请与主程序放在同一文件夹，不要删除或改名。\r\n' +
+	return '\ufeffDeviceDock ' + version + '\r\n\r\n' +
+		'解压全部文件后运行 DeviceDock.exe，无需安装或管理员权限。\r\n' +
+		'devicedock-updater.exe 是应用内更新用的助手，请与主程序放在同一文件夹，不要删除或改名。\r\n' +
 		'需要 Windows 10/11 与 Microsoft Edge WebView2 Runtime。\r\n' +
 		'如无法启动，请从 https://developer.microsoft.com/microsoft-edge/webview2/ 安装 Evergreen Runtime。\r\n' +
 		'应用内更新会自行下载并替换程序，不需要手动解压；也可以退出程序后手动解压新版覆盖。\r\n' +
@@ -69,19 +69,19 @@ export function packageWindows({ desktop, version, channel, target, debug = fals
 	if (target && !target.endsWith('-pc-windows-msvc')) throw new Error('Windows 便携包只支持 MSVC 目标，避免缺少运行时 DLL')
 	const arch = target ? target.split('-')[0] : process.arch
 	const archName = ({ x86_64: 'x64', aarch64: 'arm64', i686: 'x86', ia32: 'x86' })[arch] || arch
-	const executable = join(cargoTargetDir(desktop), target || '', debug ? 'debug' : 'release', 'serial-debug.exe')
+	const executable = join(cargoTargetDir(desktop), target || '', debug ? 'debug' : 'release', 'devicedock.exe')
 	if (!existsSync(executable)) throw new Error('找不到本次构建的 Windows 主程序')
 	const helper = helperBinary({ desktop, target, debug })
-	if (!existsSync(helper)) throw new Error('找不到更新助手 serial-debug-updater.exe，请先构建 desktop/portable-updater')
-	const staging = mkdtempSync(join(tmpdir(), 'serial-debug-portable-'))
-	const name = `Serial-Debug_${version}_windows_${archName}.zip`
+	if (!existsSync(helper)) throw new Error('找不到更新助手 devicedock-updater.exe，请先构建 desktop/portable-updater')
+	const staging = mkdtempSync(join(tmpdir(), 'devicedock-portable-'))
+	const name = `DeviceDock_${version}_windows_${archName}.zip`
 	try {
 		copyFileSync(executable, join(staging, EXE_ENTRY))
 		copyFileSync(helper, join(staging, HELPER_FILE))
 		writeFileSync(join(staging, README_ENTRY), readmeText(version), 'utf8')
 		// 路径经环境变量传给 PowerShell，避免空格、引号等进入脚本语法。
 		const archive = join(staging, name)
-		const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Compress-Archive -LiteralPath (Join-Path $env:SERIAL_ZIP_STAGE "Serial Debug.exe"),(Join-Path $env:SERIAL_ZIP_STAGE "serial-debug-updater.exe"),(Join-Path $env:SERIAL_ZIP_STAGE "README.txt") -DestinationPath $env:SERIAL_ZIP_OUT -CompressionLevel Optimal -Force'], {
+		const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Compress-Archive -LiteralPath (Join-Path $env:SERIAL_ZIP_STAGE "DeviceDock.exe"),(Join-Path $env:SERIAL_ZIP_STAGE "devicedock-updater.exe"),(Join-Path $env:SERIAL_ZIP_STAGE "README.txt") -DestinationPath $env:SERIAL_ZIP_OUT -CompressionLevel Optimal -Force'], {
 			stdio: 'inherit', env: { ...env, SERIAL_ZIP_STAGE: staging, SERIAL_ZIP_OUT: archive }
 		})
 		if (result.error || result.status !== 0 || !existsSync(archive)) throw new Error('Windows ZIP 打包失败', { cause: result.error })

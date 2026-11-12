@@ -272,7 +272,7 @@ function harness(opts) {
 		service: (name) => (name === 'mcp' ? svc : null),
 	}
 	const svc = {
-		status: () => Promise.resolve({ running: state.running, enabled: state.running, port: 38991 }),
+		status: () => Promise.resolve({ running: state.running, enabled: state.running, port: 38992 }),
 		enable: () => Promise.resolve({}),
 		disable: () => Promise.resolve({}),
 		revealToken: () => Promise.resolve('t'.repeat(64)),

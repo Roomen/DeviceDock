@@ -34,13 +34,13 @@
 		}
 	}
 	function baseUrl(status) {
-		return status.url || 'http://127.0.0.1:' + (status.port || 38991) + '/mcp'
+		return status.url || 'http://127.0.0.1:' + (status.port || 38992) + '/mcp'
 	}
 	// 复制出去的是干净的 MCP 客户端 JSON，不带注释
 	function configJson(status, token) {
 		return JSON.stringify({
 			mcpServers: {
-				'serial-debug': {
+				'devicedock': {
 					type: 'http',
 					url: baseUrl(status),
 					headers: { Authorization: 'Bearer ' + (token || '<TOKEN>') },
@@ -49,7 +49,7 @@
 		}, null, 2)
 	}
 	function cliCommand(status, token) {
-		return 'claude mcp add --transport http serial-debug ' + baseUrl(status) + ' --header "Authorization: Bearer ' + (token || '<TOKEN>') + '"'
+		return 'claude mcp add --transport http devicedock ' + baseUrl(status) + ' --header "Authorization: Bearer ' + (token || '<TOKEN>') + '"'
 	}
 	function agentInstructions(status, token) {
 		return [
@@ -136,7 +136,7 @@
 		const portLabel = mk('label', 'mdn-mcp-label', '端口')
 		s.port = mk('input', 'form-control form-control-sm mdn-mcp-port')
 		s.port.type = 'number'
-		s.port.value = String((s.status && s.status.port) || 38991)
+		s.port.value = String((s.status && s.status.port) || 38992)
 		s.port.min = '1024'
 		s.port.max = '65535'
 		s.port.setAttribute('inputmode', 'numeric')
@@ -285,7 +285,7 @@
 		s.statusLine.classList.toggle('is-error', !!(st.enabled && st.lastError))
 		s.urlLine.hidden = !running
 		s.urlLine.textContent = running ? baseUrl(st) : ''
-		if (doc.activeElement !== s.port) s.port.value = String(st.port || 38991)
+		if (doc.activeElement !== s.port) s.port.value = String(st.port || 38992)
 		s.port.disabled = running || !!s.busy
 		s.toggleBtn.disabled = !!s.busy
 		s.toggleBtn.textContent = st.enabled ? '停用服务' : '启用服务'
@@ -355,7 +355,7 @@
 		},
 		port: function () {
 			const st = latestStatus || {}
-			return st.port || 38991
+			return st.port || 38992
 		},
 		open: function () { openPanel() },
 	}

@@ -723,7 +723,7 @@ mod tests {
 
     fn state_with(epoch: &str) -> McpState {
         let s = McpState::default();
-        s.mark_running_for_test(38991);
+        s.mark_running_for_test(38992);
         s.register_window_for_test(
             "main",
             WindowReg { bridge_epoch: epoch.into(), authed: true, mode: "single".into(), app_version: "t".into() },

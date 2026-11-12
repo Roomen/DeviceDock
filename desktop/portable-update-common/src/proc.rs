@@ -121,7 +121,7 @@ pub fn wait_for_exit(install_dir: &Path, exe_name: &str, timeout: std::time::Dur
 			return Ok(());
 		}
 		if Instant::now() >= deadline {
-			return Err(format!("还有 {} 个 Serial Debug 实例仍在运行，已取消更新，请全部退出后重试", running.len()));
+			return Err(format!("还有 {} 个 DeviceDock 实例仍在运行，已取消更新，请全部退出后重试", running.len()));
 		}
 		std::thread::sleep(Duration::from_millis(250));
 	}
@@ -153,7 +153,7 @@ pub fn pid_alive(pid: u32) -> Option<bool> {
 #[cfg(windows)]
 pub fn message_box(text: &str) {
 	use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
-	let caption = wide(std::ffi::OsStr::new("Serial Debug 更新"));
+	let caption = wide(std::ffi::OsStr::new("DeviceDock 更新"));
 	let body = wide(std::ffi::OsStr::new(text));
 	unsafe {
 		MessageBoxW(std::ptr::null_mut(), body.as_ptr(), caption.as_ptr(), MB_OK | MB_ICONERROR);
@@ -188,7 +188,7 @@ mod tests {
 
 	#[test]
 	fn case_and_separator_differences_collapse() {
-		assert_eq!(normalize(Path::new(r"C:\Apps\Serial Debug\app.exe")), normalize(Path::new(r"c:/apps/serial debug/APP.EXE")));
+		assert_eq!(normalize(Path::new(r"C:\Apps\DeviceDock\app.exe")), normalize(Path::new(r"c:/apps/devicedock/APP.EXE")));
 		assert_eq!(normalize(Path::new(r"\\?\C:\Apps\app.exe")), normalize(Path::new(r"C:\Apps\app.exe")));
 	}
 

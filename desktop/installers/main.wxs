@@ -90,12 +90,12 @@
         <!-- Only a first install without an explicit INSTALLDIR uses this default.
              RestorePreviousInstallDir runs before this action in both sequences.
              An absent/unavailable D drive keeps the stock Program Files fallback. -->
-        <Property Id="SERIALDEBUG_D_DRIVE" Secure="yes">
-            <DirectorySearch Id="SerialDebugDDrive" Path="D:\" Depth="0" />
+        <Property Id="DEVICEDOCK_D_DRIVE" Secure="yes">
+            <DirectorySearch Id="DeviceDockDDrive" Path="D:\" Depth="0" />
         </Property>
         <SetProperty Id="INSTALLDIR" Value="D:\project files\{{product_name}}"
                      Action="SetDefaultInstallDir" After="RestorePreviousInstallDir"
-                     Sequence="both">NOT INSTALLDIR AND SERIALDEBUG_D_DRIVE AND NOT Installed</SetProperty>
+                     Sequence="both">NOT INSTALLDIR AND DEVICEDOCK_D_DRIVE AND NOT Installed</SetProperty>
 
         <!-- launch app checkbox -->
         <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />

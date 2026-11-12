@@ -1,0 +1,49 @@
+name: Check
+on:
+  pull_request:
+  push:
+    branches-ignore: [dev]
+permissions:
+  contents: read
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  js:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Run frontend regression tests
+        run: |
+          fail=0
+          for f in tests/*.cjs; do
+            echo "::group::$f"
+            node "$f" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
+      - run: node --test desktop/scripts/*.test.mjs
+  cargo:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+          - os: windows-2025
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            desktop/src-tauri
+            desktop/portable-update-common
+            desktop/portable-updater
+      - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib
+      - run: cargo test --manifest-path desktop/portable-update-common/Cargo.toml
+      - run: cargo test --manifest-path desktop/portable-updater/Cargo.toml

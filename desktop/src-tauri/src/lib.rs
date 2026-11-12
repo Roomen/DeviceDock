@@ -99,7 +99,7 @@ fn build_window_with_session(app: &AppHandle, label: &str, session: Option<&std:
 	let handle = app.clone();
 	let opener = app.clone();
 	let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
-		.title("Serial Debug")
+		.title("DeviceDock")
 		.min_inner_size(960.0, 600.0)
 		// Tauri 的文件拖放处理会吞掉页面的 HTML5 drop(固件拖拽卡、快捷发送拖动排序)，页面不用 Tauri 的拖放事件
 		.disable_drag_drop_handler()

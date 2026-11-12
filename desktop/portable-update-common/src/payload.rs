@@ -97,63 +97,63 @@ mod tests {
 
 	#[test]
 	fn extracts_whitelisted_entries_and_ignores_others() {
-		let zip = build(&[("Serial Debug.exe", b"exe-bytes"), ("README.txt", b"readme"), ("other.txt", b"ignored")]);
-		let out = extract(&zip, &["Serial Debug.exe", "README.txt"], &LIMITS).unwrap();
+		let zip = build(&[("DeviceDock.exe", b"exe-bytes"), ("README.txt", b"readme"), ("other.txt", b"ignored")]);
+		let out = extract(&zip, &["DeviceDock.exe", "README.txt"], &LIMITS).unwrap();
 		assert_eq!(out.len(), 2);
-		assert_eq!(out["Serial Debug.exe"], b"exe-bytes");
+		assert_eq!(out["DeviceDock.exe"], b"exe-bytes");
 		assert_eq!(out["README.txt"], b"readme");
-		assert!(contains_entry(&zip, "Serial Debug.exe"));
+		assert!(contains_entry(&zip, "DeviceDock.exe"));
 		assert!(!contains_entry(&zip, "nope.exe"));
 	}
 
 	#[test]
 	fn stored_entries_are_supported() {
 		let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-		writer.start_file("Serial Debug.exe", SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
+		writer.start_file("DeviceDock.exe", SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored)).unwrap();
 		writer.write_all(b"exe").unwrap();
 		let zip = writer.finish().unwrap().into_inner();
-		assert_eq!(extract(&zip, &["Serial Debug.exe"], &LIMITS).unwrap()["Serial Debug.exe"], b"exe");
+		assert_eq!(extract(&zip, &["DeviceDock.exe"], &LIMITS).unwrap()["DeviceDock.exe"], b"exe");
 	}
 
 	#[test]
 	fn missing_wanted_entry_is_an_error() {
-		let zip = build(&[("Serial Debug.exe", b"exe")]);
-		assert!(extract(&zip, &["Serial Debug.exe", "README.txt"], &LIMITS).is_err());
+		let zip = build(&[("DeviceDock.exe", b"exe")]);
+		assert!(extract(&zip, &["DeviceDock.exe", "README.txt"], &LIMITS).is_err());
 	}
 
 	#[test]
 	fn path_like_entry_names_never_match() {
-		let zip = build(&[("..\\evil.exe", b"x"), ("sub/Serial Debug.exe", b"y")]);
+		let zip = build(&[("..\\evil.exe", b"x"), ("sub/DeviceDock.exe", b"y")]);
 		assert!(extract(&zip, &["..\\evil.exe"], &LIMITS).is_err());
-		assert!(extract(&zip, &["sub/Serial Debug.exe"], &LIMITS).is_err());
+		assert!(extract(&zip, &["sub/DeviceDock.exe"], &LIMITS).is_err());
 	}
 
 	#[test]
 	fn whitelisted_directory_entries_are_not_treated_as_files() {
 		let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
-		writer.add_directory("Serial Debug.exe/", SimpleFileOptions::default()).unwrap();
+		writer.add_directory("DeviceDock.exe/", SimpleFileOptions::default()).unwrap();
 		let zip = writer.finish().unwrap().into_inner();
-		assert!(extract(&zip, &["Serial Debug.exe"], &LIMITS).is_err());
+		assert!(extract(&zip, &["DeviceDock.exe"], &LIMITS).is_err());
 	}
 
 	#[test]
 	fn names_are_matched_exactly_not_case_insensitively() {
 		// Windows 文件系统不分大小写，所以白名单按字节精确比对：名字写法一变就当缺文件处理
-		let zip = build(&[("serial debug.exe", b"exe")]);
-		assert!(extract(&zip, &["Serial Debug.exe"], &LIMITS).is_err());
+		let zip = build(&[("devicedock.exe", b"exe")]);
+		assert!(extract(&zip, &["DeviceDock.exe"], &LIMITS).is_err());
 	}
 
 	#[test]
 	fn non_zip_data_is_rejected() {
-		assert!(extract(b"not a zip at all", &["Serial Debug.exe"], &LIMITS).is_err());
+		assert!(extract(b"not a zip at all", &["DeviceDock.exe"], &LIMITS).is_err());
 	}
 
 	#[test]
 	fn entry_and_count_limits_are_enforced() {
-		let zip = build(&[("Serial Debug.exe", b"0123456789")]);
+		let zip = build(&[("DeviceDock.exe", b"0123456789")]);
 		let small = Limits { max_entries: 16, max_entry_bytes: 4, max_total_bytes: 1024 };
-		assert!(extract(&zip, &["Serial Debug.exe"], &small).is_err());
+		assert!(extract(&zip, &["DeviceDock.exe"], &small).is_err());
 		let zero = Limits { max_entries: 0, max_entry_bytes: 1024, max_total_bytes: 1024 };
-		assert!(extract(&zip, &["Serial Debug.exe"], &zero).is_err());
+		assert!(extract(&zip, &["DeviceDock.exe"], &zero).is_err());
 	}
 }

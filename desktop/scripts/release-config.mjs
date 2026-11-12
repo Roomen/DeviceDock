@@ -23,7 +23,7 @@ export function updaterConfig(channel, env = process.env, platform = process.pla
 		plugins: { updater: {
 			pubkey,
 			requireSignedVersion: true,
-			endpoints: [`https://github.com/Roomen/web-serial-debug/releases/download/desktop-${channel}/latest.json`],
+			endpoints: [`https://github.com/Roomen/DeviceDock/releases/download/desktop-${channel}/latest.json`],
 			windows: { installMode: 'passive' }
 		} }
 	}

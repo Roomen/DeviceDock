@@ -17,7 +17,7 @@ registry and uninstall behavior in sync when upgrading the CLI.
 
 Local changes only customize the first-install default:
 
-- Use `D:\project files\Serial Debug` when the D drive is available.
+- Use `D:\project files\DeviceDock` when the D drive is available.
 - Keep the normal directory chooser and explicit command-line install directory.
 - Restore the registered install directory before an upgrade. NSIS uses its
   existing default registry value; MSI also recognizes the `InstallDir` value.

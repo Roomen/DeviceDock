@@ -50,7 +50,7 @@ pub async fn require_token(State(auth): State<AuthState>, req: Request, next: Ne
 fn unauthorized() -> Response {
     (
         StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, "Bearer realm=\"serial-debug-mcp\"")],
+        [(header::WWW_AUTHENTICATE, "Bearer realm=\"devicedock-mcp\"")],
         "Unauthorized",
     )
         .into_response()

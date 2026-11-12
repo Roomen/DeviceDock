@@ -42,8 +42,8 @@ test('MSI restores or accepts explicit directory before applying a first-install
   assert.match(previousSearch[1], /RegistrySearch Id="PrevInstallDirWithName"[^>]+Name="InstallDir"/);
   assert.equal((wix.match(/<RegistrySearch Id="PrevInstallDir/g) || []).length, 2);
   assert.match(wix, /<SetProperty Id="INSTALLDIR" Value="\[PREVIOUS_INSTALLDIR\]"\s+Action="RestorePreviousInstallDir" After="AppSearch"\s+Sequence="both">NOT INSTALLDIR AND PREVIOUS_INSTALLDIR<\/SetProperty>/);
-  assert.match(wix, /DirectorySearch Id="SerialDebugDDrive" Path="D:\\" Depth="0"/);
-  assert.match(wix, /<SetProperty Id="INSTALLDIR" Value="D:\\project files\\\{\{product_name\}\}"\s+Action="SetDefaultInstallDir" After="RestorePreviousInstallDir"\s+Sequence="both">NOT INSTALLDIR AND SERIALDEBUG_D_DRIVE AND NOT Installed<\/SetProperty>/);
+  assert.match(wix, /DirectorySearch Id="DeviceDockDDrive" Path="D:\\" Depth="0"/);
+  assert.match(wix, /<SetProperty Id="INSTALLDIR" Value="D:\\project files\\\{\{product_name\}\}"\s+Action="SetDefaultInstallDir" After="RestorePreviousInstallDir"\s+Sequence="both">NOT INSTALLDIR AND DEVICEDOCK_D_DRIVE AND NOT Installed<\/SetProperty>/);
   assert.ok(wix.includes('<UIRef Id="WixUI_InstallDir" />'));
   assert.ok(wix.includes('<Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">'));
   assert.ok(wix.includes('Name="InstallDir" Type="string" Value="[INSTALLDIR]"'));

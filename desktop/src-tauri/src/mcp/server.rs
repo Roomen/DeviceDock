@@ -758,14 +758,14 @@ impl McpServer {
 }
 
 #[tool_handler(
-    name = "serial-debug",
-    instructions = "Local desktop Serial Debug app. Call windows_list first, then pass the exact window label to every other tool. Mutations are serialized per window/lane and are refused while a protocol transaction pins the lane, while the app prepares an update, or when the window is not logged in."
+    name = "devicedock",
+    instructions = "Local desktop DeviceDock app. Call windows_list first, then pass the exact window label to every other tool. Mutations are serialized per window/lane and are refused while a protocol transaction pins the lane, while the app prepares an update, or when the window is not logged in."
 )]
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new("serial-debug", self.version()))
-            .with_instructions("Local desktop Serial Debug app. Call windows_list first, then pass the exact window label to every other tool.")
+            .with_server_info(Implementation::new("devicedock", self.version()))
+            .with_instructions("Local desktop DeviceDock app. Call windows_list first, then pass the exact window label to every other tool.")
     }
 }
 
@@ -784,7 +784,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let rec = calls.clone();
         let state = McpState::default();
-        state.mark_running_for_test(38991);
+        state.mark_running_for_test(38992);
         state.register_window_for_test(
             "main",
             WindowReg { bridge_epoch: "e1".into(), authed: true, mode: "dual".into(), app_version: "t".into() },

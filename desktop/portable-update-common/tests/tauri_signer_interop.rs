@@ -152,7 +152,7 @@ fn emit_windows_fixture_when_requested() {
 		format: portable_update_common::FORMAT,
 		operation_id: std::env::var("PORTABLE_UPDATE_OPERATION").unwrap_or_else(|_| "0123456789abcdef".to_string()),
 		install_dir: PathBuf::from(&install),
-		exe_name: std::env::var("PORTABLE_UPDATE_EXE_NAME").unwrap_or_else(|_| "Serial Debug.exe".to_string()),
+		exe_name: std::env::var("PORTABLE_UPDATE_EXE_NAME").unwrap_or_else(|_| "DeviceDock.exe".to_string()),
 		payload: fixture.join(portable_update_common::PAYLOAD_FILE),
 		signature,
 		data_dir,

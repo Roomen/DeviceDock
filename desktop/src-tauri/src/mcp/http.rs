@@ -256,7 +256,7 @@ mod tests {
         let (status, body) = raw_post(&server, Some(&server.token), &init_body(), &[]).await;
         assert_eq!(status, 200, "{body}");
         assert!(body.to_ascii_lowercase().contains("application/json"), "{body}");
-        assert!(body.contains("serial-debug"), "{body}");
+        assert!(body.contains("devicedock"), "{body}");
         let (status, body) = raw_post(&server, Some(&server.token), &tools_list_body(), &[]).await;
         assert_eq!(status, 200, "{body}");
         for name in [

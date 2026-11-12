@@ -32,7 +32,7 @@ Windows 便携 ZIP 同样使用这套公钥签名（`signer sign --app-version <
 
 如发布在推进通道前失败，已有通道继续指向上一版。检查草稿/已发布版本与产物后人工处理失败版本，再重跑；流程不会静默覆盖同版本资产。
 
-macOS 安装包只发布 `.dmg`，不再提供 `.app.zip`；应用内更新安装的 `.app.tar.gz` 只在配了更新签名时随版本发布。Windows 只发布 `Serial-Debug_<version>_windows_x64.zip`，不生成 NSIS / MSI 安装程序。`npm run build` 在 Windows 上自动跳过 Tauri bundler，先编译更新 helper（`desktop/portable-updater`，产物与主程序同在一个 target 目录），再把 `Serial Debug.exe`、`serial-debug-updater.exe` 与 `README.txt` 压成 ZIP，归档到 `desktop/release/<channel>/`；配了更新签名时另出 `<zip>.sig`。显式 `--no-bundle` 时只编译、不归档。ZIP 解压后运行 `Serial Debug.exe`，无需安装或管理员权限，不创建快捷方式与卸载项；`serial-debug-updater.exe` 必须与主程序放在同一文件夹。
+macOS 安装包只发布 `.dmg`，不再提供 `.app.zip`；应用内更新安装的 `.app.tar.gz` 只在配了更新签名时随版本发布。Windows 只发布 `DeviceDock_<version>_windows_x64.zip`，不生成 NSIS / MSI 安装程序。`npm run build` 在 Windows 上自动跳过 Tauri bundler，先编译更新 helper（`desktop/portable-updater`，产物与主程序同在一个 target 目录），再把 `DeviceDock.exe`、`devicedock-updater.exe` 与 `README.txt` 压成 ZIP，归档到 `desktop/release/<channel>/`；配了更新签名时另出 `<zip>.sig`。显式 `--no-bundle` 时只编译、不归档。ZIP 解压后运行 `DeviceDock.exe`，无需安装或管理员权限，不创建快捷方式与卸载项；`devicedock-updater.exe` 必须与主程序放在同一文件夹。
 
 运行环境为 Windows 10/11 和 Microsoft Edge WebView2 Evergreen Runtime（ZIP 不包含该运行时，缺少时需从 Microsoft 官网安装）。配置、授权和日志仍沿用当前用户应用数据目录，便于旧安装版迁移，不随 ZIP 移动。旧安装版用户需手动下载 ZIP 并退出旧程序；可卸载旧安装器版本后使用 ZIP。新版本不再向旧 Windows 安装版提供安装器更新，旧版检查更新可能报错，需手动前往下载页。
 
@@ -45,7 +45,7 @@ Windows 与 macOS 共用同一套更新入口、通道清单、进度、全窗�
 3. 全部窗口确认空闲、会话写入交接文件、MCP 在飞请求作废、原生串口句柄收回后，Rust 端把已验签的 ZIP、`plan.json` 与 ZIP 里的 helper 写进应用数据目录下的 `update/<operation>/`（私有暂存），写 `update-in-progress.json` 标记，启动 helper 后 `app.exit(0)`。
 4. helper 只收一个绝对路径参数（计划文件），自己再校验计划格式与路径、用编译期内嵌的公钥复核 ZIP 签名并要求签名的版本与计划一致，再按白名单从 ZIP 里取主程序与说明文件。
 5. helper 用 ToolHelp 枚举「同一安装目录」的全部实例（按完整映像路径比对，不是只看名字），等它们退出（默认 60 s，最多 10 min）；查询失败按「还没退出」处理而不是当作没有实例。
-6. 替换是「写新文件并回读核对 → 旧文件改名备份 → 新文件就位 → 再核对内容 → 删备份」。任一步失败都回滚，回滚失败会保留备份并把路径写进结果。主程序成功后还会一并替换 `README.txt` 与安装目录里的 `serial-debug-updater.exe`（运行中的是暂存目录那份，替换安全），这两项失败不影响已就位的新程序。
+6. 替换是「写新文件并回读核对 → 旧文件改名备份 → 新文件就位 → 再核对内容 → 删备份」。任一步失败都回滚，回滚失败会保留备份并把路径写进结果。主程序成功后还会一并替换 `README.txt` 与安装目录里的 `devicedock-updater.exe`（运行中的是暂存目录那份，替换安全），这两项失败不影响已就位的新程序。
 7. 替换结束写 `update-result.json`、删本次标记、清自己的暂存目录，启动程序（成功是新版，失败是回滚后的旧版）。新版启动时 `js/app-update.js` 读出失败原因并提示，用户可以重试。
 8. 没有拿到锁的 helper（同时有两次更新、或上次 helper 还没结束）**什么都不做**：不写结果、不动别人的标记、不启动程序——否则它启动的实例会占住正在等实例退出的那次替换，把一次本可成功的更新逼成超时回滚。此时由拿到锁的那个 helper 负责重启。
 
@@ -53,7 +53,7 @@ Windows 与 macOS 共用同一套更新入口、通道清单、进度、全窗�
 
 并发与竞争：`update/lock` 是互斥锁（30 s 等待，崩溃残留超过 15 min 才可回收），同一时刻只有一个 helper 在替换；更新进行中另起的实例在启动阶段读到标记就提示并退出，不会去清正在使用的暂存目录或锁；暂存清理只删「名字是本工具的操作 id、且目录本身」的项，锁文件、`update` 根目录与其它文件都不动。更新失败保存的是「文件替换失败」这一层：新版程序自身崩溃不会被自动回滚，只是不再提示成功。
 
-回滚与残留：`<主程序名>.old-<operation>` 是备份，正常结束即删除；主程序、`README.txt`、`serial-debug-updater.exe` 的 `.new-*` 半成品只在主程序仍存在时于下次启动前清理；主程序不存在时任何副本都保留，避免删掉唯一可运行的旧程序。`.old-*` 不属于本轮、无法确认那次更新成功过，所以一律不主动删。
+回滚与残留：`<主程序名>.old-<operation>` 是备份，正常结束即删除；主程序、`README.txt`、`devicedock-updater.exe` 的 `.new-*` 半成品只在主程序仍存在时于下次启动前清理；主程序不存在时任何副本都保留，避免删掉唯一可运行的旧程序。`.old-*` 不属于本轮、无法确认那次更新成功过，所以一律不主动删。
 
 回滚承诺的范围只有「文件替换」：helper 在**新程序已就位之后、结果文件写出之前**被强杀、遭遇 OOM 或断电时，磁盘上留的是新版且没有 `update-result.json`，下次启动不会显示任何更新结果（标记会因 helper 进程已死而被清掉，`<exe>.old-<operation>` 备份保留可手工恢复）。新版程序自身崩溃、运行期逻辑错误都不会被检测或自动回滚。内存峰值约为「载荷 + 主程序 + 两份回读副本」，正常包远低于上限。
 

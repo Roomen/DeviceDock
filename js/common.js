@@ -1669,7 +1669,7 @@
 			quickSendList: localStorage.getItem('quickSendList'),
 		}
 		let blob = new Blob([JSON.stringify(data)], { type: 'text/plain' })
-		saveAs(blob, 'web-serial-debug.json')
+		saveAs(blob, 'devicedock-config.json')
 	})
 	//导入参数
 	document.getElementById('serial-import').addEventListener('click', (e) => {

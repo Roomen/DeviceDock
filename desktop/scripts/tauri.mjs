@@ -16,6 +16,12 @@ const m = src.match(/APP_VERSION\s*=\s*['"](\d+\.\d+\.\d+)['"]/)
 if (!m) throw new Error('js/version.js 里找不到 APP_VERSION')
 const version = m[1]
 
+// 提交进仓库的更新公钥是发布信任根：本地与 CI 都从这里取，杜绝环境变量悄悄换成别的密钥。
+const publicTrust = readFileSync(join(desktop, 'updater-public-key.txt'), 'utf8').trim()
+if (!publicTrust) throw new Error('desktop/updater-public-key.txt 缺少 DeviceDock 更新公钥')
+if (process.env.TAURI_UPDATER_PUBLIC_KEY?.trim() && process.env.TAURI_UPDATER_PUBLIC_KEY.trim() !== publicTrust) throw new Error('TAURI_UPDATER_PUBLIC_KEY 与仓库内的 DeviceDock 公钥不一致')
+process.env.TAURI_UPDATER_PUBLIC_KEY = publicTrust
+
 const channel = releaseChannel(desktop)
 process.env.RELEASE_CHANNEL = channel
 const args = process.argv.slice(2)
@@ -44,7 +50,7 @@ process.exit(r.status == null ? 1 : r.status)
 // 便携版更新 helper：与主程序同 target / 同 profile 编译，公钥经环境变量注入(build.rs 编译期内嵌)。
 // 失败就让整个构建失败：没有 helper 的 ZIP 无法应用内更新，不能静默出一个半成品包。
 function buildHelper(target, debug) {
-	const args = ['build', '--manifest-path', join(desktop, 'portable-updater', 'Cargo.toml'), '--bin', 'serial-debug-updater']
+	const args = ['build', '--manifest-path', join(desktop, 'portable-updater', 'Cargo.toml'), '--bin', 'devicedock-updater']
 	if (target) args.push('--target', target)
 	if (!debug) args.push('--release')
 	// helper 是独立包(不在 src-tauri 的依赖图里)，但产物要和主程序放在同一个 target 目录。
@@ -52,7 +58,7 @@ function buildHelper(target, debug) {
 	// 那种无效目录，helper 编译到别处而打包脚本按 resolve 去找，构建直接报「找不到更新助手」。
 	const helperTargetDir = cargoTargetDir(desktop)
 	const r = spawnSync('cargo', args, { cwd: desktop, stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: helperTargetDir } })
-	if (r.error || r.status !== 0) throw new Error('构建更新助手 serial-debug-updater 失败', { cause: r.error })
+	if (r.error || r.status !== 0) throw new Error('构建更新助手 devicedock-updater 失败', { cause: r.error })
 	console.log('release: 已编译更新助手 → ' + helperTargetDir)
 }
 
@@ -95,7 +101,7 @@ function collect() {
 	const out = join(root, channel)
 	const jobs = []
 	for (const { dir, arch } of bundleDirs()) {
-		const base = 'Serial-Debug_' + version + '_'
+		const base = 'DeviceDock_' + version + '_'
 		list(join(dir, 'dmg'), '.dmg').forEach((f) => jobs.push({ from: f, name: base + 'macos_' + arch + '.dmg' }))
 		list(join(dir, 'macos'), '.app.tar.gz').forEach((f) => jobs.push({ from: f, name: base + 'macos_' + arch + '.app.tar.gz', signature: true }))
 	}

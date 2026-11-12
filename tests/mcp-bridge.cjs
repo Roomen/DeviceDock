@@ -129,7 +129,7 @@ function makeHarness(opts) {
 		stopCapture() { return Promise.resolve({ ok: true, changed: false, sampling: false }) },
 	}
 	const svc = opts.service === null ? null : {
-		status() { return Promise.resolve({ running: state.running, enabled: state.running, port: 38991, url: 'http://127.0.0.1:38991/mcp' }) },
+		status() { return Promise.resolve({ running: state.running, enabled: state.running, port: 38992, url: 'http://127.0.0.1:38992/mcp' }) },
 		enable() { return Promise.resolve({}) },
 		disable() { return Promise.resolve({}) },
 		revealToken() { return Promise.resolve('t'.repeat(64)) },

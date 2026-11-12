@@ -55,7 +55,7 @@ function makeHarness(opts) {
 	const dialogCalls = []
 	let panelBody = null
 	let closePanel = null
-	const status = Object.assign({ supported: true, enabled: false, running: false, port: 38991, url: 'http://127.0.0.1:38991/mcp', hasToken: true, lastError: null, waitingForLogin: false }, opts.status || {})
+	const status = Object.assign({ supported: true, enabled: false, running: false, port: 38992, url: 'http://127.0.0.1:38992/mcp', hasToken: true, lastError: null, waitingForLogin: false }, opts.status || {})
 	const svcListeners = {}
 	const svc = opts.service === null ? null : {
 		status: () => Promise.resolve(Object.assign({}, status)),
@@ -141,7 +141,7 @@ test('独立导航入口打开宽面板；首次聚焦仍显示默认端口', as
 	const status = h.find((n) => n.className.indexOf('mdn-mcp-status') !== -1)
 	assert.equal(status.textContent, '未启用（默认关闭）')
 	const port = h.find((n) => n.className.indexOf('mdn-mcp-port') !== -1)
-	assert.equal(port.value, '38991')
+	assert.equal(port.value, '38992')
 	assert.equal(port.disabled, false)
 	assert.equal(h.byText('启用服务') != null, true)
 })
@@ -193,12 +193,12 @@ test('复制配置是干净 JSON(无注释)，复制命令单独一份', async (
 	const text = h.copied[0]
 	assert.equal(text.indexOf('#'), -1, '不应带注释')
 	const parsed = JSON.parse(text)
-	assert.equal(parsed.mcpServers['serial-debug'].url, 'http://127.0.0.1:38991/mcp')
-	assert.equal(parsed.mcpServers['serial-debug'].headers.Authorization, 'Bearer ' + 'a'.repeat(64))
+	assert.equal(parsed.mcpServers['devicedock'].url, 'http://127.0.0.1:38992/mcp')
+	assert.equal(parsed.mcpServers['devicedock'].headers.Authorization, 'Bearer ' + 'a'.repeat(64))
 	assert.equal(h.find((n) => n.className.indexOf('mdn-mcp-token') !== -1).textContent, '未显示')
 	h.byText('复制命令').click()
 	await flush()
-	assert.ok(h.copied[1].indexOf('claude mcp add --transport http serial-debug') === 0)
+	assert.ok(h.copied[1].indexOf('claude mcp add --transport http devicedock') === 0)
 	assert.ok(h.copied[1].includes('Bearer ' + 'a'.repeat(64)))
 })
 
@@ -217,7 +217,7 @@ test('一键复制给 Agent 包含完整配置与操作说明，不需要显示�
 	assert.ok(text.includes('unknown_after_commit'))
 	assert.ok(!text.includes('<TOKEN>'))
 	const config = JSON.parse(text.match(/```json\n\n([\s\S]*?)\n\n```/)[1])
-	assert.equal(config.mcpServers['serial-debug'].headers.Authorization, 'Bearer ' + 'a'.repeat(64))
+	assert.equal(config.mcpServers['devicedock'].headers.Authorization, 'Bearer ' + 'a'.repeat(64))
 	assert.equal(h.find((n) => n.className.indexOf('mdn-mcp-token') !== -1).textContent, '未显示')
 })
 
@@ -291,12 +291,12 @@ test('已启用但未运行：主键是停用，另有启动键', async () => {
 })
 
 test('绑定失败如实显示，不假装运行', async () => {
-	const h = makeHarness({ status: { enabled: true, running: false, lastError: '端口 38991 绑定失败(可能已被占用)' } })
+	const h = makeHarness({ status: { enabled: true, running: false, lastError: '端口 38992 绑定失败(可能已被占用)' } })
 	await flush()
 	h.menuItem().click()
 	await flush()
 	const status = h.find((n) => n.className.indexOf('mdn-mcp-status') !== -1)
-	assert.equal(status.textContent, '启动失败：端口 38991 绑定失败(可能已被占用)')
+	assert.equal(status.textContent, '启动失败：端口 38992 绑定失败(可能已被占用)')
 	assert.equal(status.classList.contains('is-error'), true)
 })
 
@@ -337,7 +337,7 @@ test('状态栏只读接口：state/label/port 随事件刷新，open 打开面�
 	h.svcListeners['mcp-service']({ enabled: false, running: false })
 	assert.equal(api.state(), 'off')
 	// 未启用时端口回落默认值
-	assert.equal(api.port(), 38991)
+	assert.equal(api.port(), 38992)
 	api.open()
 	await flush()
 	assert.equal(h.dialogCalls.length, 1)
