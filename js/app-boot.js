@@ -13,6 +13,16 @@
 	var closeBtn = document.getElementById('issue-tip-close')
 	if (!tip || !closeBtn) return
 	if (localStorage.getItem('issueTipDismissed')) return
+	// 挂到左栏「反馈」项旁边的小气泡：默认位置（固定左下）会在窄窗口时离反馈项太远，
+	// 但都不落在右侧面板区，不再挡住面板标题与工具条
+	var anchor = document.querySelector('#activity-rail .rail-item[href*="issues/new"]')
+	if (anchor) {
+		var rect = anchor.getBoundingClientRect()
+		var top = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 130))
+		tip.style.left = Math.round(rect.right + 10) + 'px'
+		tip.style.top = Math.round(top) + 'px'
+		tip.style.bottom = 'auto'
+	}
 	tip.hidden = false
 	closeBtn.addEventListener('click', function () {
 		tip.hidden = true

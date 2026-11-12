@@ -218,6 +218,30 @@
 		return n.toFixed(digits).replace(/0+$/, '').replace(/\.$/, '')
 	}
 
+	// ---------- 时间换算：序列内部存毫秒；uPlot 的 time 轴按「秒」解释，界面显示一律 24 小时制本地时间 ----------
+	const DAY_MS = 86400000
+	function pad2(n) { return (n < 10 ? '0' : '') + n }
+	// HH:mm:ss（24 小时制本地时间）
+	function formatClock(ms) {
+		const d = new Date(ms)
+		if (isNaN(d.getTime())) return '—'
+		return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds())
+	}
+	// 悬停读数：跨度不满一天只显示 HH:mm:ss，跨天补日期
+	function formatHoverTime(ms, spanMs) {
+		if (isNaN(ms) || ms == null) return '—'
+		if (!(spanMs >= DAY_MS)) return formatClock(ms)
+		const d = new Date(ms)
+		return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + formatClock(ms)
+	}
+	// 横轴刻度：跨度不满一天 HH:mm:ss（秒级对齐时刻同样成立），跨天显示「月-日 时:分」
+	function formatAxisTime(ms, spanMs) {
+		if (isNaN(ms) || ms == null) return ''
+		if (!(spanMs >= DAY_MS)) return formatClock(ms)
+		const d = new Date(ms)
+		return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes())
+	}
+
 	const lib = {
 		DEFAULT_CAPACITY: DEFAULT_CAPACITY,
 		CAP_MIN: CAP_MIN,
@@ -231,6 +255,10 @@
 		alignSeries: alignSeries,
 		toCSV: toCSV,
 		formatNumber: formatNumber,
+		DAY_MS: DAY_MS,
+		formatClock: formatClock,
+		formatHoverTime: formatHoverTime,
+		formatAxisTime: formatAxisTime,
 	}
 
 	if (typeof module !== 'undefined' && module.exports) module.exports = lib

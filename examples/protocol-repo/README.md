@@ -31,7 +31,7 @@ node examples/protocol-repo/tools/refresh-integrity.mjs
 ## 字段目录与文档
 
 `demo.a5frame` 带 `fields`（字段目录）与 `metrics(frame)`（数值点）：上行帧数据域前 2 字节是
-uint16 LE 电压 0.01V，接着 2 字节是 uint16 LE 瞬时流量 L/h，宿主的「曲线」面板据此出图。
+uint16 LE 电压原始值 0.01V（metrics 换算成工程单位 V 再出图），接着 2 字节是 uint16 LE 瞬时流量 L/h。
 字段表文档在 `docs/demo-a5frame-fields.md`，由宿主仓库的工具从 bundle 生成：
 
 ```sh

@@ -732,6 +732,14 @@
                                                     <input class="form-check-input" type="checkbox" id="sk-flow-verify">
                                                     <label class="form-check-label" for="sk-flow-verify">每步写后回读</label>
                                                 </div>
+                                                <div class="form-check form-switch ctl-switch" title="默认只随机可回读的字段（有查询码、能读到原值、能恢复）">
+                                                    <input class="form-check-input" type="checkbox" id="sk-flow-noreadback">
+                                                    <label class="form-check-label" for="sk-flow-noreadback">包括无法回读的字段</label>
+                                                </div>
+                                            </div>
+                                            <div class="sk-flow-noread-warn" id="sk-flow-noread-warn" hidden>
+                                                <i class="icon icon-info"></i>
+                                                已包括无法回读的字段：这些字段写后不校验、也不恢复原值，请确认设备可接受
                                             </div>
                                             <div class="sk-flow-list" id="sk-flow-random-list"></div>
                                         </div>

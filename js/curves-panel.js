@@ -111,12 +111,17 @@
 		}
 		chartSig = ''
 		el.plot.textContent = ''
+		if (el.legend) {
+			el.legend.textContent = ''
+			el.legend.hidden = true
+		}
 	}
 
 	function chartData(items) {
 		const list = items.map(function (it) { return S.store.get(it.sid, it.key) }).filter(Boolean)
 		const aligned = C.alignSeries(list)
-		return { list: list, data: [aligned.t].concat(aligned.cols), aligned: aligned }
+		// uPlot 的 time 轴按「秒」解释 x：序列内部存毫秒，画图时换算；读数 / 导出仍用毫秒
+		return { list: list, data: [aligned.t.map(function (ms) { return ms / 1000 })].concat(aligned.cols), aligned: aligned }
 	}
 
 	function buildChart(items) {
@@ -135,14 +140,14 @@
 		seriesMeta.length = 0
 		items.forEach(function (it) {
 			if (!axisOf.has(it.sid + '|' + it.key)) return
-			// 同一路选了几个字段：第一个实线、后面依次换虚线，色相仍只代表通道
+			// 同一路选了几个字段：第一个实线、后面依次换虚线，色相仍只代表通道；图例同步这套线型
 			laneIndex[it.sid] = (laneIndex[it.sid] || 0)
 			const nth = laneIndex[it.sid]++
 			const dash = nth === 0 ? [] : nth === 1 ? [6, 4] : [2, 3]
 			const axis = axisOf.get(it.sid + '|' + it.key)
 			const meta = {
 				sid: it.sid, key: it.key, name: it.name, unit: it.unit,
-				axis: axis, color: laneColor(it.sid, t),
+				axis: axis, nth: nth, color: laneColor(it.sid, t),
 				label: (S.lanes().length > 1 ? S.laneName(it.sid) + ' ' : '') + it.name + (it.unit ? ' (' + it.unit + ')' : ''),
 			}
 			seriesMeta.push(meta)
@@ -156,6 +161,12 @@
 				value: function (u, v) { return v == null ? '—' : C.formatNumber(v) },
 			})
 		})
+		// 横轴 24 小时制本地时间；uPlot 的 x 是秒，格式化前换回毫秒。纵轴单位不再用旋转标签（会与刻度数字
+		// 重叠），改在图例条上给「左轴 / 右轴」单位徽标
+		const xSpan = function (u) {
+			const x = u.data[0] || []
+			return x.length ? (x[x.length - 1] - x[0]) * 1000 : 0
+		}
 		const axes = [{
 			stroke: t.muted,
 			grid: { stroke: t.grid, width: 1 },
@@ -169,9 +180,6 @@
 			ticks: { stroke: t.axis, width: 1 },
 			font: t.micro + ' ' + t.mono,
 			size: 46,
-			label: grouped.axes[0] ? grouped.axes[0].unit : '',
-			labelSize: 14,
-			labelFont: t.micro + ' ' + t.mono,
 		}]
 		if (grouped.axes[1]) {
 			axes.push({
@@ -182,10 +190,11 @@
 				ticks: { stroke: t.axis, width: 1 },
 				font: t.micro + ' ' + t.mono,
 				size: 46,
-				label: grouped.axes[1].unit,
-				labelSize: 14,
-				labelFont: t.micro + ' ' + t.mono,
 			})
+		}
+		axes[0].values = function (u, splits) {
+			const span = xSpan(u)
+			return splits.map(function (v) { return C.formatAxisTime(v * 1000, span) })
 		}
 		const opts = {
 			width: w,
@@ -211,6 +220,7 @@
 		chart = new window.uPlot(opts, built.data, el.plot)
 		chartSig = sigOf(items)
 		renderReadout(chart, null)
+		renderLegend(grouped)
 		syncZoomButton()
 		return chart
 	}
@@ -240,8 +250,9 @@
 			el.readout.appendChild(hint)
 			return
 		}
-		const ts = u.data[0][idx]
-		el.readout.appendChild(mk('span', 'mdn-curve-readout-time', new Date(ts).toLocaleTimeString()))
+		const ts = u.data[0][idx] * 1000 // x 轴是秒
+		const span = (u.data[0][u.data[0].length - 1] - u.data[0][0]) * 1000
+		el.readout.appendChild(mk('span', 'mdn-curve-readout-time', C.formatHoverTime(ts, span)))
 		seriesMeta.forEach(function (m, i) {
 			const cell = mk('span', 'mdn-curve-readout-cell')
 			const swatch = mk('span', 'mdn-curve-swatch')
@@ -250,6 +261,33 @@
 			cell.append(swatch, mk('span', 'mdn-curve-readout-label', m.label), mk('span', 'mdn-curve-readout-value', C.formatNumber(value)))
 			el.readout.appendChild(cell)
 		})
+	}
+
+	// 图例：字段名 + 单位 + 路标，同一路多字段用线型区分（实线 / 虚线 / 点线），颜色只编码通道；
+	// 纵轴单位在轴上不再画旋转标签，这里给「左轴 / 右轴」单位徽标
+	function renderLegend(grouped) {
+		if (!el.legend) return
+		el.legend.textContent = ''
+		const units = ['左轴', '右轴']
+		seriesMeta.forEach(function (m) {
+			const chip = mk('span', 'mdn-curve-legend-chip')
+			const swatch = mk('span', 'mdn-curve-swatch')
+			swatch.style.color = m.color
+			if (m.nth === 1) swatch.classList.add('mdn-curve-swatch--dash')
+			if (m.nth >= 2) swatch.classList.add('mdn-curve-swatch--dot')
+			const laneTag = S.lanes().length > 1 ? S.laneName(m.sid) : ''
+			chip.append(swatch, mk('span', 'mdn-curve-legend-lane', laneTag),
+				mk('span', 'mdn-curve-legend-label', m.name + (m.unit ? ' (' + m.unit + ')' : '')))
+			el.legend.appendChild(chip)
+		})
+		if (grouped && grouped.axes.length) {
+			grouped.axes.forEach(function (ax, i) {
+				if (!ax.unit) return
+				const chip = mk('span', 'mdn-curve-legend-unit', units[i] + ' ' + ax.unit)
+				el.legend.appendChild(chip)
+			})
+		}
+		el.legend.hidden = !seriesMeta.length
 	}
 
 	function render() {
@@ -419,9 +457,11 @@
 
 		const readout = mk('div', 'mdn-curve-readout')
 		readout.setAttribute('aria-live', 'off')
+		const legend = mk('div', 'mdn-curve-legend')
+		legend.hidden = true
 		const plot = mk('div', 'mdn-curve-plot')
 		const empty = mk('div', 'mdn-curve-empty', '等待数据')
-		pane.append(bar, pop, readout, plot, empty)
+		pane.append(bar, pop, readout, legend, plot, empty)
 
 		el.pane = pane
 		el.fields = fields
@@ -433,6 +473,7 @@
 		el.cap = cap
 		el.csv = csv
 		el.readout = readout
+		el.legend = legend
 		el.plot = plot
 		el.empty = empty
 

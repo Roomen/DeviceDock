@@ -2154,15 +2154,16 @@ hr {
 }
 
 /* ========== Issue Tip ========== */
+/* 首次反馈提示贴着左栏（js/app-boot.js 会把它定位到「反馈」项旁边），不落在右侧面板区 */
 .issue-tip {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  left: 64px;
+  bottom: 12px;
   z-index: 1080;
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  max-width: 360px;
+  max-width: min(360px, calc(100vw - 76px));
   padding: 14px 16px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
@@ -10420,5 +10421,71 @@ html[data-layout='modern'] .mdn-curve-empty {
 }
 
 html[data-layout='modern'] .mdn-curve-empty[hidden] {
+	display: none;
+}
+
+html[data-layout='modern'] .mdn-curve-legend {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1) var(--sp-3);
+	flex: 0 0 auto;
+	padding: 2px 2px 0;
+	color: var(--text-secondary);
+	font-size: var(--fs-micro);
+}
+
+html[data-layout='modern'] .mdn-curve-legend[hidden] {
+	display: none;
+}
+
+html[data-layout='modern'] .mdn-curve-legend-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+	min-width: 0;
+}
+
+html[data-layout='modern'] .mdn-curve-legend-lane {
+	color: var(--text-muted);
+}
+
+html[data-layout='modern'] .mdn-curve-legend-label {
+	color: var(--text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 图例色块与曲线线型一一对应：实线 / 虚线 / 点线，颜色随通道（currentColor 由 JS 设成通道色） */
+html[data-layout='modern'] .mdn-curve-swatch--dash {
+	background: none;
+	background-image: repeating-linear-gradient(90deg, currentColor 0 6px, transparent 6px 10px);
+}
+
+html[data-layout='modern'] .mdn-curve-swatch--dot {
+	background: none;
+	background-image: repeating-linear-gradient(90deg, currentColor 0 2px, transparent 2px 5px);
+}
+
+html[data-layout='modern'] .mdn-curve-legend-unit {
+	margin-left: auto;
+	color: var(--text-muted);
+}
+
+html[data-layout='modern'] .sk-flow-noread-warn {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sp-1);
+	padding: 4px 8px;
+	margin-bottom: 6px;
+	border: 1px dashed var(--warning);
+	border-radius: var(--radius-sm);
+	color: var(--warning);
+	font-size: var(--fs-micro);
+	line-height: 1.5;
+}
+
+html[data-layout='modern'] .sk-flow-noread-warn[hidden] {
 	display: none;
 }

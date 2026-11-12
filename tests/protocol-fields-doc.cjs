@@ -41,7 +41,7 @@ const exampleMd = run([bundle, 'demo.a5frame'])
 const exampleDoc = path.join(ROOT, 'examples/protocol-repo/docs/demo-a5frame-fields.md')
 assert.ok(fs.existsSync(exampleDoc), '示例仓库的字段文档必须随仓库提交')
 assert.equal(exampleMd, fs.readFileSync(exampleDoc, 'utf8'), '示例协议字段文档与 bundle 不一致，重新生成：node tools/protocol-fields-doc.mjs examples/protocol-repo/packages/demo/index.js demo.a5frame > examples/protocol-repo/docs/demo-a5frame-fields.md')
-assert.match(exampleMd, /a5-voltage.*A5 电压.*uint16le.*0\.01V.*✓/, '示例字段行带曲线标记')
+assert.match(exampleMd, /a5-voltage.*A5 电压.*uint16le.* V \|.*✓/, '示例字段行带曲线标记（电压已是工程单位 V）')
 
 // bundle 未提供 fields 时报错退出（提示协议作者补 fields，而不是生成空表）
 let threw = false

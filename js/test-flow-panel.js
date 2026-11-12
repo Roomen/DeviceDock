@@ -75,7 +75,7 @@
 		return {
 			mode: 'batch',
 			batch: { steps: [], gapMs: 200 },
-			random: { count: 40, gapMs: 200, timeoutMs: 5000, seed: '', verify: false },
+			random: { count: 40, gapMs: 200, timeoutMs: 5000, seed: '', verify: false, includeNoReadback: false },
 			defaults: { timeoutMs: 5000, retries: 0, onFailure: 'continue', restoreOriginals: true },
 		}
 	}
@@ -823,15 +823,29 @@
 		cancelWaiters('已停止')
 	}
 
+	// 可回读 = 协议能给这个字段构造读请求（有查询码、能读到原值、写后能校验与恢复）
+	function canReadBack(proto, field) {
+		if (field.read === false) return false
+		if (typeof proto.buildRead !== 'function') return false
+		try { return !!proto.buildRead(field) } catch (e) { return false }
+	}
 	function generateRandom() {
 		const fields = fieldsList()
+		const proto = getActiveProto()
 		const readable = fields.filter(function (f) { return f.read !== false })
-		const writable = fields.filter(function (f) { return f.write !== false })
+		const writableAll = fields.filter(function (f) { return f.write !== false })
+		// 安全默认：只随机会写后能回读校验与恢复原值的字段；显式开关才包括不可回读的只写字段
+		const writable = draft.random.includeNoReadback
+			? writableAll
+			: writableAll.filter(function (f) { return canReadBack(proto, f) })
 		if (!readable.length && !writable.length) {
 			setStatus('当前协议没有可读 / 可写字段', 'err')
 			return
 		}
-		const proto = getActiveProto()
+		// 传给随机生成器的目录：开关关闭时直接排除不可回读的只写字段（读 / 写 / 校验都不会选中它）
+		const planFields = draft.random.includeNoReadback
+			? fields
+			: fields.filter(function (f) { return f.write !== false ? canReadBack(proto, f) : true })
 		const queries = (proto && Array.isArray(proto.queries)) ? proto.queries : []
 		let seed = parseInt(draft.random.seed, 10)
 		if (isNaN(seed)) seed = (Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0
@@ -839,7 +853,7 @@
 		const plan = T.randomPlan({
 			seed: seed,
 			count: draft.random.count,
-			fields: fields,
+			fields: planFields,
 			queries: queries,
 			verify: !!draft.random.verify,
 			delayAfterMs: draft.random.gapMs,
@@ -897,6 +911,8 @@
 		el.randomTimeout = $('sk-flow-timeout')
 		el.randomSeed = $('sk-flow-seed')
 		el.randomVerify = $('sk-flow-verify')
+		el.randomNoReadback = $('sk-flow-noreadback')
+		el.randomNoReadWarn = $('sk-flow-noread-warn')
 		el.generate = $('sk-flow-generate')
 		el.randomList = $('sk-flow-random-list')
 		el.timeout = $('sk-flow-default-timeout')
@@ -931,6 +947,8 @@
 		if (el.randomTimeout) el.randomTimeout.value = String(draft.random.timeoutMs)
 		if (el.randomSeed) el.randomSeed.value = draft.random.seed || ''
 		if (el.randomVerify) el.randomVerify.checked = !!draft.random.verify
+		if (el.randomNoReadback) el.randomNoReadback.checked = !!draft.random.includeNoReadback
+		if (el.randomNoReadWarn) el.randomNoReadWarn.hidden = !draft.random.includeNoReadback
 		if (el.batchVerify) el.batchVerify.checked = draft.batchVerify !== false
 		if (el.timeout) el.timeout.value = String(draft.defaults.timeoutMs)
 		if (el.retries) el.retries.value = String(draft.defaults.retries)
@@ -982,6 +1000,11 @@
 		})
 		el.randomVerify.addEventListener('change', function () {
 			draft.random.verify = el.randomVerify.checked
+			saveState()
+		})
+		if (el.randomNoReadback) el.randomNoReadback.addEventListener('change', function () {
+			draft.random.includeNoReadback = el.randomNoReadback.checked
+			if (el.randomNoReadWarn) el.randomNoReadWarn.hidden = !el.randomNoReadback.checked
 			saveState()
 		})
 		el.batchVerify.addEventListener('change', function () {

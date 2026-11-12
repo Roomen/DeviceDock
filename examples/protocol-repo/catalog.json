@@ -4,7 +4,7 @@
   "packages": [
     {
       "manifest": "packages/demo/manifest.json",
-      "sha256": "2924f8e74f9030efd1ae4adb61fd7aa325082e6d52a92146b8d70fe46e528f72"
+      "sha256": "258e8feebf6393a93cff1110929c7ecc56536fc61448a6927cb18675d68d060d"
     }
   ]
 }
