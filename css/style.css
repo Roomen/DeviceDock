@@ -9562,23 +9562,24 @@ html[data-layout='modern'] .mdn-logbar-toggle[aria-expanded='true'] {
 		border-right: 0;
 	}
 
+	/* 两组摊平成同一条 flex 行：display: contents 让按钮直接参与标签栏排布，
+	   这样「按可见项均分」不会被 .rail-top / .rail-bottom 的分组切开、在中间留一块空位。
+	   配置 / 主题外面那层 .dropend 保留为 flex 项（它仍是下拉的定位父级），只是自己占一份宽度 */
 	html[data-layout='modern'] #activity-rail .rail-top,
 	html[data-layout='modern'] #activity-rail .rail-bottom {
-		flex-direction: row;
-		align-items: center;
-		gap: var(--sp-1);
-		padding: 0;
-		border: 0;
+		display: contents;
 	}
 
-	html[data-layout='modern'] #activity-rail .rail-bottom {
-		margin-left: auto;
+	html[data-layout='modern'] #activity-rail .dropend {
+		flex: 1 1 0;
+		min-width: 0;
 	}
 
 	html[data-layout='modern'] #activity-rail .rail-item {
-		width: auto;
-		min-width: 52px;
-		padding: 6px 8px;
+		flex: 1 1 0;
+		width: 100%;
+		min-width: 0;
+		padding: 6px 4px;
 	}
 
 	html[data-layout='modern'] #activity-rail .rail-item i {
@@ -9653,21 +9654,28 @@ html[data-layout='modern'] .mdn-logbar-toggle[aria-expanded='true'] {
 		overflow-y: hidden;
 	}
 
+	/* 右栏在窄屏占日志区那一行（不是浮层：绝对定位的包含块是「网格区域」，
+	   一跨行就会被算成整块主区高度、把底部停靠栏一起盖掉）。打开面板时日志区让位，
+	   底部停靠栏始终可见：点同一枚按钮即收起，面板标题栏也有「收起」 */
 	html[data-layout='modern'] #main > #serial-tools {
 		grid-column: 1;
-		grid-row: 1 / -1;
-		position: absolute;
-		inset: 0;
-		z-index: 40;
+		grid-row: 1;
 		width: auto !important;
 		max-width: none;
-		height: auto !important;
 		border-left: 0;
-		box-shadow: var(--shadow-lg);
 		overflow: hidden;
 	}
 
 	html[data-layout='modern'] #main.right-collapsed > #serial-tools {
+		display: none;
+	}
+
+	html[data-layout='modern'] #main:not(.right-collapsed) > #log-main {
+		display: none;
+	}
+
+	/* 触屏没有 ⌘K：命令键在窄屏没有意义，直接不占位 */
+	html[data-layout='modern'] .mdn-connbar #wb-palette-btn {
 		display: none;
 	}
 
