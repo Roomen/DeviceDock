@@ -54,6 +54,15 @@ const asciiField = { key: 's', type: 'ascii', fillLen: 6 }
 	assert.ok(!T.sameValue('abc', 'abd', asciiField))
 	assert.equal(T.decodeFieldBytes([0x05], { key: 'u', type: 'uint8' }), 5)
 	assert.equal(T.decodeFieldBytes([0xff, 0xff], { key: 'i', type: 'int16le' }), -1)
+	// 浮点（契约类型）与小端字节序
+	assert.equal(T.decodeFieldBytes([0, 0, 0x80, 0x3f], { key: 'f', type: 'float32le' }), 1)
+	assert.equal(T.decodeFieldBytes([0, 0, 0, 0, 0, 0, 0xf0, 0x3f], { key: 'd', type: 'float64le' }), 1)
+	assert.equal(T.decodeFieldBytes([0, 0, 0xc0, 0x3f], { key: 'f', type: 'float32le' }), 1.5)
+	// 字节数不够：返回 null，不能拿残缺字节凑出一个错值
+	assert.equal(T.decodeFieldBytes([0x01, 0x02], { key: 'u', type: 'uint32le' }), null)
+	assert.equal(T.decodeFieldBytes([0x01], { key: 'f', type: 'float32le' }), null)
+	assert.equal(T.decodeFieldBytes([0x01], { key: 'd', type: 'float64le' }), null)
+	assert.equal(T.decodeFieldBytes([0x01], { key: 'u', type: 'uint16le' }), null)
 	assert.ok(T.sameValue('7', 7, { key: 'u', type: 'uint8' }))
 	assert.deepEqual(T.parseHex('aa bb'), [0xaa, 0xbb])
 	assert.equal(T.parseHex('aab'), null, '奇数位 HEX 不合法')
@@ -62,9 +71,9 @@ const asciiField = { key: 's', type: 'ascii', fillLen: 6 }
 
 // ---- 随机生成：seed 可复现、值在量程内、写步骤不固定值 ----
 const fields = [
-	{ key: 'u8', name: 'U8', type: 'uint8', min: 1, max: 9, read: true, write: true },
-	{ key: 'en', name: 'EN', type: 'enum', enum: [{ value: 1, label: 'A' }, { value: 3, label: 'B' }], read: true, write: true },
-	{ key: 'ro', name: 'RO', type: 'uint8', min: 0, max: 9, read: true, write: false },
+	{ key: 'u8', name: 'U8', type: 'uint8', min: 1, max: 9, read: true, write: true, random: true },
+	{ key: 'en', name: 'EN', type: 'enum', enum: [{ value: 1, label: 'A' }, { value: 3, label: 'B' }], read: true, write: true, random: true },
+	{ key: 'ro', name: 'RO', type: 'uint8', min: 0, max: 9, read: true, write: false, random: true },
 ]
 const queries = [{ key: 'q1', name: '查询', queryId: 1 }]
 {
@@ -94,15 +103,18 @@ const queries = [{ key: 'q1', name: '查询', queryId: 1 }]
 	assert.equal(T.newValueFor(T.mulberry32(2), { key: 'x', type: 'uint8', min: 3, max: 3 }, 3), null, '只有一个取值时取不到新值')
 	assert.ok(/^\d+$/.test(T.pickRandomValue(T.mulberry32(3), { key: 'b', type: 'bcd', fillLen: 3 })), 'BCD 生成纯数字')
 
-	// random: false 的危险字段（密码 / 表号地址 / IP·APN / 通信参数 / 时钟 / 复位类）永不进随机计划
+	// 随机只进显式 random:true 的字段：缺省 / random:false / 非布尔一律排除
 	{
-		const risky = [
+		const mixed = [
 			{ key: 'pwd', name: 'P', type: 'uint8', min: 0, max: 9, read: true, write: true, random: false },
-			{ key: 'safe', name: 'S', type: 'uint8', min: 0, max: 9, read: true, write: true },
+			{ key: 'safe', name: 'S', type: 'uint8', min: 0, max: 9, read: true, write: true, random: true },
+			{ key: 'unset', name: 'U', type: 'uint8', min: 0, max: 9, read: true, write: true },
+			{ key: 'str', name: 'T', type: 'uint8', min: 0, max: 9, read: true, write: true, random: 'true' },
 		]
 		for (let seed = 1; seed <= 30; seed++) {
-			const p = T.randomPlan({ seed: seed, count: 30, fields: risky, queries: [] })
-			assert.ok(p.steps.every(function (s) { return s.field !== 'pwd' }), '危险字段不进随机计划 seed=' + seed)
+			const p = T.randomPlan({ seed: seed, count: 30, fields: mixed, queries: [] })
+			assert.ok(p.steps.every(function (s) { return s.field === 'safe' }), '只有 random:true 的字段进随机计划 seed=' + seed)
+			assert.ok(p.steps.length > 0, 'random:true 的字段确实被选中 seed=' + seed)
 		}
 		// 同一字段不连续出现
 		const p2 = T.randomPlan({ seed: 11, count: 40, fields: fields, queries: queries })
@@ -467,7 +479,50 @@ async function runFlow(flow, io) {
 	})
 }
 
-console.log('test-flow: ok')
+	// 原值读不到就不写：步骤按原失败状态记录（含「未写入」），设备上的值不变
+	{
+		const device = makeDevice({ u8: 4 })
+		const io = makeIo({ device: device, plan: function (req) { return req.op === 'read' ? 'timeout' : null } })
+		const flow = T.normalizeFlow({ defaults: { restoreOriginals: false, delayAfterMs: 0 }, steps: [{ kind: 'write', field: 'u8', value: '9' }] })
+		const report = await runFlow(flow, io)
+		assert.equal(report.results[0].status, 'timeout')
+		assert.match(report.results[0].reason, /未写入/)
+		assert.equal(device.store.get('u8'), 4, '原值读不到时设备未被写入')
+		// 设备未返回该字段：unsupported + 未写入
+		const device2 = makeDevice({})
+		const io2 = makeIo({ device: device2, plan: function () { return { unsupported: true } } })
+		const report2 = await runFlow(T.normalizeFlow({ defaults: { restoreOriginals: false, delayAfterMs: 0 }, steps: [{ kind: 'write', field: 'u8', value: '9' }] }), io2)
+		assert.equal(report2.results[0].status, 'unsupported')
+		assert.match(report2.results[0].reason, /未写入/)
+	}
+
+	// 停止后不再重试：第一次超时置停止，重试循环立即收尾
+	{
+		let n = 0
+		const io = makeIo({ device: makeDevice({ u8: 2 }), plan: function () { n++; return n === 1 ? 'timeout' : null } })
+		io.shouldStop = function () { return n >= 1 }
+		const flow = T.normalizeFlow({ defaults: { restoreOriginals: false, delayAfterMs: 0 }, steps: [{ kind: 'read', field: 'u8', retries: 3, timeoutMs: 500 }] })
+		const report = await runFlow(flow, io)
+		assert.equal(report.results[0].attempts, 1, '停止后不再重试')
+		assert.equal(report.stopped, true)
+	}
+
+	// send-raw 的 expect 转成字节凭证（面板按原始响应字节匹配）
+	{
+		const captured = []
+		const io = makeIo({ device: makeDevice({ u8: 1 }) })
+		const rawSend = io.send
+		io.send = function (bytes, request, timeoutMs) { captured.push(request); return rawSend(bytes, request, timeoutMs) }
+		const flow = T.normalizeFlow({ defaults: { restoreOriginals: false, delayAfterMs: 0 }, steps: [{ kind: 'send-raw', raw: '01 02', expect: 'AA BB' }] })
+		await runFlow(flow, io)
+		assert.deepEqual(Array.from(captured[0].expectBytes), [0xaa, 0xbb], 'expect 转成字节放进凭证')
+		// 非法期望 HEX 在校验阶段就被拒
+		const bad = T.normalizeFlow({ steps: [{ kind: 'send-raw', raw: '0102', expect: 'XYZ' }] })
+		const errors = T.validateFlow(bad, [])
+		assert.ok(errors.some(function (e) { return /期望 HEX/.test(e.message) }), '非法期望 HEX 被校验拦下')
+	}
+
+	console.log('test-flow: ok')
 })().catch(function (e) {
 	console.error(e)
 	process.exit(1)

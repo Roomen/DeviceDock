@@ -138,7 +138,7 @@
 
 	// ---------- 串口 io：写原始字节 + 按当前协议等应答 ----------
 	// 只在主发路（事务钉扎）上跑：send 前由 runAll 钉扎，RX 也只订阅主发语义（onReceive 跟随钉扎口）
-	const pump = { buf: [], waiters: [] }
+	const pump = { buf: [], waiters: [], pendingWrite: null, late: 0 }
 	let unsubscribeRx = null
 
 	function parseOpts() {
@@ -157,7 +157,8 @@
 	function pumpFrames() {
 		const proto = getActiveProto()
 		while (pump.waiters.length) {
-			if (pump.buf.length < 4) break
+			// 最少字节量由协议的 findFrame 自己判断（契约没规定最短帧长），这里不再假设 4 字节
+			if (!pump.buf.length) break
 			const u8 = Uint8Array.from(pump.buf)
 			let found = null
 			if (proto && typeof proto.findFrame === 'function') {
@@ -182,13 +183,12 @@
 		}
 	}
 	function dispatchFrame(parsed, raw) {
-		if (!parsed || parsed.dir !== 'up') return
-		const valid = parsed.ok === true || (parsed.crcOk && parsed.endOk)
-		if (!valid) return
+		// 应答资格完全由协议的 matchResponse 决定（dir / 有效性字段是契约没规定的东西，
+		// 不能在这里预设——否则外部协议的合法应答会被丢掉）
 		for (let i = pump.waiters.length - 1; i >= 0; i--) {
 			const w = pump.waiters[i]
 			let verdict = false
-			try { verdict = matchProto(parsed, w.request) } catch (e) { verdict = false }
+			try { verdict = matchProto(parsed, w.request, raw) } catch (e) { verdict = false }
 			if (verdict === false) continue
 			pump.waiters.splice(i, 1)
 			clearTimeout(w.timer)
@@ -201,18 +201,22 @@
 			}
 			return
 		}
+		// 没有等待者认领的完整帧：大概率是超时请求的迟到应答——丢弃并计数（跑完汇总到日志）
+		if (parsed && parsed.dir === 'up' && (parsed.ok === true || (parsed.crcOk && parsed.endOk))) {
+			pump.late++
+		}
 	}
-	// matchResponse 返回 false（继续等）/ true / { ok:false }；send-raw 的 expect 由宿主按 HEX 子串过滤
-	function matchProto(frame, request) {
+	// matchResponse 返回 false（继续等）/ true / { ok:false }；send-raw 的 expect 按原始响应字节过滤
+	function matchProto(frame, request, raw) {
 		const proto = getActiveProto()
 		if (!proto || typeof proto.matchResponse !== 'function') return false
 		const v = proto.matchResponse(frame, request)
 		if (v === false || v == null) return false
 		if (typeof v === 'object') return v
-		// true 之后再看 send-raw 的期望字节
-		if (request && request.op === 'raw' && request.expectBytes) {
-			const raw = frame.dataBytes || null
-			if (!raw || !containsBytes(raw, request.expectBytes)) return false
+		// true 之后再看 send-raw 的期望字节（引擎已把 expect 转成字节放进凭证）
+		if (request && request.op === 'raw' && request.expectBytes && request.expectBytes.length) {
+			const hay = raw || (frame && frame.dataBytes) || null
+			if (!hay || !containsBytes(hay, request.expectBytes)) return false
 		}
 		return true
 	}
@@ -227,6 +231,14 @@
 		return false
 	}
 	function send(bytes, request, timeoutMs) {
+		// 请求完全串行：上一笔请求（含在飞写）未收尾前，下一笔不开始——
+		// 超时 / 取消后引擎可能立刻重试或恢复，写与会答交错会把迟到应答配给新请求
+		const prev = pump.pendingWrite || Promise.resolve()
+		const done = prev.then(function () { return sendLocked(bytes, request, timeoutMs) })
+		pump.pendingWrite = done.catch(function () { /* 失败也要让后续请求继续 */ })
+		return done
+	}
+	function sendLocked(bytes, request, timeoutMs) {
 		let sentP = null
 		const waiter = new Promise(function (resolve, reject) {
 			const w = {
@@ -581,39 +593,63 @@
 	function importFlow(file) {
 		const reader = new FileReader()
 		reader.onload = function () {
+			// 先全部解析成局部变量，全部成功才落到 draft——导入失败不能改掉编辑中的草稿
 			let flow = null
 			try { flow = JSON.parse(String(reader.result)) } catch (e) { flow = null }
 			if (!flow || !Array.isArray(flow.steps) || !flow.steps.length) {
 				setStatus('导入失败：不是有效的流程 JSON', 'err')
 				return
 			}
-			let defaults = null
-			try { defaults = T.normalizeDefaults(flow.defaults) } catch (e) { defaults = T.normalizeDefaults({}) }
-			draft.defaults = { timeoutMs: defaults.timeoutMs, retries: defaults.retries, onFailure: defaults.onFailure, restoreOriginals: defaults.restoreOriginals }
-			if (flow.kind === 'random') {
-				mode = 'random'
-				const r = flow.random || {}
-				draft.random = {
-					count: (flow.steps || []).length,
-					gapMs: r.gapMs != null ? r.gapMs : defaults.delayAfterMs,
-					timeoutMs: r.timeoutMs || defaults.timeoutMs,
-					seed: r.seed != null ? String(r.seed) : '',
-					verify: !!r.verify,
+			try {
+				let defaults = null
+				try { defaults = T.normalizeDefaults(flow.defaults) } catch (e) { defaults = T.normalizeDefaults({}) }
+				const nextDefaults = { timeoutMs: defaults.timeoutMs, retries: defaults.retries, onFailure: defaults.onFailure, restoreOriginals: defaults.restoreOriginals }
+				let nextMode = 'batch'
+				let nextBatchSteps = null
+				let nextBatchVerify = true
+				let nextRandom = null
+				let nextPlan = null
+				if (flow.kind === 'random') {
+					nextMode = 'random'
+					const r = flow.random || {}
+					nextRandom = {
+						count: (flow.steps || []).length,
+						gapMs: r.gapMs != null ? r.gapMs : defaults.delayAfterMs,
+						timeoutMs: r.timeoutMs || defaults.timeoutMs,
+						seed: r.seed != null ? String(r.seed) : '',
+					}
+					nextPlan = { seed: (flow.seed != null ? flow.seed : 0) >>> 0, steps: flow.steps.map(function (s, i) { return T.normalizeStep(s, i, defaults) }) }
+				} else {
+					// 批量编辑器只支持写步骤：read / verify / wait / send-raw 的语义在批量清单里无法表达，
+					// 静默降级成写会改变流程语义——明确拒绝，草稿保持原样
+					nextBatchSteps = flow.steps.map(function (s, i) {
+						const norm = T.normalizeStep(s, i, defaults)
+						if (norm.kind !== 'write') {
+							throw new Error('批量流程仅支持写步骤（第 ' + (i + 1) + ' 步是「' + norm.kind + '」），请用随机 / 命名流程保存这类步骤')
+						}
+						return { field: norm.field, value: norm.value, step: s.step != null ? String(s.step) : '0' }
+					})
+					nextBatchVerify = flow.steps[0].verify !== false
 				}
-				randomPlan = { seed: (flow.seed != null ? flow.seed : 0) >>> 0, steps: flow.steps.map(function (s, i) { return T.normalizeStep(s, i, defaults) }) }
-			} else {
-				mode = 'batch'
-				draft.batch.steps = flow.steps.map(function (s) {
-					return { field: s.field, value: s.value == null ? '' : String(s.value), step: s.step != null ? String(s.step) : '0' }
-				})
-				draft.batchVerify = flow.steps[0].verify !== false
+				draft.defaults = nextDefaults
+				if (flow.counter && flow.counter.value != null) current = Math.max(0, Number(flow.counter.value) || 0)
+				mode = nextMode
+				draft.mode = nextMode
+				if (nextMode === 'random') {
+					draft.random = nextRandom
+					randomPlan = nextPlan
+				} else {
+					draft.batch.steps = nextBatchSteps
+					draft.batchVerify = nextBatchVerify
+				}
+				saveState()
+				syncModeUi()
+				renderBatchList()
+				renderRandomList()
+				setStatus('已导入「' + (flow.name || '未命名') + '」', 'ok')
+			} catch (e) {
+				setStatus('导入失败：' + (e && e.message ? e.message : e), 'err')
 			}
-			if (flow.counter && flow.counter.value != null) current = Math.max(0, Number(flow.counter.value) || 0)
-			saveState()
-			syncModeUi()
-			renderBatchList()
-			renderRandomList()
-			setStatus('已导入「' + (flow.name || '未命名') + '」', 'ok')
 		}
 		reader.readAsText(file)
 	}
@@ -786,8 +822,17 @@
 		el.stop.disabled = false
 		setStatus('运行中…', 'run')
 		watchRx()
-		// 整轮钉扎主发口：期间切主发被拦，写与回读落在同一台设备
-		window.serialApi.pinSession(window.serialApi.getActiveSendSid())
+		pump.late = 0
+		// 整轮独占主发口（owner=flow）：与固件升级等其它事务互斥——运行期间对方入口被拒，反之亦然
+		try {
+			window.serialApi.pinSession(window.serialApi.getActiveSendSid(), 'flow')
+		} catch (e) {
+			setStatus('无法开始：' + (e && e.message ? e.message : e), 'err')
+			running = false
+			el.start.disabled = !isProtoSupported()
+			el.stop.disabled = true
+			return
+		}
 		try {
 			const io = buildIo()
 			const report = await T.run(flow, io)
@@ -817,10 +862,15 @@
 			logLine('fail', '异常：' + (e && e.message ? e.message : e))
 			setStatus('异常：' + (e && e.message ? e.message : e), 'err')
 		} finally {
+			// 等在飞请求（含写）收尾再释放事务：不让迟到写落到解锁之后
+			try { await (pump.pendingWrite || Promise.resolve()) } catch (e) { /* 写失败已在上游报过 */ }
 			window.serialApi.unpinSession()
 			running = false
 			el.start.disabled = !isProtoSupported()
 			el.stop.disabled = true
+			if (pump.late > 0) {
+				logLine('warn', '已丢弃迟到应答 ' + pump.late + ' 帧（超时请求的迟到响应不会计入任何步骤）')
+			}
 		}
 	}
 

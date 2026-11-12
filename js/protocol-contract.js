@@ -371,9 +371,10 @@
 			out.type = type
 			out.read = raw.read !== false
 			out.write = raw.write !== false
-			// random: false 标记「不进随机读写」的危险字段（密码 / 表号地址 / IP·APN / 通信参数 / 时钟 / 复位类），
-			// 随机生成器永远跳过；批量配置仍可手动选。缺省 true
-			out.random = raw.random !== false
+			// random 是随机读写的**显式许可**：只有 true 才进随机，缺省 / 任何非布尔值都不进（危险字段靠协议目录自己排除）；
+			// 批量配置不受影响。非布尔值直接拒绝注册，避免 'false' / 0 这类 truthy 误用
+			if (raw.random != null && typeof raw.random !== 'boolean') fail('字段 ' + key + ' 的 random 必须是布尔')
+			out.random = raw.random === true
 			if (raw.unit != null) out.unit = str(raw.unit, 16)
 			if (raw.group != null) out.group = str(raw.group, 60)
 			;['min', 'max', 'step'].forEach(function (k) {

@@ -157,11 +157,29 @@
 		return { axes: axes, droppedUnits: droppedUnits }
 	}
 
-	// 多条序列按时间戳并集对齐，缺的地方补 null(uPlot 会断开线段，不会画成 0)
+	// 多条序列按时间戳并集对齐，缺的地方补 null(uPlot 会断开线段，不会画成 0)；
+	// list 里允许 null（选中的字段还没有数据）：该字段保留全 null 列，与图例 / 轴保持对齐。
+	// 同一序列同一毫秒的多个点（同批收到的多帧）：显示 / 导出按「后到的覆盖先到的」聚合，
+	// 原始点都还在 store 里；不同序列的同毫秒点各自成列，不会互相顶掉。
 	function alignSeries(list) {
+		const reduced = list.map(function (s) {
+			if (!s || !s.t || !s.t.length) return null
+			const t = [s.t[0]]
+			const v = [s.v[0]]
+			for (let i = 1; i < s.t.length; i++) {
+				if (s.t[i] === t[t.length - 1]) {
+					v[v.length - 1] = s.v[i]
+					continue
+				}
+				t.push(s.t[i])
+				v.push(s.v[i])
+			}
+			return { t: t, v: v }
+		})
 		const seen = new Set()
 		const times = []
-		list.forEach(function (s) {
+		reduced.forEach(function (s) {
+			if (!s) return
 			for (let i = 0; i < s.t.length; i++) {
 				const t = s.t[i]
 				if (seen.has(t)) continue
@@ -170,8 +188,9 @@
 			}
 		})
 		times.sort(function (a, b) { return a - b })
-		const cols = list.map(function (s) {
+		const cols = reduced.map(function (s) {
 			const col = new Array(times.length).fill(null)
+			if (!s) return col
 			let i = 0
 			for (let n = 0; n < times.length; n++) {
 				const t = times[n]

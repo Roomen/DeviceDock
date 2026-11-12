@@ -297,7 +297,14 @@
 			return
 		}
 		window.serialApi.suppressParse = true
-		serialApi.pinSession(serialApi.getActiveSendSid())
+		try {
+			serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
+		} catch (e) {
+			window.serialApi.suppressParse = false
+			log('无法开始查询：' + (e.message || e), 'error')
+			emit({ type: 'device-version', ok: false, source: 'query', error: e.message || String(e) })
+			return
+		}
 		emit({ type: 'query-start' })
 		try {
 			const resp = await sendAndWait(PCP.buildQueryVersionRequest(), PCPMessageCode.QUERY_VERSION, 5000)
@@ -371,8 +378,17 @@
 		emit({ type: 'start', version: ver, chunkSize: parseInt(el.chunkSize.value) || 128, size: fw.auto ? fw.rawData.length : fw.firmwareData.length })
 		stopFlag = false
 		window.serialApi.suppressParse = true
-		// 升级事务钉扎主发口: 期间切主发口被拦, 下发与 RX 等待稳定在同一设备
-		serialApi.pinSession(serialApi.getActiveSendSid())
+		// 升级事务钉扎主发口(owner=firmware): 期间切主发口被拦, 下发与 RX 等待稳定在同一设备；
+		// 测试流程等其它事务持有时这里被拒，升级不会与在飞帧交错
+		try {
+			serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
+		} catch (e) {
+			window.serialApi.suppressParse = false
+			lastError = e.message || String(e)
+			log('无法开始升级：' + lastError, 'error')
+			emit({ type: 'end', ok: false, error: lastError })
+			return
+		}
 		el.start.disabled = true
 		el.stop.disabled = false
 		el.query.disabled = true

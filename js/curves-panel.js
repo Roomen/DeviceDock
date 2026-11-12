@@ -137,8 +137,11 @@
 		}
 	}
 
+	let chartItems = [] // buildChart 实际画的字段（单位分轴剔除后）；setData 必须与 series 一一对应
+
 	function chartData(items) {
-		const list = items.map(function (it) { return S.store.get(it.sid, it.key) }).filter(Boolean)
+		// 允许 null：还没数据的字段保留全 null 列，与 series / 图例对齐
+		const list = items.map(function (it) { return S.store.get(it.sid, it.key) })
 		const aligned = C.alignSeries(list)
 		// uPlot 的 time 轴按「秒」解释 x：序列内部存毫秒，画图时换算；读数 / 导出仍用毫秒
 		return { list: list, data: [aligned.t.map(function (ms) { return ms / 1000 })].concat(aligned.cols), aligned: aligned }
@@ -150,25 +153,33 @@
 		const h = el.plot.clientHeight
 		if (!window.uPlot || !w || !h) return null
 		destroyChart()
-		const grouped = C.groupAxes(items, function (it) { return it.unit })
+		// 有效单位：序列实际单位优先（metrics 点可覆盖字段目录的单位，如 0.01V → V）
+		const unitOf = function (it) {
+			const s = S.store.get(it.sid, it.key)
+			return ((s && s.unit ? s.unit : it.unit) || '')
+		}
+		const grouped = C.groupAxes(items, unitOf)
 		const axisOf = new Map()
 		grouped.axes.forEach(function (ax, idx) {
 			ax.items.forEach(function (it) { axisOf.set(it.sid + '|' + it.key, idx) })
 		})
+		// 唯一的绘图字段列表：超过两根单位被丢的字段在这里剔除，series / 数据列 / 图例共用同一份，
+		// 不会出现「图例有、数据列没有」的错位
+		const drawable = items.filter(function (it) { return axisOf.has(it.sid + '|' + it.key) })
 		const laneIndex = {}
 		const series = [{}]
 		seriesMeta.length = 0
-		items.forEach(function (it) {
-			if (!axisOf.has(it.sid + '|' + it.key)) return
+		drawable.forEach(function (it) {
 			// 同一路选了几个字段：第一个实线、后面依次换虚线，色相仍只代表通道；图例同步这套线型
 			laneIndex[it.sid] = (laneIndex[it.sid] || 0)
 			const nth = laneIndex[it.sid]++
 			const dash = nth === 0 ? [] : nth === 1 ? [6, 4] : [2, 3]
 			const axis = axisOf.get(it.sid + '|' + it.key)
+			const unit = unitOf(it)
 			const meta = {
-				sid: it.sid, key: it.key, name: it.name, unit: it.unit,
+				sid: it.sid, key: it.key, name: it.name, unit: unit,
 				axis: axis, nth: nth, color: laneColor(it.sid, t),
-				label: (S.lanes().length > 1 ? S.laneName(it.sid) + ' ' : '') + it.name + (it.unit ? ' (' + it.unit + ')' : ''),
+				label: (S.lanes().length > 1 ? S.laneName(it.sid) + ' ' : '') + it.name + (unit ? ' (' + unit + ')' : ''),
 			}
 			seriesMeta.push(meta)
 			series.push({
@@ -178,6 +189,7 @@
 				dash: dash,
 				scale: axis === 0 ? 'y' : 'y2',
 				points: { show: false },
+				spanGaps: true,
 				value: function (u, v) { return v == null ? '—' : C.formatNumber(v) },
 			})
 		})
@@ -236,18 +248,23 @@
 				setScale: [function () { syncZoomButton() }],
 			},
 		}
-		const built = chartData(items)
+		chartItems = drawable
+		const built = chartData(chartItems)
 		chart = new window.uPlot(opts, built.data, el.plot)
-		chartSig = sigOf(items)
+		chartSig = sigOf(drawable)
 		renderReadout(chart, null)
 		renderLegend(grouped)
 		syncZoomButton()
 		return chart
 	}
 
+	// 重建签名带上序列实际单位：metrics 点带来的单位覆盖（0.01V → V）也要触发重绘
 	function sigOf(items) {
 		const t = tokens()
-		return items.map(function (it) { return it.sid + '|' + it.key }).join(',') + '#' +
+		return items.map(function (it) {
+			const s = S.store.get(it.sid, it.key)
+			return it.sid + '|' + it.key + '|' + (s && s.unit ? s.unit : '')
+		}).join(',') + '#' +
 			t.a + t.b + t.s + t.grid + t.mono
 	}
 
@@ -328,7 +345,7 @@
 		if (!chart || chartSig !== sig || chart.width !== el.plot.clientWidth || chart.height !== el.plot.clientHeight) {
 			if (!buildChart(drawable)) return
 		}
-		const built = chartData(drawable)
+		const built = chartData(chartItems)
 		chart.setData(built.data)
 	}
 

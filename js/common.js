@@ -112,6 +112,7 @@
 	bindSeg('serial-dual-view-seg', 'serial-dual-view-', (c) => window.setDualViewChoice(c))
 	// 事务钉扎: 升级/批量配置等事务进行中锁定主发口, 防止中途切换把后续帧发到另一台设备
 	let pinSid = null
+	let pinOwner = ''
 	let pinDepth = 0
 	// 日志全局单调序号: 同毫秒到达序 (ts, seq) 全序排序用
 	let logSeq = 0
@@ -5608,8 +5609,10 @@
 		getActiveSendSid() {
 			return SerialHub.activeSendSid()
 		},
-		// 事务钉扎: pin 期间 activeSendSid()/writeData/isOpen/RX 转发均锁定到钉扎会话
-		pinSession(sid) {
+		// 事务钉扎: pin 期间 activeSendSid()/writeData/isOpen/RX 转发均锁定到钉扎会话。
+		// owner（可选）让钉扎成为带归属的独占事务：测试流程 / 固件升级各自持自己的 pin，
+		// 他人再钉会被拒绝（抛错），同一事务内部的嵌套钉扎（如固件内部的 sekTx 请求）继承归属只加深度
+		pinSession(sid, owner) {
 			if (this.updatePreparing) throw new Error('正在安装应用更新，暂不能开始事务')
 			sid = sid || SerialHub.activeSendSid()
 			if (sid !== 'A' && sid !== 'B' && sid !== 'S') {
@@ -5617,15 +5620,29 @@
 				return
 			}
 			if (pinSid && pinSid !== sid) {
+				if (owner) throw new Error('另一事务正在串口 ' + pinSid + ' 上进行（' + (pinOwner || '其他事务') + '），请先停止')
 				addLogErr('已有事务钉扎会话 ' + pinSid + '，忽略钉扎 ' + sid)
 				return
 			}
-			pinSid = sid
+			if (pinSid && pinOwner && owner && pinOwner !== owner) {
+				throw new Error('另一事务（' + pinOwner + '）正在进行，请先停止后再试')
+			}
+			if (pinSid && !pinOwner && owner) {
+				// 无归属的旧式钉扎在带归属的事务进行中不允许：它会与在飞帧交错
+				throw new Error('另一事务正在进行，请先停止后再试')
+			}
+			if (!pinSid) {
+				pinSid = sid
+				pinOwner = owner || ''
+			}
 			pinDepth++
 		},
 		unpinSession() {
 			if (pinDepth > 0) pinDepth--
-			if (pinDepth === 0) pinSid = null
+			if (pinDepth === 0) {
+				pinSid = null
+				pinOwner = ''
+			}
 		},
 		isPinned() {
 			return pinSid != null

@@ -98,7 +98,7 @@ const C = require('../js/curves-core.js')
 	assert.equal(none.axes.length, 0)
 }
 
-// ---- 时间对齐：并集时间轴，缺值补 null ----
+// ---- 时间对齐：并集时间轴，缺值补 null；null 序列保留空列；同毫秒点按「后到覆盖」聚合 ----
 {
 	const a = { t: [10, 30, 50], v: [1, 3, 5] }
 	const b = { t: [20, 30], v: [2, 3] }
@@ -106,6 +106,23 @@ const C = require('../js/curves-core.js')
 	assert.deepEqual(r.t, [10, 20, 30, 50])
 	assert.deepEqual(r.cols[0], [1, null, 3, 5])
 	assert.deepEqual(r.cols[1], [null, 2, 3, null])
+	// 还没有数据的字段（store.get 为 null）：保留全 null 列，与图例 / 轴对齐
+	const withNull = C.alignSeries([a, null, b])
+	assert.equal(withNull.cols.length, 3)
+	assert.deepEqual(withNull.cols[1], [null, null, null, null])
+	assert.deepEqual(withNull.cols[0], r.cols[0])
+	// 同一序列同一毫秒的多个点：显示 / 导出按「后到的覆盖先到的」聚合（store 里的原始点不动）
+	const dup = C.alignSeries([{ t: [100, 100, 100, 200], v: [1, 2, 3, 4] }])
+	assert.deepEqual(dup.t, [100, 200])
+	assert.deepEqual(dup.cols[0], [3, 4], '同毫秒取最后写入的值')
+	// 不同序列的同毫秒点各自成列，不互相顶掉
+	const cross = C.alignSeries([
+		{ t: [100, 100], v: [1, 2] },
+		{ t: [100], v: [9] },
+	])
+	assert.deepEqual(cross.t, [100])
+	assert.deepEqual(cross.cols[0], [2], '同序列取最后一个')
+	assert.deepEqual(cross.cols[1], [9], '另一序列的同毫秒点保留')
 }
 
 // ---- CSV：表头（路标 + 单位）、缺值空串、逗号转义（时间用本地构造的日期，不依赖时区）----

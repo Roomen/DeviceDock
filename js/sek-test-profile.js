@@ -248,8 +248,10 @@
 	// ---------- 契约钩子 ----------
 	// buildRead / buildWrite / buildQuery 返回 { bytes, request }：bytes 是整帧下行字节，request 是给
 	// matchResponse 的不透明凭证。宿主只负责发 bytes、等应答、拿 request 去匹配，不认识任何帧格式。
+	// 凭证里带帧序号：超时请求的迟到应答（序号对不上）不会成为下一条请求的结果或恢复原值
 	function frameFor(buildOpts, request) {
 		const built = tx0.buildDown(buildOpts)
+		request.seq = built.seq
 		return { bytes: built.frame, request: request }
 	}
 	function buildRead(field) {
@@ -292,11 +294,16 @@
 			{ op: 'query', queryId: query.queryId, expectTag: query.expectTag, expectFunc: 0x83 }
 		)
 	}
-	// 返回 false 表示「不是这条请求的应答，继续等」；true 表示成功；{ ok:false } 表示失败应答
+	// 返回 false 表示「不是这条请求的应答，继续等」；true 表示成功；{ ok:false } 表示失败应答。
+	// 帧序号必须与请求一致：设备应答会带回请求的序号，超时请求的迟到应答在这里被隔离
 	function matchResponse(frame, request) {
 		if (!frame || frame.dir !== 'up') return false
 		const req = request || {}
 		if (req.expectFunc != null && tx0.funcValue(frame) !== req.expectFunc) return false
+		if (req.seq != null) {
+			const fs = tx0.frameSeq(frame)
+			if (fs != null && fs !== (req.seq & 0xffff)) return false
+		}
 		if (req.op === 'query') {
 			if (req.expectTag != null && !tx0.hasTag(frame, req.expectTag)) {
 				return { ok: false, message: '响应无 Tag' + req.expectTag }

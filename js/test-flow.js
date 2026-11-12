@@ -166,7 +166,8 @@
 		return null
 	}
 
-	// 回读比对：bcd 比数字串(去前导零)，ascii 比到第一个 0x00 为止，数值按类型解码后比数值
+	// 回读比对：bcd 比数字串(去前导零)，ascii 比到第一个 0x00 为止，数值按类型解码后比数值。
+	// 每种类型先验字节长度：不够就是无效编码（返回 null），不能拿残缺字节凑出一个错值
 	function decodeFieldBytes(bytes, field) {
 		if (!bytes || !bytes.length || !field) return null
 		const arr = Array.prototype.slice.call(bytes)
@@ -185,6 +186,14 @@
 				s += String.fromCharCode(arr[i])
 			}
 			return s
+		}
+		const NEED = { uint32le: 4, int32le: 4, float32le: 4, float64le: 8, uint16le: 2, int16le: 2, uint8: 1, int8: 1, enum: 1, bool: 1 }
+		const need = NEED[field.type]
+		if (need != null && arr.length < need) return null
+		if (field.type === 'float32le' || field.type === 'float64le') {
+			const dv = new DataView(new ArrayBuffer(arr.length))
+			for (let i = 0; i < arr.length; i++) dv.setUint8(i, arr[i] & 0xff)
+			return field.type === 'float32le' ? dv.getFloat32(0, true) : dv.getFloat64(0, true)
 		}
 		switch (field.type) {
 			case 'uint32le': return (arr[0] | (arr[1] << 8) | (arr[2] << 16) | (arr[3] << 24)) >>> 0
@@ -240,6 +249,12 @@
 						at.message = '查询用例不存在：' + step.query
 						errors.push(at)
 					}
+					return
+				}
+				// 期望 HEX（send-raw 的应答子串过滤）也要是合法字节，运行时才能转成凭证
+				if (step.expect && !parseHex(step.expect)) {
+					at.message = '期望 HEX 不合法'
+					errors.push(at)
 					return
 				}
 				if (!parseHex(step.raw)) {
@@ -324,9 +339,9 @@
 		const o = opts || {}
 		const rng = mulberry32(o.seed >>> 0)
 		const count = toInt(o.count, 40, 1, MAX_STEPS)
-		// random: false 的危险字段（密码 / 表号地址 / IP·APN / 通信参数 / 时钟 / 复位类）读写都不进随机，
-		// 不受「包括无法回读的字段」开关影响——面板在传目录前也会过滤，这里是引擎层的兜底
-		const fields = (o.fields || []).filter(function (f) { return f && f.key && f.random !== false })
+		// 只有显式 random:true 的字段才进随机（缺省与任何非布尔值都不进）：危险字段靠协议目录自己排除，
+		// 引擎这里再做一层白名单兜底；「包括无法回读的字段」开关只影响可写性过滤，管不到这一层
+		const fields = (o.fields || []).filter(function (f) { return f && f.key && f.random === true })
 		const readable = fields.filter(function (f) { return f.read !== false })
 		const writable = fields.filter(function (f) { return f.write !== false })
 		const queries = o.queries || []
@@ -467,7 +482,17 @@
 			return result
 		}
 
+		// 可被停止打断的延时：停止后不再空等（延时最长 60s，不能让「停止」卡在延时上）
+		async function pause(ms) {
+			let left = ms
+			while (left > 0 && !io.shouldStop()) {
+				const slice = Math.min(100, left)
+				await io.sleep(slice)
+				left -= slice
+			}
+		}
 		async function keepAlive() {
+			if (io.shouldStop()) return
 			const sess = io.session
 			if (!sess || typeof sess.keepalive !== 'function') return
 			const idleMs = sess.idleMs || 20000
@@ -490,16 +515,14 @@
 			return { bytes: bytes, value: decodeFieldBytes(bytes, field), res: res }
 		}
 
+		// 首次写前必须读到原值：读不到（超时 / 设备未返回 / 已停止）就由调用方放弃这一步——
+		// 否则恢复阶段要么跳过（无从恢复）、要么按错误的原值把设备改得更乱
+		async function readOriginal(field, timeoutMs) {
+			const cur = await readOnce(field, timeoutMs)
+			originals.set(field.key, { field: field, value: cur.value })
+			return cur.value
+		}
 		async function writeOnce(field, value, timeoutMs, verify) {
-			// 首次写前记下原值，结束时能恢复；读不到原值就跳过恢复（旧行为：报「可能不支持」）
-			if (!originals.has(field.key)) {
-				try {
-					const cur = await readOnce(field, timeoutMs)
-					originals.set(field.key, { field: field, value: cur.value })
-				} catch (e) {
-					originals.set(field.key, { field: field, value: null })
-				}
-			}
 			const req = io.buildWrite(field, value)
 			const res = await io.send(req.bytes, req.request, timeoutMs)
 			lastCommAt = io.now()
@@ -514,7 +537,7 @@
 			const patch = { requestHex: '', responseHex: '' }
 			try {
 				if (step.kind === 'wait') {
-					await io.sleep(step.delayAfterMs)
+					await pause(step.delayAfterMs)
 					return record(step, index, patch)
 				}
 				if (step.kind === 'send-raw') {
@@ -532,7 +555,9 @@
 					}
 					const bytes = parseHex(step.raw)
 					if (!bytes) throw new Error('原始发送的 HEX 不合法')
-					const request = { op: 'raw', expect: step.expect || '' }
+					const expectBytes = step.expect ? parseHex(step.expect) : null
+					if (step.expect && !expectBytes) throw Object.assign(new Error('期望 HEX 不合法'), { unsupported: true })
+					const request = { op: 'raw', expect: step.expect || '', expectBytes: expectBytes }
 					const res = await io.send(bytes, request, step.timeoutMs)
 					lastCommAt = io.now()
 					patch.requestHex = hexOf(bytes)
@@ -549,30 +574,28 @@
 					return record(step, index, patch)
 				}
 				if (step.kind === 'write') {
-					let value = substituteVars(step.value, vars)
-					if (step.randomValue) {
-						// 先拿到当前值，再取一个不同的随机值：只写同一个值看不出设备真的接受了
-						let cur = lastWritten.has(field.key) ? lastWritten.get(field.key) : null
-						if (cur == null) {
-							if (!originals.has(field.key)) {
-								try {
-									const got = await readOnce(field, step.timeoutMs)
-									originals.set(field.key, { field: field, value: got.value })
-									cur = got.value
-								} catch (e) {
-									throw Object.assign(new Error(field.name + ' 读不到原值，无法生成随机值'), { unsupported: true })
-								}
-							} else {
-								cur = originals.get(field.key).value
-							}
-						}
-						const v = newValueFor(rng, field, cur)
-						if (v == null) {
-							return record(step, index, { status: STATUS.skipped, reason: '无法生成与当前值不同的随机值' })
-						}
-						value = String(v)
+				// 原值必须先读到：读不到（超时 / 设备未返回 / 已停止）这一步就不写，
+				// 并把原因记进结果——不写没法校验，也没法在恢复阶段还原
+				if (!originals.has(field.key)) {
+					try {
+						await readOriginal(field, step.timeoutMs)
+					} catch (e) {
+						const why = e && e.timeout ? '读原值超时' : e && e.unsupported ? '设备未返回原值' : (e && e.message) || '读原值失败'
+						const status = e && e.timeout ? STATUS.timeout : e && e.unsupported ? STATUS.unsupported : STATUS.fail
+						return record(step, index, { status: status, reason: why + '，未写入' })
 					}
-					const out = await writeOnce(field, value, step.timeoutMs, step.verify)
+				}
+				let value = substituteVars(step.value, vars)
+				if (step.randomValue) {
+					// 先拿到当前值，再取一个不同的随机值：只写同一个值看不出设备真的接受了
+					const cur = lastWritten.has(field.key) ? lastWritten.get(field.key) : originals.get(field.key).value
+					const v = newValueFor(rng, field, cur)
+					if (v == null) {
+						return record(step, index, { status: STATUS.skipped, reason: '无法生成与当前值不同的随机值' })
+					}
+					value = String(v)
+				}
+				const out = await writeOnce(field, value, step.timeoutMs, step.verify)
 					patch.responseHex = out.res && out.res.raw ? hexOf(out.res.raw) : ''
 					patch.written = value
 					if (step.verify && out.read) {
@@ -630,6 +653,8 @@
 			let attempt = 0
 			let result = null
 			for (;;) {
+				// 停止后不再起新尝试：直接记「用户停止」并跳到恢复阶段
+				if (io.shouldStop()) { stopped = true; io.log('warn', '用户停止'); break }
 				try {
 					await keepAlive()
 				} catch (e) {
@@ -640,6 +665,8 @@
 				result = await runStep(step, i)
 				if (result.status === STATUS.success || result.status === STATUS.skipped || result.status === STATUS.unsupported) break
 				if (attempt >= step.retries) break
+				// 停止后不再重试：attempts 只统计真实发生过的尝试
+				if (io.shouldStop()) { stopped = true; io.log('warn', '用户停止'); break }
 				attempt++
 				io.log('warn', '第 ' + (i + 1) + ' 步失败，重试 ' + attempt + '/' + step.retries)
 			}
@@ -653,7 +680,7 @@
 					break
 				}
 			}
-			if (step.kind !== 'wait' && step.delayAfterMs > 0) await io.sleep(step.delayAfterMs)
+			if (step.kind !== 'wait' && step.delayAfterMs > 0) await pause(step.delayAfterMs)
 		}
 
 		// 恢复原值：只写回真的写过、且读到了原值的字段；停止后仍尝试恢复（串口还开着就恢复）
