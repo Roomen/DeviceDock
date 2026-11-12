@@ -125,6 +125,28 @@ const C = require('../js/curves-core.js')
 	assert.deepEqual(cross.cols[1], [9], '另一序列的同毫秒点保留')
 }
 
+// ---- pickChartSeries：分轴 + 唯一绘图列表（签名与绘图共用，三种单位也只出一份稳定集合）----
+{
+	const items = [
+		{ sid: 'S', key: 'u', unit: 'V' },
+		{ sid: 'S', key: 'u2', unit: 'V' },
+		{ sid: 'S', key: 't', unit: '℃' },
+		{ sid: 'S', key: 'p', unit: 'kPa' },
+	]
+	const unitOf = function (it) { return it.unit }
+	const picked = C.pickChartSeries(items, unitOf)
+	assert.equal(picked.grouped.axes.length, 2, '最多两根单位轴')
+	assert.deepEqual(picked.drawable.map(function (i) { return i.key }), ['u', 'u2', 't'], '第三种单位整组剔除')
+	// 同一份输入重复计算结果稳定：签名与绘图各调一次也不会互相「翻新」
+	const again = C.pickChartSeries(items, unitOf)
+	assert.deepEqual(again.drawable.map(function (i) { return i.key }), picked.drawable.map(function (i) { return i.key }))
+	assert.equal(again.grouped.axes.length, picked.grouped.axes.length)
+	// 单位变化（点级覆盖）会改变 drawable / 轴，签名因此重建
+	const moved = C.pickChartSeries(items, function (it) { return it.key === 'p' ? 'V' : it.unit })
+	assert.deepEqual(moved.drawable.map(function (i) { return i.key }), ['u', 'u2', 't', 'p'], 'p 并入 V 轴后回到绘图列表')
+	assert.equal(moved.grouped.axes.length, 2)
+}
+
 // ---- CSV：表头（路标 + 单位）、缺值空串、逗号转义（时间用本地构造的日期，不依赖时区）----
 {
 	const t0 = new Date(2026, 10, 12, 1, 0, 1).getTime()

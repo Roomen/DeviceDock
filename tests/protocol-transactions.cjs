@@ -20,7 +20,7 @@ function makeWorld() {
 		serialApi: {
 			onReceive(cb) { receivers.push(cb) },
 			isOpen() { return true },
-			pinSession() { pins++ },
+			pinSession() { pins++; return 'txn-stub' },
 			unpinSession() { pins-- },
 			getActiveSendSid() { return 'S' },
 			writeData(bytes) { writes++; return writer(bytes) },

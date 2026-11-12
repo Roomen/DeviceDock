@@ -83,6 +83,7 @@
 	let current = 0 // 产线计数：下一台起始索引（{n} 与 bcd 步进都用它）
 	let randomPlan = null // 随机模式生成的计划（{ seed, steps }）
 	let running = false
+	let flowTxToken = null
 	let stopFlag = false
 
 	// ---------- 状态持久化 ----------
@@ -138,7 +139,7 @@
 
 	// ---------- 串口 io：写原始字节 + 按当前协议等应答 ----------
 	// 只在主发路（事务钉扎）上跑：send 前由 runAll 钉扎，RX 也只订阅主发语义（onReceive 跟随钉扎口）
-	const pump = { buf: [], waiters: [], pendingWrite: null, late: 0 }
+	const pump = { buf: [], waiters: [], writeTask: null, writeUnclosed: false, late: 0 }
 	let unsubscribeRx = null
 
 	function parseOpts() {
@@ -230,16 +231,43 @@
 		}
 		return false
 	}
+	// 物理写收尾上限：超过就按「写入未确认收尾」处理（钉扎保持为故障占用，可手动释放），不能永久卡住
+	const WRITE_SETTLE_CAP_MS = 3000
+	// 等 in-flight 物理写收尾（有上限）：true=已收尾，false=超时未确认（pump.writeUnclosed 置位）
+	function settleWriteTask() {
+		if (!pump.writeTask) return Promise.resolve(true)
+		const task = pump.writeTask
+		pump.writeTask = null
+		return new Promise(function (resolve) {
+			let settled = false
+			const cap = setTimeout(function () {
+				if (settled) return
+				settled = true
+				pump.writeUnclosed = true
+				resolve(false)
+			}, WRITE_SETTLE_CAP_MS)
+			const onDone = function () {
+				if (settled) return
+				settled = true
+				clearTimeout(cap)
+				resolve(true)
+			}
+			task.then(onDone, onDone)
+		})
+	}
 	function send(bytes, request, timeoutMs) {
-		// 请求完全串行：上一笔请求（含在飞写）未收尾前，下一笔不开始——
-		// 超时 / 取消后引擎可能立刻重试或恢复，写与会答交错会把迟到应答配给新请求
-		const prev = pump.pendingWrite || Promise.resolve()
-		const done = prev.then(function () { return sendLocked(bytes, request, timeoutMs) })
-		pump.pendingWrite = done.catch(function () { /* 失败也要让后续请求继续 */ })
-		return done
+		// 物理写与应答等待分开管理：每笔发送前先等上一笔物理写收尾（有上限），
+		// 超时 / 取消只取消应答等待，物理写单独记录、由重试 / 恢复 / 收尾统一等待
+		return settleWriteTask().then(function (settled) {
+			if (!settled) {
+				const e = new Error('写入未确认收尾')
+				e.unclosed = true
+				throw e
+			}
+			return sendLocked(bytes, request, timeoutMs)
+		})
 	}
 	function sendLocked(bytes, request, timeoutMs) {
-		let sentP = null
 		const waiter = new Promise(function (resolve, reject) {
 			const w = {
 				request: request,
@@ -257,7 +285,7 @@
 			if (!pump.waiters.length) pump.buf = []
 			pump.waiters.push(w)
 			try {
-				sentP = Promise.resolve(window.serialApi.writeRaw(bytes))
+				pump.writeTask = Promise.resolve(window.serialApi.writeRaw(bytes, { token: flowTxToken }))
 			} catch (e) {
 				clearTimeout(w.timer)
 				const idx = pump.waiters.indexOf(w)
@@ -265,7 +293,8 @@
 				reject(e)
 				return
 			}
-			sentP.catch(function (err) {
+			pump.writeTask.catch(function (err) {
+				// 写失败 = 不会有应答：撤掉这笔等待（物理写任务已单独记录，收尾在 settleWriteTask）
 				clearTimeout(w.timer)
 				const idx = pump.waiters.indexOf(w)
 				if (idx !== -1) pump.waiters.splice(idx, 1)
@@ -273,9 +302,7 @@
 			})
 			pumpFrames()
 		})
-		// 写完成也要等：writeData 每次新取 writer，上一次的锁还没释放时下一次 getWriter 会失败，
-		// 而 writeRaw 自己吞掉写错误只打日志——不 await 的话，紧跟的下一步写会静默丢失、本步等到超时
-		return Promise.all([waiter, sentP || Promise.resolve()]).then(function (results) { return results[0] })
+		return waiter
 	}
 	function cancelWaiters(reason) {
 		const msg = reason || '已停止'
@@ -621,15 +648,33 @@
 					nextPlan = { seed: (flow.seed != null ? flow.seed : 0) >>> 0, steps: flow.steps.map(function (s, i) { return T.normalizeStep(s, i, defaults) }) }
 				} else {
 					// 批量编辑器只支持写步骤：read / verify / wait / send-raw 的语义在批量清单里无法表达，
-					// 静默降级成写会改变流程语义——明确拒绝，草稿保持原样
+					// 静默降级成写会改变流程语义——明确拒绝，草稿保持原样。
+					// 每步的延时 / 超时 / 重试 / 随机取值编辑器也无法逐行表达：与流程默认不一致就拒绝导入
 					nextBatchSteps = flow.steps.map(function (s, i) {
 						const norm = T.normalizeStep(s, i, defaults)
 						if (norm.kind !== 'write') {
 							throw new Error('批量流程仅支持写步骤（第 ' + (i + 1) + ' 步是「' + norm.kind + '」），请用随机 / 命名流程保存这类步骤')
 						}
+						if (norm.delayAfterMs !== defaults.delayAfterMs) {
+							throw new Error('第 ' + (i + 1) + ' 步的延时为自定义值（' + norm.delayAfterMs + 'ms），批量清单只有全局间隔，无法表达')
+						}
+						if (norm.timeoutMs !== defaults.timeoutMs) {
+							throw new Error('第 ' + (i + 1) + ' 步的超时为自定义值（' + norm.timeoutMs + 'ms），批量清单只有全局超时，无法表达')
+						}
+						if (norm.retries !== defaults.retries) {
+							throw new Error('第 ' + (i + 1) + ' 步的重试为自定义值（' + norm.retries + '），批量清单只有全局重试，无法表达')
+						}
+						if (norm.randomValue) {
+							throw new Error('第 ' + (i + 1) + ' 步是随机取值步骤，批量清单无法表达')
+						}
 						return { field: norm.field, value: norm.value, step: s.step != null ? String(s.step) : '0' }
 					})
-					nextBatchVerify = flow.steps[0].verify !== false
+					// 写后回读是全局开关：各步不一致时无法用单个开关表达，拒绝导入
+					const verif = nextBatchSteps.map(function (_, i) { return T.normalizeStep(flow.steps[i], i, defaults).verify })
+					if (verif.some(function (v) { return v !== verif[0] })) {
+						throw new Error('各步骤的「写后回读」不一致，批量清单只有一个全局开关，无法表达')
+					}
+					nextBatchVerify = verif[0]
 				}
 				draft.defaults = nextDefaults
 				if (flow.counter && flow.counter.value != null) current = Math.max(0, Number(flow.counter.value) || 0)
@@ -712,6 +757,7 @@
 			buildQuery: function (query) { return typeof proto.buildQuery === 'function' ? proto.buildQuery(query) : null },
 			readField: function (frame, field) { return typeof proto.readField === 'function' ? proto.readField(frame, field) : null },
 			send: send,
+			settleWrites: function () { return settleWriteTask() },
 			log: function (level, msg) { logLine(level, msg) },
 			onStep: function () { /* 结果在报告里统一渲染 */ },
 		}
@@ -825,7 +871,8 @@
 		pump.late = 0
 		// 整轮独占主发口（owner=flow）：与固件升级等其它事务互斥——运行期间对方入口被拒，反之亦然
 		try {
-			window.serialApi.pinSession(window.serialApi.getActiveSendSid(), 'flow')
+			flowTxToken = window.serialApi.pinSession(window.serialApi.getActiveSendSid(), 'flow')
+			if (!flowTxToken) throw new Error('另一事务正在进行，暂不能开始流程')
 		} catch (e) {
 			setStatus('无法开始：' + (e && e.message ? e.message : e), 'err')
 			running = false
@@ -862,12 +909,21 @@
 			logLine('fail', '异常：' + (e && e.message ? e.message : e))
 			setStatus('异常：' + (e && e.message ? e.message : e), 'err')
 		} finally {
-			// 等在飞请求（含写）收尾再释放事务：不让迟到写落到解锁之后
-			try { await (pump.pendingWrite || Promise.resolve()) } catch (e) { /* 写失败已在上游报过 */ }
-			window.serialApi.unpinSession()
-			running = false
-			el.start.disabled = !isProtoSupported()
-			el.stop.disabled = true
+			// 等在飞物理写收尾（有上限）：未确认就保持故障占用（钉扎不解，状态栏 / 面板可见，停止键=手动释放）
+			const unclosed = pump.writeUnclosed
+			try { await settleWriteTask() } catch (e) { /* */ }
+			if (unclosed || pump.writeUnclosed) {
+				setStatus('写入未确认收尾：串口保持占用，点「停止」手动释放', 'err')
+				running = true
+				el.start.disabled = true
+				el.stop.disabled = false
+			} else {
+				window.serialApi.unpinSession(flowTxToken)
+				flowTxToken = null
+				running = false
+				el.start.disabled = !isProtoSupported()
+				el.stop.disabled = true
+			}
 			if (pump.late > 0) {
 				logLine('warn', '已丢弃迟到应答 ' + pump.late + ' 帧（超时请求的迟到响应不会计入任何步骤）')
 			}
@@ -875,6 +931,17 @@
 	}
 
 	function stopAll() {
+		if (pump.writeUnclosed) {
+			// 故障占用的手动释放：清掉钉扎与归属，恢复面板到可用状态
+			try { window.serialApi.forceReleaseTransaction() } catch (e) { /* */ }
+			pump.writeUnclosed = false
+			flowTxToken = null
+			setStatus('事务占用已手动释放', 'ok')
+			running = false
+			el.start.disabled = !isProtoSupported()
+			el.stop.disabled = true
+			return
+		}
 		stopFlag = true
 		setStatus('正在停止…', 'warn')
 		cancelWaiters('已停止')

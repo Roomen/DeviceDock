@@ -522,6 +522,37 @@ async function runFlow(flow, io) {
 		assert.ok(errors.some(function (e) { return /期望 HEX/.test(e.message) }), '非法期望 HEX 被校验拦下')
 	}
 
+	// 写入未确认收尾：settleWrites 超时 → fatal、跳过恢复、流程在上限内结束（不悬挂）
+	{
+		const device = makeDevice({ u8: 1 })
+		let settleCalls = 0
+		const io = makeIo({ device: device })
+		io.settleWrites = function () { settleCalls++; return Promise.resolve(false) }
+		const flow = T.normalizeFlow({ defaults: { restoreOriginals: true, delayAfterMs: 0 }, steps: [{ kind: 'write', field: 'u8', value: '7' }] })
+		const report = await runFlow(flow, io)
+		assert.equal(report.writeUnclosed, true, '写入未确认收尾置位')
+		assert.equal(report.fatal, '写入未确认收尾')
+		assert.equal(settleCalls, 1, '恢复前只做一次收尾等待（跳过恢复）')
+	}
+
+	// 发送入口报「写入未确认收尾」：步骤失败并终止流程
+	{
+		let n = 0
+		const io = makeIo({ device: makeDevice({ u8: 1 }) })
+		const rawSend = io.send
+		io.send = function (bytes, request, timeoutMs) {
+			n++
+			if (n === 2) { const e = new Error('写入未确认收尾'); e.unclosed = true; return Promise.reject(e) }
+			return rawSend(bytes, request, timeoutMs)
+		}
+		const flow = T.normalizeFlow({ defaults: { restoreOriginals: false, delayAfterMs: 0 }, steps: [{ kind: 'read', field: 'u8' }, { kind: 'read', field: 'u8' }] })
+		const report = await runFlow(flow, io)
+		assert.equal(report.results[1].status, 'fail')
+		assert.equal(report.results[1].unclosed, true)
+		assert.equal(report.fatal, '写入未确认收尾')
+		assert.equal(report.results.length, 2, 'unclosed 后不再继续')
+	}
+
 	console.log('test-flow: ok')
 })().catch(function (e) {
 	console.error(e)

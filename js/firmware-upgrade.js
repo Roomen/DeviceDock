@@ -24,6 +24,7 @@
 	let fw = null                 // 解析后的固件信息
 	let fwFileBuffer = null       // 固件 ArrayBuffer
 	let running = false
+	let fwTxToken = null
 	let stopFlag = false
 	let recvBuffer = []
 	let recvOffset = 0
@@ -298,7 +299,7 @@
 		}
 		window.serialApi.suppressParse = true
 		try {
-			serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
+			fwTxToken = serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
 		} catch (e) {
 			window.serialApi.suppressParse = false
 			log('无法开始查询：' + (e.message || e), 'error')
@@ -321,7 +322,8 @@
 			log('查询版本超时: ' + e.message, 'error')
 			emit({ type: 'device-version', ok: false, source: 'query', error: '超时' })
 		} finally {
-			serialApi.unpinSession()
+			serialApi.unpinSession(fwTxToken)
+			fwTxToken = null
 			window.serialApi.suppressParse = false
 		}
 	})
@@ -372,23 +374,21 @@
 			log('版本号超过 16 字节', 'error')
 			return
 		}
+		stopFlag = false
+		window.serialApi.suppressParse = true
+		// 升级事务钉扎主发口(owner=firmware): 期间切主发口被拦, 下发与 RX 等待稳定在同一设备；
+		// 测试流程等其它事务持有时这里被拒——先拿锁再发布启动状态，抢锁失败不走启动清理
+		try {
+			fwTxToken = serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
+		} catch (e) {
+			window.serialApi.suppressParse = false
+			log('无法开始升级：' + (e.message || e), 'error')
+			return
+		}
 		running = true
 		lastError = ''
 		outcomeOk = false
 		emit({ type: 'start', version: ver, chunkSize: parseInt(el.chunkSize.value) || 128, size: fw.auto ? fw.rawData.length : fw.firmwareData.length })
-		stopFlag = false
-		window.serialApi.suppressParse = true
-		// 升级事务钉扎主发口(owner=firmware): 期间切主发口被拦, 下发与 RX 等待稳定在同一设备；
-		// 测试流程等其它事务持有时这里被拒，升级不会与在飞帧交错
-		try {
-			serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
-		} catch (e) {
-			window.serialApi.suppressParse = false
-			lastError = e.message || String(e)
-			log('无法开始升级：' + lastError, 'error')
-			emit({ type: 'end', ok: false, error: lastError })
-			return
-		}
 		el.start.disabled = true
 		el.stop.disabled = false
 		el.query.disabled = true
@@ -400,7 +400,8 @@
 			diffRunner.dispose()
 			running = false
 			cancelFirmwareWaiters(new StopError('升级已结束'))
-			serialApi.unpinSession()
+			serialApi.unpinSession(fwTxToken)
+			fwTxToken = null
 			window.serialApi.suppressParse = false
 			el.start.disabled = false
 			el.stop.disabled = true
@@ -482,7 +483,7 @@
 	async function writeFirmware(bytes) {
 		// getActiveSendSid 是 UI 路号：单路返回 A；writeRawTo 要的是真正的物理 S/A/B。
 		const sid = serialApi.getMode() === 'single' ? 'S' : serialApi.getActiveSendSid()
-		const timing = await serialApi.writeRawTo(sid, bytes)
+		const timing = await serialApi.writeRawTo(sid, bytes, { token: fwTxToken })
 		// 只读诊断，不改原始 TX 行的「开始写」时间；完成表示后端写入兑现，并非设备处理完成。
 		if (timing) emit(Object.assign({ type: 'write', code: bytes[3] }, timing))
 		return timing

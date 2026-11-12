@@ -450,6 +450,7 @@
 		const originals = new Map() // field key -> 原值(解码后)
 		const lastWritten = new Map() // field key -> 写入值(解码后)
 		let stopped = false
+		let writeUnclosed = false
 		let lastCommAt = io.now()
 		let fatal = ''
 		let stepStartedAt = null
@@ -624,6 +625,9 @@
 				return record(step, index, patch)
 			} catch (e) {
 				const msg = e && e.message ? e.message : String(e)
+				if (e && e.unclosed) {
+					return record(step, index, Object.assign(patch, { status: STATUS.fail, reason: msg, unclosed: true, durationMs: io.now() - stepStartedAt }))
+				}
 				const status = e && e.timeout ? STATUS.timeout : e && e.unsupported ? STATUS.unsupported : STATUS.fail
 				return record(step, index, Object.assign(patch, { status: status, reason: msg, durationMs: io.now() - stepStartedAt }))
 			}
@@ -673,6 +677,12 @@
 			if (fatal) break
 			if (result) result.attempts = attempt + 1
 			if (result) commit(result, i)
+			if (result && result.unclosed) {
+				writeUnclosed = true
+				fatal = '写入未确认收尾'
+				io.log('fail', fatal)
+				break
+			}
 			if (result && result.status !== STATUS.success && result.status !== STATUS.skipped && result.status !== STATUS.unsupported) {
 				if (flow.defaults.onFailure === 'stop') {
 					stopped = true
@@ -683,9 +693,18 @@
 			if (step.kind !== 'wait' && step.delayAfterMs > 0) await pause(step.delayAfterMs)
 		}
 
+		// 在飞物理写收尾（有上限）：未确认收尾就不再恢复（写都不可靠），如实报错并交给故障占用
+		if (io.settleWrites) {
+			const settled = await io.settleWrites()
+			if (!settled) {
+				writeUnclosed = true
+				fatal = '写入未确认收尾'
+				io.log('fail', fatal)
+			}
+		}
 		// 恢复原值：只写回真的写过、且读到了原值的字段；停止后仍尝试恢复（串口还开着就恢复）
 		const restore = { restored: [], failed: [] }
-		if (flow.defaults.restoreOriginals && originals.size) {
+		if (flow.defaults.restoreOriginals && originals.size && !writeUnclosed) {
 			if (!io.isOpen()) {
 				restore.failed.push({ field: '(全部)', message: '串口已关闭，未能恢复' })
 			} else {
@@ -716,6 +735,7 @@
 			stats: statsOf(results, durationMs),
 			restore: restore,
 			stopped: stopped,
+			writeUnclosed: writeUnclosed,
 			fatal: fatal,
 			durationMs: durationMs,
 			vars: vars,

@@ -136,6 +136,18 @@
 	}
 
 	// 按单位分 Y 轴：一个单位一根轴，最多两根；第三根起整组丢掉(返回的 droppedUnits 供界面提示)
+	// 分轴 + 唯一绘图字段列表：签名与绘图共用这一份，两边不会各自算出不同的集合
+	//（超过两根单位的字段在这里被剔除；unitOf 由调用方给——曲线面板传「序列实际单位优先」）
+	function pickChartSeries(items, unitOf) {
+		const grouped = groupAxes(items, unitOf)
+		const axisOf = new Map()
+		grouped.axes.forEach(function (ax, idx) {
+			ax.items.forEach(function (it) { axisOf.set(it.sid + '|' + it.key, idx) })
+		})
+		const drawable = items.filter(function (it) { return axisOf.has(it.sid + '|' + it.key) })
+		return { grouped: grouped, axisOf: axisOf, drawable: drawable }
+	}
+
 	function groupAxes(items, unitOf) {
 		const axes = []
 		const byUnit = new Map()
@@ -276,6 +288,7 @@
 		createStore: createStore,
 		createFramePump: createFramePump,
 		groupAxes: groupAxes,
+		pickChartSeries: pickChartSeries,
 		alignSeries: alignSeries,
 		toCSV: toCSV,
 		formatNumber: formatNumber,

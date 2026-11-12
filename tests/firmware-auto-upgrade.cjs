@@ -84,7 +84,7 @@ function makeHarness(device, opts) {
 	;['pcp.js', 'firmware-core.js', 'firmware-library.js'].forEach((f) => vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/' + f), 'utf8'), ctx))
 	ctx.FirmwareLibrary = ctx.FirmwareLibraryLib.createLibrary(ctx.FirmwareLibraryLib.memoryStore())
 	if (opts.wrapLibrary) ctx.FirmwareLibrary = opts.wrapLibrary(ctx.FirmwareLibrary)
-	const pins = { depth: 0 }
+	const pins = { depth: 0, fail: false }
 	const hostCodes = []
 	const link = { open: true }
 	let writing = false
@@ -92,7 +92,7 @@ function makeHarness(device, opts) {
 		suppressParse: false,
 		isOpen: () => link.open,
 		onReceive(fn) { receive = fn },
-		pinSession() { pins.depth++ }, unpinSession() { pins.depth-- }, getActiveSendSid: () => 'A', getMode: () => 'single',
+		pinSession() { if (pins.fail) throw new Error('另一事务（flow）正在进行，请先停止'); pins.depth++; return 'fw-token' }, unpinSession() { pins.depth--; pins.released = 'fw-token' }, getActiveSendSid: () => 'A', getMode: () => 'single',
 		writeRawTo(sid, bytes) {
 			assert.equal(sid, 'S', '单路 UI A 必须映射到物理 S')
 			assert.equal(writing, false, 'cannot acquire a writer before the preceding write settles')
@@ -228,6 +228,24 @@ function makeDevice(current, opts) {
 		assert.ok(h.events.some(e => e.type === 'write' && e.code === 0x15 && e.durationMs === 5))
 		assert.ok(h.logs.some(l => /后端写完成 5ms/.test(l)))
 	}
+	// Lock grab failure: pinSession rejected → no start event is published, running state and buttons are reset (fix 5 item 5)
+	{
+		const dev = makeDevice(V1)
+		const h = makeHarness(dev)
+		dev.parser = h.ctx.FirmwareParser
+		h.load(V2, 'V2.bin')
+		h.pins.fail = true
+		const before = h.events.length
+		h.els['fw-start'].click()
+		assert.ok(await h.waitFor(() => h.logs.some(l => l.indexOf('无法开始升级') !== -1)), '抢锁失败有明确日志')
+		assert.equal(h.events.slice(before).some(e => e && e.type === 'start'), false, '抢锁失败不发布 start 事件')
+		assert.equal(h.pins.depth, 0, '抢锁失败不持有钉扎')
+		assert.equal(h.pins.released, undefined, '失败路径不做多余的 unpin')
+		assert.ok(!h.els['fw-start'].disabled, '开始按钮已恢复')
+		h.pins.fail = false
+		assert.equal((await h.upgrade()).ok, true, '冲突解除后可正常升级')
+	}
+
 	// Stop while awaiting the first request, then restart the same panel/session cleanly.
 	{
 		const dev = makeDevice(V1)

@@ -249,8 +249,11 @@
 	async function sendAndWait(opts) {
 		opts = opts || {}
 		const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 5000
-		// 事务等待周期钉扎主发口: 请求与应答落在同一设备
-		serialApi.pinSession(serialApi.getActiveSendSid())
+		// 事务等待周期钉扎主发口: 请求与应答落在同一设备。
+		// 带归属的独占事务（测试流程 / 固件升级）进行中这里会被拒（token 为空或抛错），
+		// 嵌套调用经 opts.transaction 持事务令牌放行
+		const token = serialApi.pinSession(serialApi.getActiveSendSid(), 'transaction', opts && opts.transaction)
+		if (!token) throw new Error('另一事务正在进行，暂不能开始 SEK 事务')
 		let pendingWaiter = null
 		try {
 			const built = buildDown(opts.buildOpts || {})
@@ -296,7 +299,7 @@
 				if (idx !== -1) waiters.splice(idx, 1)
 				clearTimeout(pendingWaiter.timer)
 			}
-			serialApi.unpinSession()
+			serialApi.unpinSession(token)
 		}
 	}
 

@@ -93,7 +93,7 @@ function renderDoc(proto) {
 	fields.forEach(function (f) {
 		out.push('| `' + esc(f.key) + '` | ' + esc(f.name) + ' | `' + esc(f.type) + '` | ' +
 			esc(f.unit || '') + ' | ' + esc(rangeOf(f)) + ' | ' + rwOf(f) + ' | ' +
-			esc(f.group || '') + ' | ' + (f.chart ? '✓' : '') + ' | ' + (f.random === false ? '—' : '✓') + ' |')
+			esc(f.group || '') + ' | ' + (f.chart ? '✓' : '') + ' | ' + (f.random === true ? '✓' : '—') + ' |')
 	})
 	out.push('')
 	out.push('只读字段（读写列无 W）没有写入地址；`source: frame` 类字段来自帧头，不在 TLV 里，单独回读取不到。')

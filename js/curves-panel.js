@@ -158,14 +158,11 @@
 			const s = S.store.get(it.sid, it.key)
 			return ((s && s.unit ? s.unit : it.unit) || '')
 		}
-		const grouped = C.groupAxes(items, unitOf)
-		const axisOf = new Map()
-		grouped.axes.forEach(function (ax, idx) {
-			ax.items.forEach(function (it) { axisOf.set(it.sid + '|' + it.key, idx) })
-		})
-		// 唯一的绘图字段列表：超过两根单位被丢的字段在这里剔除，series / 数据列 / 图例共用同一份，
-		// 不会出现「图例有、数据列没有」的错位
-		const drawable = items.filter(function (it) { return axisOf.has(it.sid + '|' + it.key) })
+		// 唯一的绘图字段列表（分轴 + 剔除 + 签名共用同一份，三种单位也不会反复重建）
+		const picked = C.pickChartSeries(items, unitOf)
+		const grouped = picked.grouped
+		const axisOf = picked.axisOf
+		const drawable = picked.drawable
 		const laneIndex = {}
 		const series = [{}]
 		seriesMeta.length = 0
@@ -341,7 +338,12 @@
 			renderReadout(null, null)
 			return
 		}
-		const sig = sigOf(drawable)
+		// 签名与绘图共用同一份字段列表：先算出分轴后的 drawable，再比较签名 / 重建 / 取数
+		const picked = C.pickChartSeries(drawable, function (it) {
+			const s = S.store.get(it.sid, it.key)
+			return ((s && s.unit ? s.unit : it.unit) || '')
+		})
+		const sig = sigOf(picked.drawable)
 		if (!chart || chartSig !== sig || chart.width !== el.plot.clientWidth || chart.height !== el.plot.clientHeight) {
 			if (!buildChart(drawable)) return
 		}

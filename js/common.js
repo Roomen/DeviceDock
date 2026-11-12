@@ -114,6 +114,8 @@
 	let pinSid = null
 	let pinOwner = ''
 	let pinDepth = 0
+	let pinToken = null
+	let pinTokenSeq = 0
 	// 日志全局单调序号: 同毫秒到达序 (ts, seq) 全序排序用
 	let logSeq = 0
 	// 单/双路切换串行化标志
@@ -4893,6 +4895,15 @@
 	async function writeData(data, sid, sendName, opts) {
 		if (window.serialApi && window.serialApi.updatePreparing) throw new Error('正在安装应用更新，暂不能发送')
 		opts = opts || {}
+		// 发送入口的事务归属检查：该路被别的事务（测试流程 / 固件升级）独占时拒绝普通发送，
+		// 本事务的发送带令牌放行（协议立即下发 / 循环发送 / 快捷发送都经过这里）
+		if (pinSid && (!opts || opts.token !== pinToken)) {
+			const msg = '另一事务（' + (pinOwner || '其他事务') + '）正在进行，暂不能发送'
+			if (opts.throwOnError) throw new Error(msg)
+			addLogErr(msg, sid)
+			if (sid === 'S') showToast(msg, 2500)
+			return
+		}
 		sid = sid || SerialHub.activeSendPhys()
 		const port = SerialHub.getPort(sid)
 		if (!port || !port.writable) {
@@ -5551,7 +5562,7 @@
 		},
 		// 协议事务专用: 不追加 CR/LF/NUL；logData 存在时日志只显示这份（已脱敏）字节
 		async writeRaw(data, opts) {
-			await writeData(data, SerialHub.activeSendPhys(), undefined, { raw: true, logData: opts && opts.logData })
+			await writeData(data, SerialHub.activeSendPhys(), undefined, { raw: true, logData: opts && opts.logData, token: opts && opts.token })
 		},
 		isSessionOpen(id) {
 			if (id !== 'S' && id !== 'A' && id !== 'B') return false
@@ -5562,7 +5573,7 @@
 		async writeRawTo(id, data, opts) {
 			if (id !== 'S' && id !== 'A' && id !== 'B') throw new Error('无效的串口会话')
 			if (!this.isSessionOpen(id)) throw new Error('串口会话未打开或当前模式不可路由')
-			return await writeData(data, id, undefined, { raw: true, logData: opts && opts.logData, throwOnError: true })
+			return await writeData(data, id, undefined, { raw: true, logData: opts && opts.logData, throwOnError: true, token: opts && opts.token })
 		},
 		isOpen() {
 			const sid = SerialHub.activeSendPhys()
@@ -5612,37 +5623,45 @@
 		// 事务钉扎: pin 期间 activeSendSid()/writeData/isOpen/RX 转发均锁定到钉扎会话。
 		// owner（可选）让钉扎成为带归属的独占事务：测试流程 / 固件升级各自持自己的 pin，
 		// 他人再钉会被拒绝（抛错），同一事务内部的嵌套钉扎（如固件内部的 sekTx 请求）继承归属只加深度
-		pinSession(sid, owner) {
+		// 事务钉扎: pin 期间 activeSendSid()/writeData/isOpen/RX 转发均锁定到钉扎会话。
+		// 返回事务令牌：嵌套钉扎（同一事务内部的 sekTx 请求等）必须持令牌，无令牌一律拒绝——
+		// 否则无 owner 的旧式调用就能混进带归属的事务里交错收发
+		pinSession(sid, owner, token) {
 			if (this.updatePreparing) throw new Error('正在安装应用更新，暂不能开始事务')
 			sid = sid || SerialHub.activeSendSid()
 			if (sid !== 'A' && sid !== 'B' && sid !== 'S') {
 				addLogErr('pinSession: 无效的会话 id: ' + sid)
-				return
+				return null
 			}
-			if (pinSid && pinSid !== sid) {
-				if (owner) throw new Error('另一事务正在串口 ' + pinSid + ' 上进行（' + (pinOwner || '其他事务') + '），请先停止')
-				addLogErr('已有事务钉扎会话 ' + pinSid + '，忽略钉扎 ' + sid)
-				return
+			if (pinSid) {
+				if (pinToken && token === pinToken) {
+					pinDepth++
+					return pinToken
+				}
+				throw new Error('另一事务（' + (pinOwner || '其他事务') + '）正在进行，请先停止')
 			}
-			if (pinSid && pinOwner && owner && pinOwner !== owner) {
-				throw new Error('另一事务（' + pinOwner + '）正在进行，请先停止后再试')
-			}
-			if (pinSid && !pinOwner && owner) {
-				// 无归属的旧式钉扎在带归属的事务进行中不允许：它会与在飞帧交错
-				throw new Error('另一事务正在进行，请先停止后再试')
-			}
-			if (!pinSid) {
-				pinSid = sid
-				pinOwner = owner || ''
-			}
-			pinDepth++
+			pinSid = sid
+			pinOwner = owner || ''
+			pinDepth = 1
+			pinToken = 'txn-' + (++pinTokenSeq)
+			return pinToken
 		},
-		unpinSession() {
+		unpinSession(token) {
+			if (pinToken && token != null && token !== pinToken) return
 			if (pinDepth > 0) pinDepth--
 			if (pinDepth === 0) {
 				pinSid = null
 				pinOwner = ''
+				pinToken = null
 			}
+		},
+		// 手动释放事务占用（钉扎卡死时的兜底，面板 / 状态栏提供入口）：清掉钉扎与归属，不让故障永久占住串口
+		forceReleaseTransaction() {
+			if (pinSid) addLogErr('事务占用已手动释放（原归属：' + (pinOwner || '未知') + '）')
+			pinDepth = 0
+			pinSid = null
+			pinOwner = ''
+			pinToken = null
 		},
 		isPinned() {
 			return pinSid != null

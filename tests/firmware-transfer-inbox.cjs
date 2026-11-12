@@ -16,7 +16,7 @@ const ctx = vm.createContext({ Uint8Array, TextEncoder, TextDecoder, Date,
 })
 ctx.window = ctx
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/pcp.js'), 'utf8'), ctx)
-vm.runInContext('let recvBuffer = [], recvOffset = 0, running = true, stopFlag = false;\n' +
+vm.runInContext('let recvBuffer = [], recvOffset = 0, running = true, stopFlag = false, fwTxToken = null;\n' +
 	between('\t// 累积接收字节, 提取一个完整的 PCP 帧', '\t// 自动升级：查设备版本') +
 	between('\tfunction waitForCode(', '\tfunction sleep('), ctx)
 const run = s => vm.runInContext(s, ctx)

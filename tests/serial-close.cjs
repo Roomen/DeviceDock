@@ -60,7 +60,8 @@ function harness() {
 		resetLaneParseSession: () => {}, sessionResetSeq: { S: 0, A: 0, B: 0 },
 		getPortIdentityKey: async () => null, localStorage: { setItem: () => {} }, persistLaneOptions: () => {},
 		recoverDeadReadLoop: async sid => { recovered.push(sid) }, rxWatch: () => ({}), reopenAttemptBySid: {}, readData: async () => {},
-		laneMoving: false, platformHasSid: () => true, lanePortOwner: () => null, portConflictMsg: () => 'synthetic conflict'
+		laneMoving: false, platformHasSid: () => true, lanePortOwner: () => null, portConflictMsg: () => 'synthetic conflict',
+		pinSid: null, pinOwner: '', pinToken: null, showToast: () => {}
 	})
 	vm.runInContext(
 		section('\tfunction portHeldByOther(', '\tfunction randAliasId(') +
