@@ -36,6 +36,7 @@
 - 外部协议在注册表里的 id 是 `<来源键>/<协议 id>`；来源键由 URL 推出：GitHub 是 `github.com/<owner>/<repo>`（小写），直连是 origin + 目录路径。
 - `#serial-protocol-select` 用 `<optgroup>`：「内置」组放 `sek` / `cjt188` / `sk-ultrasonic`，每个来源一组（组名取目录 `name`）；每路连接栏的协议键照抄同样的分组，不要在模块里自己插 `<option>`。
 - 存下的协议指向未启用 / 已删除的外部协议时回退 `sek`（`window.normalizeProtocolSelection`），单路 S 在双路期间单独保存的选择也要一起归一化；已启用但还在加载的 id 由注册表登记为 pending，启动时不会误判为未知。
+- 启动登记 pending 时同时记下完整 id 列表；启动加载失败或来源在加载期间被删除，按这份列表 `settle`，不能靠「再找一次来源」清理（来源没了会永久残留）。
 
 ## 来源 URL
 
@@ -50,6 +51,8 @@
 - 信任键 = 来源 + 包 id + 版本 + 入口摘要（`js/protocol-contract.js` 的 `trustKey`）；换版本、换来源、换字节都不继承旧决定。
 - 来源列表、信任、启用状态存 localStorage（`protocolSourcesV1` / `protocolTrustV1` / `protocolEnabledV1`）；已校验的字节按 sha256 存 IndexedDB `devicedock-protocols`（`files` 表，最多 32 份 / 16 MiB，按最近写入淘汰）。
 - 从缓存启用前也按摘要复核内容：缓存键不能证明内容正确，不符就丢弃缓存并拒绝执行（离线时同样不能执行未校验字节）。
+- 刷新进行中不允许对同一来源启动启用（服务层拒绝，面板同时禁用开关）；刷新替换目录会作废旧操作，启用提交前还会核对包版本 / 入口摘要 / 清单身份，换过就拒绝。
+- 入口模块有顶层 await 时，`import` 返回、调用 `activate` 之前再确认一次来源与版本；已取消就不再调用 `activate`（已开始求值的模块代码无法撤回）。
 - 刷新来源时，已启用包的版本或入口摘要变了就自动停用并在面板里提示「需要重新信任」，不要静默换成新版本。
 - 删除来源、刷新来源、停用包、撤销信任都会作废正在进行的启用（代次检查），慢下载 / 慢 `activate` 不能在来源没了之后落地。
 - 读写 localStorage / IndexedDB 全部 try/catch：缓存写失败不影响本次启用，存储不可用时只是不持久化。

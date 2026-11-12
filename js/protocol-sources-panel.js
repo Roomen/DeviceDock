@@ -197,7 +197,7 @@
 		trustBtn.appendChild(mk('i', 'icon icon-sm icon-' + (pkg.trusted ? 'shield-check' : 'lock-open')))
 		trustBtn.appendChild(mk('span', '', pkg.trusted ? '已信任此版本' : '信任此版本'))
 		trustBtn.title = pkg.trusted ? '点击撤销信任（会同时停用这个版本）' : '确认这个版本的代码可以运行'
-		trustBtn.disabled = !!pkg.error || !!s.busy[trustTag] || !!s.busy[enableTag] || !pkg.id
+		trustBtn.disabled = !!pkg.error || !!src.busy || !!s.busy[trustTag] || !!s.busy[enableTag] || !pkg.id
 		trustBtn.addEventListener('click', function () {
 			try {
 				if (pkg.trusted) S.revokeTrust(src.key, pkg.id)
@@ -214,7 +214,7 @@
 		const enableInput = mk('input', 'form-check-input')
 		enableInput.type = 'checkbox'
 		enableInput.checked = pkg.enabled
-		enableInput.disabled = !!pkg.error || !pkg.trusted || !!s.busy[enableTag]
+		enableInput.disabled = !!pkg.error || !!src.busy || !pkg.trusted || !!s.busy[enableTag]
 		enableInput.id = 'mdn-src-en-' + encodeURIComponent(src.key + '/' + pkg.id).replace(/%/g, '_')
 		enableInput.addEventListener('change', function () {
 			const on = enableInput.checked

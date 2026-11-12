@@ -467,7 +467,7 @@
 			if (meta && !meta.builtin && meta.source === sourceKey && meta.packageId === packageId) Protocols.unregister(id)
 		})
 	}
-	async function activate(source, pkg, bytes) {
+	async function activate(source, pkg, bytes, stillValid) {
 		// 注册只进暂存区：activate 返回、provides 核对通过后由 enable 一次性发布。
 		// 窗口在成功返回 / 抛错 / 超时后立即关闭，包再用定时器调 registerProtocol 会被拒绝，
 		// 未声明的协议不会因为「晚注册」混进注册表。
@@ -506,6 +506,9 @@
 					setTimeout(function () { reject(new Error('协议包加载超时')) }, ACTIVATE_TIMEOUT)
 				}),
 			])
+			// 顶层 await 可能让 import 等很久：等它回来、调用 activate 之前再确认一次，
+			// 来源被删 / 版本变了就不再执行包里的副作用（已开始求值的模块代码无法撤回）。
+			if (typeof stillValid === 'function') stillValid()
 			if (!mod || typeof mod.activate !== 'function') throw new Error('协议包必须导出 activate(host)')
 			await Promise.race([
 				Promise.resolve(mod.activate(host)),
@@ -539,6 +542,7 @@
 		opts = opts || {}
 		const source = findSource(sourceKey)
 		if (!source) throw new Error('来源不存在')
+		if (state.busy[sourceKey]) throw new Error('这个来源正在刷新，请等刷新完成后再启用')
 		const pkg = findPackage(source, packageId)
 		if (!pkg) throw new Error('来源里没有这个协议包，请刷新来源')
 		if (pkg.error) throw new Error(pkg.error)
@@ -555,7 +559,13 @@
 			}
 			const src = findSource(sourceKey)
 			if (!src) throw new Error('来源已删除，启用已取消')
-			if (!findPackage(src, packageId)) throw new Error('协议包已不在来源里，请刷新来源')
+			const current = findPackage(src, packageId)
+			if (!current) throw new Error('协议包已不在来源里，请刷新来源')
+			// 只比 id 不够：刷新可能换掉同 id 的包，最终提交前要核对本次用的身份
+			if (current.version !== pkg.version || current.entryDigest !== pkg.entryDigest ||
+				current.manifestUrl !== pkg.manifestUrl || current.manifestSha !== pkg.manifestSha) {
+				throw new Error('协议包已更新，请重新信任后再启用')
+			}
 		}
 		state.busy[tag] = '启用中'
 		try {
@@ -566,7 +576,7 @@
 			saveEnabled()
 			const bytes = await entryBytes(pkg, !!opts.cacheOnly)
 			ensureValid()
-			const staged = await activate(source, pkg, bytes)
+			const staged = await activate(source, pkg, bytes, ensureValid)
 			ensureValid()
 			const check = Contract.checkProvides({ provides: pkg.provides }, staged.map(function (s) { return s.id }))
 			if (!check.ok) {
@@ -667,6 +677,8 @@
 			source.sha = cat.sha
 			source.fetchedAt = cat.fetchedAt
 			source.packages = cat.packages
+			// 目录换完了再作废一次：刷新期间不该有能落地的旧操作（启用本身在刷新期间已被拒）
+			bumpOp('source', key)
 			if (cat.name) source.name = cat.name
 			const stale = []
 			state.enabled.filter(function (r) { return r.source === key }).forEach(function (r) {
@@ -768,18 +780,21 @@
 	state.sources = readSources()
 	state.trust = readTrust()
 	state.enabled = readEnabled()
-	state.enabled.forEach(function (rec) {
+	// 启动时先按「当时的 provides」登记 pending，并把完整 id 列表留在这份计划里：
+	// 来源若在启动加载期间被删除，失败清理不能再靠 findSource 找包（那时已经找不到，pending 会永久残留）。
+	const bootPlan = state.enabled.map(function (rec) {
 		const src = findSource(rec.source)
 		const pkg = findPackage(src, rec.id)
-		if (!pkg) return
-		pkg.provides.forEach(function (p) { Protocols.expect(Contract.namespaceId(rec.source, p.id)) })
+		const ids = pkg ? pkg.provides.map(function (p) { return Contract.namespaceId(rec.source, p.id) }) : []
+		ids.forEach(function (id) { Protocols.expect(id) })
+		return { rec: rec, ids: ids }
 	})
-	const bootTasks = state.enabled.map(function (rec) {
-		return enable(rec.source, rec.id, { cacheOnly: true }).catch(function (e) {
-			state.bootErrors.push({ source: rec.source, id: rec.id, message: message(e) })
-			const src = findSource(rec.source)
-			const pkg = findPackage(src, rec.id)
-			if (pkg) pkg.provides.forEach(function (p) { Protocols.settle(Contract.namespaceId(rec.source, p.id)) })
+	const bootTasks = bootPlan.map(function (plan) {
+		return enable(plan.rec.source, plan.rec.id, { cacheOnly: true }).catch(function (e) {
+			state.bootErrors.push({ source: plan.rec.source, id: plan.rec.id, message: message(e) })
+		}).then(function () {
+			// 成功时注册会清掉 pending；失败 / 取消时按启动时记下的列表清
+			plan.ids.forEach(function (id) { Protocols.settle(id) })
 		})
 	})
 	Promise.all(bootTasks).then(function () {
