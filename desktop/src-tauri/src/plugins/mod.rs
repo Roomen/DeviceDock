@@ -488,9 +488,28 @@ pub async fn plugin_install(
             }
         }
     })();
-    let st = outcome?;
+    outcome?;
     let _ = app.emit(EVENT_CHANGED, ());
-    Ok(build_info(&root, &m.id, st.plugins.get(&m.id)))
+    // 返回值也要在共享锁下重新读 state + manifest：排他锁已释放，
+    // 并发的另一次同版本重装可能已换掉目录，不能把上一次的 state 与这一次的 manifest 混在一起。
+    Ok(read_info_locked(&root, &m.id))
+}
+
+// 在跨进程共享锁下读 state + manifest 并组装 PluginInfo（拿不到锁时返回带原因的最小信息）
+fn read_info_locked(root: &Path, id: &str) -> PluginInfo {
+    match store::read_lock(root) {
+        Ok(_guard) => {
+            let st = store::load_state(root);
+            build_info(root, id, st.plugins.get(id))
+        }
+        Err(e) => {
+            let mut info = build_info(root, id, None);
+            info.enabled = false;
+            info.installing = true;
+            info.error = Some(format!("插件正在被修改，稍后重试：{e}"));
+            info
+        }
+    }
 }
 
 // 检查更新：下载新包只为读出 manifest（版本与能力变化），不落地
@@ -693,21 +712,18 @@ pub fn plugin_storage_remove(state: State<'_, PluginsState>, id: String, key: St
 
 // ddplugin:// 的处理函数：读状态、解析路径、只出校验过的文件
 pub fn serve(app: &AppHandle, request: &tauri::http::Request<Vec<u8>>) -> tauri::http::Response<std::borrow::Cow<'static, [u8]>> {
-    let (root, gates) = match app.try_state::<PluginsState>() {
-        Some(state) => {
-            let denied = || scheme::serve(Path::new("/nonexistent"), &store::State::default(), request);
-            if state.guard().is_err() { return denied(); }
-            // 锁异常按禁用处理：拿不到门禁集合就拒绝全部插件请求
-            let Some(g) = state.serve_gates() else { return denied(); };
-            (state.root().to_path_buf(), g)
-        }
-        None => return scheme::serve(Path::new("/nonexistent"), &store::State::default(), request),
-    };
-    // 共享锁覆盖「读 state + 读 manifest + 读文件内容」全过程：拿不到说明正在改目录 → 503。
+    let denied = || scheme::serve(Path::new("/nonexistent"), &store::State::default(), request);
+    let Some(state) = app.try_state::<PluginsState>() else { return denied() };
+    if state.guard().is_err() { return denied(); }
+    let root = state.root().to_path_buf();
+    // 顺序固定：先拿共享锁，再在锁内读内存门禁与 state。先拷门禁会在「等锁期间有安装失败
+    // 并把插件加入 blocked」时用旧快照供包，所以门禁必须在锁内取。
     let _read = match store::read_lock(&root) {
         Ok(g) => g,
         Err(_) => return scheme::serve_gated(&root, &store::State::default(), request, &unavailable_gates()),
     };
+    // 锁异常按禁用处理：拿不到门禁集合就拒绝全部插件请求
+    let Some(gates) = state.serve_gates() else { return denied() };
     let st = store::load_state(&root);
     scheme::serve_gated(&root, &st, request, &gates)
 }
@@ -761,6 +777,52 @@ mod tests {
         let during = list_all(&root, &empty, &active);
         assert_eq!(during[0].installing, true, "事务期间标为 installing");
         assert_eq!(during[0].enabled, false, "事务期间不提供启用视图");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // 回修 7 · 2：安装返回值与 serve 都在共享锁下重新读取。
+    // 持排他锁时 read_info_locked 必须拿不到共享锁，因此不能返回「混合快照」，
+    // 只会给出 installing + 原因；释放后才是真实 state + manifest。
+    #[test]
+    fn read_info_locked_requires_the_shared_lock() {
+        let root = fixture("read-info");
+        let held = store::file_lock(&root).unwrap();
+        let busy = read_info_locked(&root, "hello");
+        assert_eq!(busy.installing, true, "排他锁期间不能返回真实信息");
+        assert_eq!(busy.enabled, false);
+        assert!(busy.error.as_deref().unwrap_or("").contains("正在被修改"), "{:?}", busy.error);
+        drop(held);
+        let fresh = read_info_locked(&root, "hello");
+        assert_eq!(fresh.installing, false, "锁释放后返回真实信息");
+        assert_eq!(fresh.enabled, true);
+        assert_eq!(fresh.version, "1.0.0");
+        assert_eq!(fresh.entry, "index.html");
+        assert!(fresh.error.is_none());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // 回修 7 · 2：serve 的门禁必须在持锁之后取（顺序写在 serve 的注释里：
+    // 先 store::read_lock，再 state.serve_gates()）。这里断言锁内取门禁能看到
+    // 「等锁期间新增的 blocked 项」——旧顺序（先拷快照再等锁）会漏掉它。
+    #[test]
+    fn gates_read_after_lock_see_newly_blocked_plugin() {
+        let root = fixture("gates-order");
+        let state = PluginsState {
+            root: root.clone(),
+            tx: Mutex::new(()),
+            blocked: Mutex::new(BTreeSet::new()),
+            active: Mutex::new(BTreeSet::new()),
+            unavailable: None,
+        };
+        // 模拟「另一个窗口在等锁期间把插件加入 blocked」
+        let held = store::file_lock(&root).unwrap();
+        state.blocked.lock().unwrap().insert("hello".to_string());
+        drop(held);
+        // serve 的顺序：先拿共享锁，再读门禁 → 能看到新项
+        let _read = store::read_lock(&root).unwrap();
+        let gates = state.serve_gates().unwrap();
+        assert!(gates.blocked.contains("hello"), "持锁之后读门禁必须包含新加入的 blocked 项");
+        drop(_read);
         fs::remove_dir_all(&root).unwrap();
     }
 

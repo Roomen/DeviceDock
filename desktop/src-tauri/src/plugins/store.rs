@@ -563,11 +563,38 @@ fn state_class(root: &Path, id: &str, rec: &TxRecord) -> StateClass {
     if old_ok { StateClass::Old } else { StateClass::Unknown }
 }
 
+// 本事务「登记在案」的副本路径：target、backup、staging，以及升级前的旧版本目录
+// （旧版本只从 previous_state.version 取得，不扫目录）。清理**只**动这些路径。
+fn registered_paths(root: &Path, id: &str, rec: &TxRecord) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(p) = stored_path(root, &rec.target_path) { out.push(p); }
+    if let Ok(p) = stored_path(root, &rec.backup_path) { out.push(p); }
+    if !rec.staging_path.is_empty() {
+        if let Ok(p) = stored_path(root, &rec.staging_path) { out.push(p); }
+    }
+    if let Some(prev) = &rec.previous_state {
+        if !prev.version.is_empty() && prev.version != rec.version && manifest::valid_version(&prev.version) {
+            out.push(version_dir(root, id, &prev.version));
+        }
+    }
+    out
+}
+
+// 提交后的清理：只删本事务登记的 backup / staging / 旧版本目录，绝不按插件 id 扫目录。
+// 记录之外的孤立 .old-* 与未登记目录一律保留（report_orphan_backups 只记日志）。
 fn cleanup_after_commit(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
-    prune_versions(root, id, &rec.version);
+    let target = stored_path(root, &rec.target_path)?;
     let backup = stored_path(root, &rec.backup_path)?;
-    if backup.exists() { fs::remove_dir_all(&backup).map_err(|e| format!("无法删除插件旧版本备份：{e}"))?; }
-    remove_staging(root, rec)
+    for path in registered_paths(root, id, rec) {
+        if path == target || !path.exists() || !path.is_dir() { continue; }
+        fs::remove_dir_all(&path).map_err(|e| format!("无法删除本事务登记的副本 {}：{e}", path.display()))?;
+    }
+    if !rec.staging_path.is_empty() {
+        forget_staging_lock(&rec.staging_path);
+        let _ = fs::remove_file(staging_lock_path(root, &rec.staging_path));
+    }
+    let _ = backup;
+    Ok(())
 }
 
 fn remove_staging(root: &Path, rec: &TxRecord) -> Result<(), String> {
@@ -652,7 +679,8 @@ fn recover_one(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
             Ok(())
         }
         Recovery::FinishNew => {
-            // state 已是新的，只补完清理；不删 target
+            // state 已是新的，只补完清理；不删 target。
+            // 清理范围限于本记录登记的路径，孤立 .old-* 与未登记目录不碰。
             cleanup_after_commit(root, id, rec)?;
             restore_state(root, id, rec.expected_state.as_ref())?;
             Ok(())
@@ -774,7 +802,12 @@ impl InstallTx {
         let plugin_root = plugin_dir(&self.root, &self.id);
         let backup = plugin_root.join(format!(".old-{}", self.rec.version));
         if self.target.exists() {
-            let _ = fs::remove_dir_all(&backup);
+            // 已存在的 .old-<version> 没有本事务的提交证据：不能删，中止安装并标待修复。
+            // 只写 .repair.json（硬门槛），不写 state —— 后续 restore_state 会覆盖 state 条目。
+            if backup.exists() {
+                let _ = write_repair(&self.root, &self.id, "存在未确认的旧备份，需先修复", TxStage::Prepared);
+                return Err("存在未确认的旧备份（.old 目录没有提交证据），需先修复后再安装".to_string());
+            }
             if let Err(e) = fs::rename(&self.target, &backup) {
                 let restore = fs::rename(&backup, &self.target);
                 if self.target.exists() || restore.is_ok() { return Err(format!("无法替换已有插件版本：{e}")); }
@@ -942,7 +975,32 @@ pub fn drop_staging(root: &Path, staging: &Path) {
     let _ = fs::remove_dir_all(staging);
 }
 
-// 只有明确 ESRCH（进程不存在）才返回 false；EPERM（权限不足）与其它错误都按「无法确认」= 存活处理。
+// pid 判据策略：Unix 有可靠的「进程是否还在」探测，Windows 不另实现 pid 查询
+// （只用同级 .lock 是否被持有 + 超过 15 分钟判定）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PidPolicy {
+    Unix,
+    Windows,
+}
+
+fn current_pid_policy() -> PidPolicy {
+    if cfg!(windows) { PidPolicy::Windows } else { PidPolicy::Unix }
+}
+
+// 纯函数（可注入，便于跨平台单测）：超过 15 分钟 + 锁未被任何进程持有，
+// 且（Unix 分支）pid 已明确退出，才认为该 staging 可清理。
+fn reclaimable(age_secs: u64, policy: PidPolicy, pid_gone: bool, lock_held: bool) -> bool {
+    if age_secs <= STAGING_MAX_AGE_SECS { return false; }
+    if lock_held { return false; }
+    match policy {
+        // Unix：EPERM / 其它错误都按「无法确认」= 仍活跃（pid_gone=false）→ 保留
+        PidPolicy::Unix => pid_gone,
+        // Windows：跳过 pid 判据，只靠锁 + 时间
+        PidPolicy::Windows => true,
+    }
+}
+
+// 只有明确 ESRCH（进程不存在）才返回 true；EPERM（权限不足）与其它错误都按「无法确认」= 存活处理。
 #[cfg(unix)]
 fn pid_definitely_gone(pid: u32) -> bool {
     if unsafe { libc::kill(pid as i32, 0) } == 0 {
@@ -952,24 +1010,16 @@ fn pid_definitely_gone(pid: u32) -> bool {
     std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
 }
 
-#[cfg(windows)]
+#[cfg(not(unix))]
 fn pid_definitely_gone(_pid: u32) -> bool {
-    // Windows 不另实现 pid 查询：唯一判据是同级 .lock 未被任何进程持有（锁随进程退出释放）
+    // Windows / 其它平台不做 pid 查询；判定完全交给 reclaimable 的 PidPolicy::Windows 分支
     false
 }
 
-#[cfg(not(any(unix, windows)))]
-fn pid_definitely_gone(_pid: u32) -> bool {
-    false
-}
-
-fn owner_still_active(root: &Path, name: &str, owner: &StagingOwner) -> bool {
-    // Unix：pid 明确已退出才继续看锁；存活或无法确认直接保留。Windows 该函数恒为 false。
-    if !pid_definitely_gone(owner.pid) { return true; }
-    // 进程已不存在时再看锁：被其它进程持有（或无法确认）都保留
+fn lock_is_held(root: &Path, name: &str) -> bool {
     match fs::OpenOptions::new().create(true).read(true).write(true).open(staging_lock_path(root, name)) {
         Ok(f) => fs2::FileExt::try_lock_exclusive(&f).is_err(),
-        Err(_) => true,
+        Err(_) => true, // 无法确认 → 当作被持有（保留）
     }
 }
 
@@ -988,7 +1038,8 @@ pub fn cleanup_staging(root: &Path, active: &[String]) {
             continue;
         };
         let age = now_unix().saturating_sub(owner.created_at);
-        if age <= STAGING_MAX_AGE_SECS || owner_still_active(root, &name, &owner) { continue; }
+        let held = lock_is_held(root, &name);
+        if !reclaimable(age, current_pid_policy(), pid_definitely_gone(owner.pid), held) { continue; }
         eprintln!("清理过期 staging {name}（pid {}，{} 秒）", owner.pid, age);
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_file(staging_lock_path(root, &name));
@@ -1069,21 +1120,10 @@ pub fn valid_sha256(s: &str) -> bool {
         && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || (b'A'..=b'F').contains(&b))
 }
 
-// 只保留当前版本目录：storage.json 等文件不在清理范围内
-pub fn prune_versions(root: &Path, id: &str, keep: &str) {
-    let plugin_root = plugin_dir(root, id);
-    let Ok(entries) = fs::read_dir(&plugin_root) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == keep {
-            continue;
-        }
-        if path.is_dir() {
-            let _ = fs::remove_dir_all(&path);
-        }
-    }
-}
+// 已移除「按插件 id 扫目录、删掉 keep 以外所有目录」的 prune_versions：
+// 它会连不属于当前事务的孤立 .old-* 与未登记目录一起删掉。现在清理范围由
+// registered_paths（记录里的 target / backup / staging / previous_state.version）决定，
+// 见 cleanup_after_commit。
 
 pub fn remove_plugin(root: &Path, id: &str) -> Result<(), String> {
     let dir = plugin_dir(root, id);
@@ -1800,11 +1840,9 @@ mod tests {
     fn pid_judgement_only_treats_esrch_as_gone() {
         assert!(!pid_definitely_gone(std::process::id()), "当前进程必须视为存活");
         assert!(pid_definitely_gone(999_999), "不存在的 pid 视为已退出");
-        // EPERM / 其它错误按「无法确认」= 存活处理：owner_still_active 只看 ESRCH
-        let root = tmpdir("c6-pid");
-        let owner = StagingOwner { pid: std::process::id(), created_at: 0 };
-        assert!(owner_still_active(&root, ".staging-x", &owner), "活进程 → 保留");
-        fs::remove_dir_all(&root).ok();
+        // EPERM / 其它错误按「无法确认」= 存活处理：reclaimable 只看 pid_gone
+        assert!(!reclaimable(STAGING_MAX_AGE_SECS + 60, PidPolicy::Unix, false, false), "Unix：无法确认存活必须保留");
+        assert!(reclaimable(STAGING_MAX_AGE_SECS + 60, PidPolicy::Unix, true, false), "Unix：pid 已退出且锁空闲才可清理");
     }
 
     // ---- 回修 6 · 6：摘要按实际读取字节计数 ----
@@ -1822,6 +1860,95 @@ mod tests {
         assert_eq!(digest, sha256_hex(&vec![7u8; 4096]));
         assert!(hash_file_limited(&path, &mut buf, 1024, 0, 8192).is_err(), "实际字节超单文件上限要报错");
         fs::remove_dir_all(&root).unwrap();
+    }
+
+
+    // ---- 回修 7 · 1：只删当前事务有证据的副本 ----
+    #[test]
+    fn reinstall_aborts_when_orphan_backup_exists() {
+        let root = setup("c7-orphan-abort");
+        // 已装 1.0.0（target 存在），旁边有一个没有提交证据的 .old-1.0.0
+        write_pkg(&version_dir(&root, "hello", "1.0.0"), "old", &[]);
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
+        fs::write(plugin_dir(&root, "hello").join(".old-1.0.0/keep.txt"), b"keep").unwrap();
+        let staging = stage_pkg(&root, "x", "new");
+        let mut tx = begin_install(&root, "hello", "1.0.0", &staging, None).unwrap();
+        let err = tx.swap().unwrap_err();
+        assert!(err.contains("未确认的旧备份"), "{err}");
+        assert!(plugin_dir(&root, "hello").join(".old-1.0.0/keep.txt").exists(), "孤立备份必须保留");
+        assert!(read_repair(&root, "hello").is_some(), "插件要标为待修复");
+        assert!(version_dir(&root, "hello", "1.0.0").join("index.html").exists(), "target 不动");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn committed_cleanup_only_deletes_registered_paths() {
+        let root = setup("c7-scope");
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        // 记录登记的备份（会被删）
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
+        // 旁边的孤立备份与未登记目录（必须保留）
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-0.9.0")).unwrap();
+        fs::create_dir_all(plugin_dir(&root, "hello").join("0.8.0")).unwrap();
+        fs::write(plugin_dir(&root, "hello").join("0.8.0/keep.txt"), b"x").unwrap();
+        let mut r = rec(&root, "oldid", &new_id, None, None);
+        r.stage = TxStage::Committed;
+        put_tx(&root, &r);
+        let out = recover_transactions(&root);
+        assert!(out.problems.is_empty(), "{:?}", out.problems);
+        assert!(!plugin_dir(&root, "hello").join(".old-1.0.0").exists(), "记录登记过的备份要删");
+        assert!(plugin_dir(&root, "hello").join(".old-0.9.0").exists(), "未登记的孤立备份必须保留");
+        assert!(plugin_dir(&root, "hello").join("0.8.0/keep.txt").exists(), "未登记目录必须保留");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn non_committed_recovery_leaves_orphan_backups_alone() {
+        let root = setup("c7-noncommitted");
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-0.9.0")).unwrap();
+        fs::write(plugin_dir(&root, "hello").join(".old-0.9.0/keep.txt"), b"x").unwrap();
+        let new = entry("1.0.0", 'b', true);
+        seed_state(&root, Some(new.clone()));
+        // 第 6 行（首次安装 + state 已是新）走 FinishNew → cleanup_after_commit
+        let rec_row6 = rec(&root, "", &new_id, None, Some(new));
+        put_tx(&root, &rec_row6);
+        let out = recover_transactions(&root);
+        assert!(out.problems.is_empty(), "{:?}", out.problems);
+        assert!(plugin_dir(&root, "hello").join(".old-0.9.0/keep.txt").exists(), "非 committed 恢复不碰孤立备份");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn upgrade_cleanup_removes_only_recorded_previous_version() {
+        let root = setup("c7-upgrade");
+        write_pkg(&version_dir(&root, "hello", "0.9.0"), "old", &[]);
+        let new_id = write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-0.8.0")).unwrap();
+        let mut r = rec(&root, "oldid", &new_id, Some(entry("0.9.0", 'a', true)), Some(entry("1.0.0", 'b', true)));
+        r.stage = TxStage::Committed;
+        put_tx(&root, &r);
+        let out = recover_transactions(&root);
+        assert!(out.problems.is_empty(), "{:?}", out.problems);
+        assert!(!version_dir(&root, "hello", "0.9.0").exists(), "previous_state 登记的旧版本要删");
+        assert!(version_dir(&root, "hello", "1.0.0").exists(), "target 保留");
+        assert!(plugin_dir(&root, "hello").join(".old-0.8.0").exists(), "未登记的 .old 保留");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- 回修 7 · 3：Windows 跳过 pid 判据（纯函数可注入） ----
+    #[test]
+    fn reclaimable_policy_differs_for_windows() {
+        let old = STAGING_MAX_AGE_SECS + 60;
+        // Windows：不看 pid，只看时间 + 锁
+        assert!(reclaimable(old, PidPolicy::Windows, false, false), "Windows 不依赖 pid，可清理");
+        assert!(!reclaimable(old, PidPolicy::Windows, true, true), "锁被持有则保留");
+        assert!(!reclaimable(STAGING_MAX_AGE_SECS, PidPolicy::Windows, true, false), "未超 15 分钟保留");
+        // Unix：pid 未确认退出则保留（即便锁空闲）
+        assert!(!reclaimable(old, PidPolicy::Unix, false, false), "Unix：pid 未确认退出保留");
+        assert!(reclaimable(old, PidPolicy::Unix, true, false), "Unix：pid 已退出 + 锁空闲可清理");
+        assert!(!reclaimable(old, PidPolicy::Unix, true, true), "锁被持有保留");
+        assert_eq!(current_pid_policy(), if cfg!(windows) { PidPolicy::Windows } else { PidPolicy::Unix });
     }
 
 }
