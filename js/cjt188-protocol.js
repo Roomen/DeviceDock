@@ -669,9 +669,15 @@
 			const isSek = v === 'sek'
 			const card = document.getElementById('cjt188-down-card')
 			if (card) card.style.display = isCjt188 ? '' : 'none'
-			;['sk-down-card', 'sk-rw-card', 'sk-batch-card', 'serial-protocol-advanced'].forEach(function (id) {
+			// SEK 专属的下发卡片与高级设置只在 SEK 下显示
+			;['sk-down-card', 'serial-protocol-advanced'].forEach(function (id) {
 				const el = document.getElementById(id)
 				if (el) el.style.display = isSek ? '' : 'none'
+			})
+			// 随机读写 / 批量配置是协议驱动的工具：非 188 协议都显示，由它们自己按当前协议是否提供字段目录给出提示
+			;['sk-rw-card', 'sk-batch-card'].forEach(function (id) {
+				const el = document.getElementById(id)
+				if (el) el.style.display = isCjt188 ? 'none' : ''
 			})
 		}
 		const protoSel = document.getElementById('serial-protocol-select')

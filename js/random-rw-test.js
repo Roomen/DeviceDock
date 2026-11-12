@@ -8,49 +8,6 @@
 	const IR_KEEPALIVE_TIMEOUT = 4000
 	const DEFAULT_STEP_TIMEOUT = 5000
 	const DEFAULT_GAP_MS = 200
-	const SUPPORTED_PROTOCOLS = { sek: true }
-
-	// ---------- SEK 用例目录 ----------
-	const SEK_CASES = {
-		queries: [
-			{ id: 'q-base', name: '查询基础数据', queryId: 1, expectTag: 1 },
-			{ id: 'q-core', name: '查询核心数据', queryId: 2, expectTag: 2 },
-			{ id: 'q-param', name: '查询终端参数', queryId: 3, expectTag: 3 },
-			{ id: 'q-alarm', name: '查询告警数据', queryId: 4, expectTag: 4 },
-			{ id: 'q-run', name: '查询运行信息', queryId: 7, expectTag: 91 },
-			{ id: 'q-up', name: '查询上行信息', queryId: 8, expectTag: 92 }
-		],
-		fields: [
-			{ id: 'rw-t3-0', name: '过流告警阈值', tag: 3, fid: 0, type: 'uint32le', min: 1, max: 50000 },
-			{ id: 'rw-t3-1', name: '持续过流告警时间', tag: 3, fid: 1, type: 'uint8', min: 1, max: 120 },
-			{ id: 'rw-t3-2', name: '反流告警阈值', tag: 3, fid: 2, type: 'uint32le', min: 1, max: 5000 },
-			{ id: 'rw-t3-3', name: '持续反流告警时间', tag: 3, fid: 3, type: 'uint8', min: 1, max: 120 },
-			{ id: 'rw-t3-4', name: '电压告警阈值', tag: 3, fid: 4, type: 'uint16le', min: 0, max: 400 },
-			{ id: 'rw-t3-9', name: '上报频率', tag: 3, fid: 9, type: 'uint16le', min: 30, max: 1440, step: 30 },
-			{ id: 'rw-t3-10', name: '上报重发次数', tag: 3, fid: 10, type: 'uint8', min: 0, max: 4 },
-			{ id: 'rw-t3-11', name: '上报重发间隔', tag: 3, fid: 11, type: 'uint8', min: 1, max: 60 },
-			{ id: 'rw-t3-12', name: '数据采样间隔', tag: 3, fid: 12, type: 'uint16le', min: 30, max: 1440, step: 30 },
-			{ id: 'rw-t3-14', name: '密集采样起始小时', tag: 3, fid: 14, type: 'uint8', min: 0, max: 23 },
-			{ id: 'rw-t3-15', name: '密集采样间隔', tag: 3, fid: 15, type: 'uint8', min: 5, max: 60, step: 5 },
-			{ id: 'rw-t3-18', name: '水表口径', tag: 3, fid: 18, type: 'enum', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] },
-			{ id: 'rw-t3-22', name: '维护上报频率', tag: 3, fid: 22, type: 'uint16le', min: 1440, max: 10080, step: 1440 },
-			{ id: 'rw-t3-28', name: '脉冲形式', tag: 3, fid: 28, type: 'enum', values: [0, 1, 2, 3, 4, 5, 8, 9] },
-			{ id: 'rw-t3-29', name: '基准水量', tag: 3, fid: 29, type: 'enum', values: [0, 1, 2, 3, 4, 5, 6] },
-			{ id: 'rw-t3-30', name: '基表整数位数', tag: 3, fid: 30, type: 'uint8', min: 4, max: 8 },
-			{ id: 'rw-t3-32', name: '设备校时类型', tag: 3, fid: 32, type: 'enum', values: [0, 1] },
-			{ id: 'rw-t3-34', name: '机电分离状态', tag: 3, fid: 34, type: 'enum', values: [0, 1] },
-			{ id: 'rw-t3-38', name: '计量模组开关', tag: 3, fid: 38, type: 'enum', values: [0, 1] },
-			{ id: 'rw-t3-40', name: '维护平台连接模式', tag: 3, fid: 40, type: 'enum', values: [0, 1] },
-			{ id: 'rw-t3-41', name: '用水量功能超时', tag: 3, fid: 41, type: 'uint16le', min: 0, max: 3600 }
-		]
-	}
-
-	const TAG_QUERY_ID = {
-		1: 1, 2: 2, 3: 3, 4: 4,
-		32: 10, 33: 11, 34: 13, 35: 35, 36: 15, 37: 18, 38: 22,
-		30: 30, 31: 31, 91: 7, 92: 8
-	}
-
 	// ---------- PRNG ----------
 	function mulberry32(seed) {
 		let t = seed >>> 0
@@ -69,7 +26,7 @@
 
 	function pickRandomVal(rng, c) {
 		if (c.type === 'enum') {
-			const vs = c.values || []
+			const vs = (c.enum || []).map(function (e) { return e.value })
 			if (!vs.length) return null
 			return vs[Math.floor(rng() * vs.length)]
 		}
@@ -130,7 +87,7 @@
 	}
 
 	function fieldKey(c) {
-		return c.tag + '-' + c.fid
+		return c.key || (c.tag + '-' + c.fid)
 	}
 
 	// ---------- DOM ----------
@@ -178,50 +135,73 @@
 	}
 
 	// ---------- 协议 ----------
+	// 字段目录、查询目录与执行器都来自当前协议(v1 契约的 fields / queries / tx)，本文件不写死任何协议数据
 	function getActiveProtoId() {
 		return window._activeProtocol ||
 			(document.getElementById('serial-protocol-select') || {}).value ||
 			'sek'
 	}
 
+	function getActiveProto() {
+		return typeof window.getActiveProtocol === 'function' ? window.getActiveProtocol() : null
+	}
+
 	function getActiveProtoName() {
-		const p = typeof window.getActiveProtocol === 'function' ? window.getActiveProtocol() : null
+		const p = getActiveProto()
 		if (p && p.name) return p.name
 		const id = getActiveProtoId()
 		return id ? id.toUpperCase() : '?'
 	}
 
+	function getCatalog() {
+		const p = getActiveProto()
+		return {
+			fields: p && Array.isArray(p.fields) ? p.fields : [],
+			queries: p && Array.isArray(p.queries) ? p.queries : [],
+		}
+	}
+
+	// 不能跑的具体原因：没注册 / 没字段目录 / 没执行器 / 没查询用例
+	function unsupportedReason() {
+		const p = getActiveProto()
+		if (!p) return '未注册'
+		if (!Array.isArray(p.fields) || !p.fields.length) return '未提供字段目录'
+		if (!p.tx) return '未提供随机读写执行接口'
+		if (!Array.isArray(p.queries) || !p.queries.length) return '未提供查询用例'
+		return ''
+	}
+
 	function isProtoSupported() {
-		return !!SUPPORTED_PROTOCOLS[getActiveProtoId()]
+		return !unsupportedReason()
 	}
 
 	function refreshProtoUi() {
-		const id = getActiveProtoId()
 		const name = getActiveProtoName()
-		const ok = isProtoSupported()
+		const reason = unsupportedReason()
 		if (el.titleProto) el.titleProto.textContent = name
 		if (el.hint) {
-			if (!ok) {
-				el.hint.textContent = '当前协议「' + name + '」暂不支持随机读写测试'
+			if (reason) {
+				el.hint.textContent = '当前协议「' + name + '」' + reason + '，无法运行随机读写测试'
 			} else {
 				el.hint.textContent = '协议 ' + name +
 					' · 真随机读/写/查询交错 · seed=随机序列种子(相同seed可复现) · 不含开猫/复位/表号/IP/时间'
 			}
 		}
-		if (el.start && !running) el.start.disabled = !ok
-		if (el.card) el.card.classList.toggle('is-disabled', !ok)
+		if (el.start && !running) el.start.disabled = !!reason
+		if (el.card) el.card.classList.toggle('is-disabled', !!reason)
 	}
 
 	// ---------- 事务 ----------
 	function assertRunning() {
 		if (stopFlag) throw new Error('测试已停止')
 		if (!window.serialApi || !window.serialApi.isOpen()) throw new Error('串口未打开')
-		if (!window.sekTx) throw new Error('sekTx 未加载')
+		const p = getActiveProto()
+		if (!p || !p.tx) throw new Error('当前协议未提供随机读写执行接口')
 	}
 
 	function requireTx() {
 		assertRunning()
-		return window.sekTx
+		return getActiveProto().tx
 	}
 
 	function invalidateTag(tag) { delete tagCache[tag] }
@@ -229,14 +209,7 @@
 
 	async function sendQueryRaw(queryId, timeoutMs) {
 		const tx = requireTx()
-		const res = await tx.sendAndWait({
-			buildOpts: {
-				funcCode: '0x03',
-				tlv: [{ tag: 10, items: [{ id: queryId, value: [] }] }]
-			},
-			expectFunc: 0x83,
-			timeoutMs: timeoutMs || DEFAULT_STEP_TIMEOUT
-		})
+		const res = await tx.queryById(queryId, { timeoutMs: timeoutMs || DEFAULT_STEP_TIMEOUT })
 		lastCommAt = Date.now()
 		return res
 	}
@@ -262,26 +235,16 @@
 		}
 	}
 
-	async function doQuery(queryId, expectTag, timeoutMs) {
+	async function doQuery(queryId, timeoutMs) {
 		await keepAliveIfNeeded()
-		const res = await sendQueryRaw(queryId, timeoutMs)
-		if (expectTag != null && res.frame) {
-			tagCache[expectTag] = { frame: res.frame, at: Date.now() }
-		}
-		return res
+		return sendQueryRaw(queryId, timeoutMs)
 	}
 
-	async function doWrite(tag, fid, valueBytes, timeoutMs) {
+	async function doWrite(field, valueBytes, timeoutMs) {
 		const tx = requireTx()
 		await keepAliveIfNeeded()
-		const res = await tx.sendAndWait({
-			buildOpts: {
-				funcCode: '0x01',
-				tlv: [{ tag: tag, items: [{ id: fid, value: valueBytes }] }]
-			},
-			expectFunc: 0x81,
-			timeoutMs: timeoutMs || DEFAULT_STEP_TIMEOUT
-		})
+		const tag = field.tag
+		const res = await tx.writeRaw({ tag: tag, id: field.fid, bytes: valueBytes }, { timeoutMs: timeoutMs || DEFAULT_STEP_TIMEOUT })
 		lastCommAt = Date.now()
 		invalidateTag(tag)
 		if (res.tag11 != null && res.tag11 !== 1) {
@@ -295,22 +258,20 @@
 		return res
 	}
 
-	function extractField(frame, tag, fid) {
-		const it = window.sekTx.findTlvItem(frame, tag, fid)
-		if (!it) return null
-		return it.raw ? it.raw.slice() : null
-	}
-
-	async function readField(tag, fid, timeoutMs, forceRefresh) {
-		const qid = TAG_QUERY_ID[tag]
-		if (qid == null) throw new Error('无 Tag' + tag + ' 的整包查询码')
-		if (!forceRefresh && tagCache[tag] && tagCache[tag].frame) {
-			const cached = extractField(tagCache[tag].frame, tag, fid)
-			if (cached) return cached
+	// 按 tag 整包查询一次，取该字段的原始字节；同一 tag 的结果在 tagCache 里复用，写入后失效
+	async function readField(field, timeoutMs, forceRefresh) {
+		const tx = requireTx()
+		const tag = field.tag
+		if (!forceRefresh && tagCache[tag] && tagCache[tag].values && tagCache[tag].values[field.key]) {
+			return tagCache[tag].values[field.key].slice()
 		}
-		const res = await doQuery(qid, tag, timeoutMs)
-		tagCache[tag] = { frame: res.frame, at: Date.now() }
-		return extractField(res.frame, tag, fid)
+		await keepAliveIfNeeded()
+		const res = await tx.readTag(tag, { timeoutMs: timeoutMs || DEFAULT_STEP_TIMEOUT })
+		lastCommAt = Date.now()
+		if (!res) throw new Error('无 Tag' + tag + ' 的整包查询码')
+		tagCache[tag] = { values: res.values, at: Date.now() }
+		const bytes = res.values[field.key]
+		return bytes ? bytes.slice() : null
 	}
 
 	// ---------- 随机步骤生成 ----------
@@ -374,8 +335,8 @@
 
 		if (step.op === 'query') {
 			const q = step.q
-			const res = await doQuery(q.queryId, q.expectTag, timeoutMs)
-			if (q.expectTag != null && !window.sekTx.hasTag(res.frame, q.expectTag)) {
+			const res = await doQuery(q.queryId, timeoutMs)
+			if (q.expectTag != null && !requireTx().hasTag(res.frame, q.expectTag)) {
 				return { status: 'unsupported', detail: '响应无 Tag' + q.expectTag }
 			}
 			return { status: 'pass', detail: '查询OK' }
@@ -386,7 +347,7 @@
 		const label = f.name + '(T' + f.tag + '-ID' + f.fid + ')'
 
 		if (step.op === 'read') {
-			const raw = await readField(f.tag, f.fid, timeoutMs, true)
+			const raw = await readField(f, timeoutMs, true)
 			if (!raw || !raw.length) {
 				return { status: 'unsupported', detail: label + ' 设备未返回该字段' }
 			}
@@ -399,7 +360,7 @@
 		if (step.op === 'write') {
 			// 首次写前记下原值
 			if (!ctx.originals[key]) {
-				const orig = await readField(f.tag, f.fid, timeoutMs, false)
+				const orig = await readField(f, timeoutMs, false)
 				if (!orig || !orig.length) {
 					return { status: 'unsupported', detail: label + ' 无法读原值, 可能不支持' }
 				}
@@ -418,7 +379,7 @@
 			}
 			const newBytes = numToBytes(newVal, f.type === 'enum' ? 'enum' : f.type)
 			try {
-				await doWrite(f.tag, f.fid, newBytes, timeoutMs)
+				await doWrite(f, newBytes, timeoutMs)
 			} catch (e) {
 				if (e.unsupported || e.skipLike) {
 					return { status: 'unsupported', detail: label + ' ' + e.message }
@@ -434,17 +395,17 @@
 			const expected = ctx.lastWrite[key]
 			if (!expected) {
 				// 无写入记录则当 read
-				const raw = await readField(f.tag, f.fid, timeoutMs, true)
+				const raw = await readField(f, timeoutMs, true)
 				if (!raw || !raw.length) {
 					return { status: 'unsupported', detail: label + ' 设备未返回该字段' }
 				}
 				return { status: 'pass', detail: label + ' 读检=' + bytesToNum(raw, f.type) }
 			}
-			const raw = await readField(f.tag, f.fid, timeoutMs, true)
+			const raw = await readField(f, timeoutMs, true)
 			if (!raw || !raw.length) {
 				return { status: 'fail', detail: label + ' 校验读回为空' }
 			}
-			const ok = window.sekTx.bytesEqual(raw, expected)
+			const ok = requireTx().bytesEqual(raw, expected)
 			const detail = label + ' 期望=' + bytesToNum(expected, f.type) +
 				' 实际=' + bytesToNum(raw, f.type) +
 				' [' + hexOf(expected) + ' vs ' + hexOf(raw) + ']'
@@ -466,10 +427,10 @@
 			const o = originals[keys[i]]
 			const f = o.field
 			try {
-				await doWrite(f.tag, f.fid, o.bytes, timeoutMs)
+				await doWrite(f, o.bytes, timeoutMs)
 				await sleep(80)
-				const rb = await readField(f.tag, f.fid, timeoutMs, true)
-				if (rb && window.sekTx.bytesEqual(rb, o.bytes)) {
+				const rb = await readField(f, timeoutMs, true)
+				if (rb && requireTx().bytesEqual(rb, o.bytes)) {
 					oks.push(f.name)
 				} else {
 					fails.push(f.name + ' 写回后=' + hexOf(rb) + ' 期望=' + hexOf(o.bytes))
@@ -509,17 +470,14 @@
 	// ---------- 主流程 ----------
 	async function runAll() {
 		if (running) return
-		if (!isProtoSupported()) {
+		const reason = unsupportedReason()
+		if (reason) {
 			setStatus('当前协议不支持', 'err')
-			logLine('协议「' + getActiveProtoName() + '」无随机读写实现', 'fail')
+			logLine('协议「' + getActiveProtoName() + '」' + reason, 'fail')
 			return
 		}
 		if (!window.serialApi || !window.serialApi.isOpen()) {
 			setStatus('请先打开串口', 'err')
-			return
-		}
-		if (!window.sekTx) {
-			setStatus('事务层未加载', 'err')
 			return
 		}
 
@@ -547,7 +505,7 @@
 			const doRestore = !(el.restore && !el.restore.checked)
 			const rng = mulberry32(seed)
 			const protoName = getActiveProtoName()
-			const catalog = SEK_CASES
+			const catalog = getCatalog()
 	
 			const plan = buildRandomPlan(rng, catalog, stepsN)
 			const total = plan.length
@@ -574,13 +532,13 @@
 			logLine('指令模式: 查询/读字段/写字段(可连写1~3次)/校验 随机交错', 'info')
 			logLine('红外保活阈值 ' + (IR_IDLE_MS / 1000) + 's · 不含开猫/复位/表号/IP/时间/密钥', 'info')
 	
-			window.sekTx.clearBuffer()
+			requireTx().reset()
 			clearTagCache()
 			lastCommAt = Date.now()
 	
 			// 先做一次连通查询
 			try {
-				await doQuery(1, 1, timeoutMs)
+				await doQuery(1, timeoutMs)
 				logLine('连通检查 OK', 'pass')
 			} catch (e) {
 				logLine('连通检查失败: ' + e.message, 'fail')
@@ -700,8 +658,9 @@
 	function stopAll() {
 		stopFlag = true
 		setStatus('正在停止…', 'warn')
-		if (window.sekTx && typeof window.sekTx.cancelAll === 'function') {
-			try { window.sekTx.cancelAll('测试已停止') } catch (e) { /* */ }
+		const p = getActiveProto()
+		if (p && p.tx && typeof p.tx.cancel === 'function') {
+			try { p.tx.cancel('测试已停止') } catch (e) { /* */ }
 		}
 	}
 
@@ -738,7 +697,10 @@
 
 		const sel = $('serial-protocol-select')
 		if (sel) {
-			sel.addEventListener('change', refreshProtoUi)
+			sel.addEventListener('change', function () {
+				clearTagCache()
+				refreshProtoUi()
+			})
 		}
 		refreshProtoUi()
 	}
@@ -752,6 +714,6 @@
 	window.skRandomRw = {
 		runAll: runAll,
 		stop: stopAll,
-		SUPPORTED_PROTOCOLS: SUPPORTED_PROTOCOLS
+		isProtoSupported: isProtoSupported,
 	}
 })()

@@ -1,7 +1,7 @@
 // SEK 协议批量参数配置写入 + 回读确认
-// 用户从 window.SK_DOWN_PRESETS (0x01 且带 param 的预设) 自建配置清单, 按顺序逐条下发,
+// 用户从当前协议的 presets (0x01 且带 param 的预设) 自建配置清单, 按顺序逐条下发,
 // 全部发完后按 tag 整包查询回读比对。自成一体, 不依赖 random-rw-test.js 内部实现,
-// 仅用 window.sekTx / window.serialApi / window.SK_DOWN_PRESETS 公开数据
+// 只用协议对象上的 presets / buildRead / tx 与 window.serialApi 公开数据
 ;(function () {
 	'use strict'
 
@@ -11,13 +11,29 @@
 	const DEFAULT_GAP_MS = 200
 	const STATE_KEY = 'sk-batch-state'
 
-	// tag → 整包查询 queryId 映射; 不在表内的 tag 跳过回读, 仅凭写应答判断
-	const TAG_QUERY_ID = {
-		1: 1, 2: 2, 3: 3, 4: 4,
-		30: 30, 31: 31, 32: 10, 33: 11, 34: 13, 35: 35, 36: 15, 37: 18, 38: 22
-	}
-
 	const SUPPORTED_TYPES = { bcd: 1, ascii: 1, uint8: 1, uint16le: 1, uint32le: 1, enum: 1 }
+
+	// ---------- 协议 ----------
+	// 配置项目录来自当前协议的 presets，写入与回读走协议的测试执行器 tx(v1 契约)；
+	// 本文件不再写死任何 tag → 查询码映射。
+	function getActiveProto() {
+		return typeof window.getActiveProtocol === 'function' ? window.getActiveProtocol() : null
+	}
+	function getPresets() {
+		const p = getActiveProto()
+		return p && Array.isArray(p.presets) ? p.presets : []
+	}
+	function getTx() {
+		const p = getActiveProto()
+		return p && p.tx ? p.tx : null
+	}
+	function unsupportedReason() {
+		const p = getActiveProto()
+		if (!p) return '未注册'
+		if (!Array.isArray(p.presets) || !p.presets.length) return '未提供配置项目录'
+		if (!p.tx) return '未提供批量写入执行接口'
+		return ''
+	}
 
 	// ---------- 编码 ----------
 	// digitStr: 纯数字字符串; len: 目标字节数
@@ -84,7 +100,7 @@
 	function buildPresetIndex() {
 		PRESET_BY_NAME = {}
 		PRESET_GROUPS = []
-		const groups = window.SK_DOWN_PRESETS || []
+		const groups = getPresets()
 		groups.forEach(function (g) {
 			const filtered = (g.items || []).filter(function (it) {
 				return it.func === '0x01' && it.param && SUPPORTED_TYPES[it.param.type] && it.tlv && it.tlv[0] && it.tlv[0].items && it.tlv[0].items[0]
@@ -177,7 +193,7 @@
 	function assertRunning() {
 		if (stopFlag) throw new Error('已停止')
 		if (!window.serialApi || !window.serialApi.isOpen()) throw new Error('串口未打开')
-		if (!window.sekTx) throw new Error('sekTx 未加载')
+		if (!getTx()) throw new Error('当前协议未提供批量写入执行接口')
 	}
 
 	async function keepAliveIfNeeded() {
@@ -190,11 +206,7 @@
 		logLine('距上次通信已 ' + Math.round((Date.now() - lastCommAt) / 1000) +
 			's, 发送保活查询(阈值' + (IR_IDLE_MS / 1000) + 's)', 'info')
 		try {
-			await window.sekTx.sendAndWait({
-				buildOpts: { funcCode: '0x03', tlv: [{ tag: 10, items: [{ id: 1, value: [] }] }] },
-				expectFunc: 0x83,
-				timeoutMs: IR_KEEPALIVE_TIMEOUT
-			})
+			await getTx().queryById(1, { timeoutMs: IR_KEEPALIVE_TIMEOUT })
 			lastCommAt = Date.now()
 			logLine('保活成功', 'info')
 		} catch (e) {
@@ -239,14 +251,7 @@
 			let ok = false
 			let err = null
 			try {
-				const res = await window.sekTx.sendAndWait({
-					buildOpts: {
-						funcCode: '0x01',
-						tlv: [{ tag: item.tag, items: [{ id: item.id, value: item.bytes }] }]
-					},
-					expectFunc: 0x81,
-					timeoutMs: timeoutMs
-				})
+				const res = await getTx().writeRaw({ tag: item.tag, id: item.id, bytes: item.bytes }, { timeoutMs: timeoutMs })
 				lastCommAt = Date.now()
 				tag11 = res.tag11
 				ok = (tag11 === 1)
@@ -259,9 +264,17 @@
 			if (gapMs > 0) await sleep(gapMs)
 		}
 
-		// 回读: 对涉及到的 tag 分别整包查询(去重), 不在映射表内的 tag 跳过回读
+		// 回读: 对涉及到的 tag 分别整包查询(去重)；协议给不出该 tag 的查询请求时跳过回读
+		const proto = getActiveProto()
+		const readReq = {}
 		const neededTagsSet = {}
-		plan.forEach(function (p) { if (TAG_QUERY_ID[p.tag] != null) neededTagsSet[p.tag] = true })
+		plan.forEach(function (p) {
+			const req = proto && typeof proto.buildRead === 'function' ? proto.buildRead({ tag: p.tag }) : null
+			if (req && req.queryId != null) {
+				readReq[p.tag] = req
+				neededTagsSet[p.tag] = true
+			}
+		})
 		const neededTags = Object.keys(neededTagsSet).map(Number)
 		const frames = {}
 		for (let i = 0; i < neededTags.length; i++) {
@@ -269,12 +282,7 @@
 			try {
 				if (stopFlag) throw new Error('已停止')
 				await keepAliveIfNeeded()
-				const qid = TAG_QUERY_ID[tag]
-				const res = await window.sekTx.sendAndWait({
-					buildOpts: { funcCode: '0x03', tlv: [{ tag: 10, items: [{ id: qid, value: [] }] }] },
-					expectFunc: 0x83,
-					timeoutMs: timeoutMs
-				})
+				const res = await getTx().queryById(readReq[tag].queryId, { timeoutMs: timeoutMs })
 				lastCommAt = Date.now()
 				frames[tag] = res.frame
 			} catch (e) {
@@ -287,15 +295,14 @@
 			let readBytes = null
 			let readOk = false
 			let skippedRead = false
-			if (TAG_QUERY_ID[p.tag] == null) {
+			if (!readReq[p.tag]) {
 				skippedRead = true
 				readOk = !!wr.ok
 			} else {
 				const frame = frames[p.tag]
 				if (frame) {
-					const it = window.sekTx.findTlvItem(frame, p.tag, p.id)
-					readBytes = (it && it.raw) ? it.raw.slice() : null
-					readOk = !!(wr.ok && readBytes && window.sekTx.bytesEqual(readBytes, p.bytes))
+					readBytes = getTx().readItem(frame, p.tag, p.id)
+					readOk = !!(wr.ok && readBytes && getTx().bytesEqual(readBytes, p.bytes))
 				}
 			}
 			return {
@@ -509,6 +516,16 @@
 	}
 
 	// ---------- UI 状态 ----------
+	function refreshProtoHint() {
+		const badge = $('sk-batch-proto-name')
+		const p = getActiveProto()
+		if (badge) badge.textContent = p && p.name ? p.name : '—'
+		if (running) return
+		const reason = unsupportedReason()
+		if (reason) setStatus('当前协议' + reason + '，无法批量配置', 'err')
+		else updateIdleStatus()
+	}
+
 	function updateIdleStatus() {
 		if (running) return
 		setProgressText('已配 ' + current + ' 台')
@@ -532,8 +549,9 @@
 			setStatus('请先打开串口', 'err')
 			return false
 		}
-		if (!window.sekTx) {
-			setStatus('事务层未加载(sekTx)', 'err')
+		const reason = unsupportedReason()
+		if (reason) {
+			setStatus('当前协议不支持：' + reason, 'err')
 			return false
 		}
 		if (!list.length) {
@@ -590,8 +608,9 @@
 	function stopAll() {
 		stopFlag = true
 		setStatus('正在停止…', 'warn')
-		if (window.sekTx && typeof window.sekTx.cancelAll === 'function') {
-			try { window.sekTx.cancelAll('已停止') } catch (e) { /* */ }
+		const tx = getTx()
+		if (tx) {
+			try { tx.cancel('已停止') } catch (e) { /* */ }
 		}
 	}
 
@@ -627,6 +646,7 @@
 		loadState()
 		renderList()
 		updateIdleStatus()
+		refreshProtoHint()
 
 		el.add.addEventListener('click', function () {
 			const name = el.presetSelect.value
@@ -653,6 +673,16 @@
 		el.stop.disabled = true
 		el.reset.addEventListener('click', resetCount)
 
+		// 切协议后配置项目录跟着换，并在协议给不出配置项目录时直接说明原因
+		const protoSel = $('serial-protocol-select')
+		if (protoSel) {
+			protoSel.addEventListener('change', function () {
+				buildPresetIndex()
+				renderPresetSelect()
+				refreshProtoHint()
+			})
+		}
+
 		const persistOn = [el.timeout, el.gap, el.continueOnFail]
 		persistOn.forEach(function (input) {
 			if (!input) return
@@ -677,6 +707,6 @@
 		computeEntryBytes: computeEntryBytes,
 		writeOne: writeOne,
 		stop: stopAll,
-		TAG_QUERY_ID: TAG_QUERY_ID
+		isSupported: function () { return !unsupportedReason() },
 	}
 })()

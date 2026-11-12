@@ -1142,7 +1142,8 @@
 	}
 
 	// ---- 协议注册表 ----
-	window._protocols = {}
+	// 存储对象由 js/protocol-registry.js 建立并管理(它在 common.js 之前加载)，这里只保证它存在
+	window._protocols = window._protocols || {}
 	window._activeProtocol = 'sek'
 
 	// ---- 按路协议 ----
@@ -1212,22 +1213,55 @@
 		sel.value = want
 		sel.dispatchEvent(new Event('change'))
 	}
+	// 顶栏协议下拉按组重建：内置一组，每个外部来源一组。选项的唯一来源是注册表，
+	// 协议模块不要再自己往下拉里插 option（外置包经 DeviceDockProtocols.registerExternal 进同一张表）
+	function rebuildProtocolSelect() {
+		var sel = document.getElementById('serial-protocol-select')
+		if (!sel) return
+		var prev = sel.value
+		var groups = window.DeviceDockProtocols ? window.DeviceDockProtocols.groups() : []
+		sel.textContent = ''
+		groups.forEach(function (g) {
+			var og = document.createElement('optgroup')
+			og.label = g.label
+			g.items.forEach(function (it) {
+				var opt = document.createElement('option')
+				opt.value = it.id
+				opt.textContent = it.name || it.id
+				og.appendChild(opt)
+			})
+			sel.appendChild(og)
+		})
+		function has(v) { return !!v && Array.from(sel.options).some(function (o) { return o.value === v }) }
+		// 顶栏代表 _activeProtocol：它刚变得可用(外部协议晚加载)时必须换过去，
+		// 不能因为重建前选择器还停在旧值就把它留在旧协议上
+		if (has(window._activeProtocol)) sel.value = window._activeProtocol
+		else if (has(prev)) sel.value = prev
+	}
+	// 内置协议与外部协议走同一条规范化路径(字段 / 函数校验、分组、晚注册重渲)
 	window.registerProtocol = function (id, impl) {
 		// 平台画像外的协议不进注册表与下拉框(移动端只有 SEK)；各协议模块照常加载，只是选不到
 		if (!platformAllowsProtocol(id)) return
-		window._protocols[id] = impl
-		// 当前协议晚于日志恢复才注册(协议脚本在 common.js 之后加载): 已有的解析段按它重渲
-		if (id === window._activeProtocol || (laneProtocols && (laneProtocols.A === id || laneProtocols.B === id))) scheduleParseRerender()
-		if (!document.getElementById('serial-protocol-select')) return
-		var sel = document.getElementById('serial-protocol-select')
-		var exists = Array.from(sel.options).some(function (o) { return o.value === id })
-		if (!exists) {
-			var opt = document.createElement('option')
-			opt.value = id
-			opt.textContent = impl.name || id
-			sel.appendChild(opt)
+		try {
+			window.DeviceDockProtocols.register(id, impl)
+		} catch (e) {
+			console.warn('协议注册失败：' + id, e)
 		}
 	}
+	// 注册表变化(晚注册 / 外部协议启用 / 卸载)：重建下拉；只有「刚刚变得可用」的正好是当前用的协议时才重渲解析段
+	var knownProtocolIds = {}
+	document.addEventListener('protocol-registry-change', function () {
+		var ids = window.DeviceDockProtocols ? window.DeviceDockProtocols.ids() : []
+		var added = ids.filter(function (id) { return !knownProtocolIds[id] })
+		knownProtocolIds = {}
+		ids.forEach(function (id) { knownProtocolIds[id] = true })
+		rebuildProtocolSelect()
+		var touched = added.some(function (id) {
+			return id === window._activeProtocol || (laneProtocols && (laneProtocols.A === id || laneProtocols.B === id))
+		})
+		if (touched) scheduleParseRerender()
+		notifyLaneConfig()
+	})
 
 	// 初始化 SEK 协议（延迟注册，等 protocol.js 加载后函数可用）
 	function _initProtocolRegistry() {
@@ -1304,11 +1338,13 @@
 		return window._protocols[window._activeProtocol] || null
 	}
 
-	// 存下的协议可能来自已删除的模块(对应脚本不再加载)：等协议脚本全部注册完再归一化一次，
+	// 存下的协议可能来自已删除的模块(对应脚本不再加载)或已停用的外部包：等协议脚本全部注册完再归一化一次，
 	// 把认不出的协议回退 SEK。否则顶栏显示 SEK、`_activeProtocol` 却停在旧 id，下发、随机读写、
-	// 批量配置与分包帧保护都会跟着错。
-	setTimeout(function () {
-		var known = function (id) { return !!(id && window._protocols[id]) }
+	// 批量配置与分包帧保护都会跟着错。已启用、但字节还在加载的外部协议先由注册表登记为 pending，
+	// 这里不判它未知；js/protocol-sources.js 加载结束后会再调一次本函数。
+	window.normalizeProtocolSelection = function () {
+		var reg = window.DeviceDockProtocols
+		var known = function (id) { return !!(id && reg && reg.isKnownOrPending(id)) }
 		var changed = false
 		if (window._activeProtocol && !known(window._activeProtocol)) {
 			window._activeProtocol = 'sek'
@@ -1332,7 +1368,8 @@
 		if (typeof rebuildProtocolPresets === 'function') rebuildProtocolPresets()
 		scheduleParseRerender()
 		notifyLaneConfig()
-	}, 0)
+	}
+	setTimeout(window.normalizeProtocolSelection, 0)
 
 	// 协议选择器变更
 	var protocolSelectEl = document.getElementById('serial-protocol-select')
