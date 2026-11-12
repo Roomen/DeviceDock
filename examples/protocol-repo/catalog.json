@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "name": "DeviceDock 示例协议",
+  "packages": [
+    {
+      "manifest": "packages/demo/manifest.json",
+      "sha256": "df44a8264ff76bee3575a5f1e4c8a19891ec311d3db0f1734e1472746764b3f2"
+    }
+  ]
+}

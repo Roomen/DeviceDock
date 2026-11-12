@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "protocol",
+  "runtime": "js",
+  "apiVersion": 1,
+  "id": "demo.protocols",
+  "name": "示例协议包",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "integrity": {
+    "index.js": "sha256-7948b32fcc6736e5494a7026cf63228f7d50b1c4662667adaf79d941e8b13fd2"
+  },
+  "provides": [
+    {
+      "id": "demo.a5frame",
+      "name": "A5 帧演示",
+      "description": "A5 LEN CMD DATA… XOR 的简单帧，演示解析与日志视图"
+    },
+    {
+      "id": "demo.modbus-rtu",
+      "name": "Modbus RTU（只读）",
+      "description": "功能码 03 / 04 的请求与应答解析，CRC16 校验"
+    }
+  ],
+  "license": "MIT",
+  "platforms": [
+    "web",
+    "desktop",
+    "mobile"
+  ]
+}
