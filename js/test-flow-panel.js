@@ -237,13 +237,15 @@
 	function settleWriteTask() {
 		if (!pump.writeTask) return Promise.resolve(true)
 		const task = pump.writeTask
-		pump.writeTask = null
+		if (pump.writeUnclosed) return Promise.resolve(false) // 已判定未收尾：保持故障占用，不再重复等
 		return new Promise(function (resolve) {
 			let settled = false
 			const cap = setTimeout(function () {
 				if (settled) return
 				settled = true
 				pump.writeUnclosed = true
+				// 未收尾任务保留引用：故障占用期间 send() 一律拒绝，手动释放后清掉
+				pump.unclosedTask = task
 				resolve(false)
 			}, WRITE_SETTLE_CAP_MS)
 			const onDone = function () {
@@ -256,8 +258,14 @@
 		})
 	}
 	function send(bytes, request, timeoutMs) {
+		// 故障占用（写入未确认收尾）期间一律拒绝新业务写：钉扎保持，等手动释放
+		if (pump.writeUnclosed) {
+			const e = new Error('写入未确认收尾')
+			e.unclosed = true
+			return Promise.reject(e)
+		}
 		// 物理写与应答等待分开管理：每笔发送前先等上一笔物理写收尾（有上限），
-		// 超时 / 取消只取消应答等待，物理写单独记录、由重试 / 恢复 / 收尾统一等待
+		// 超时 / 取消只取消应答等待，物理写单独记录（未收尾任务保留引用）、由重试 / 恢复 / 收尾统一等待
 		return settleWriteTask().then(function (settled) {
 			if (!settled) {
 				const e = new Error('写入未确认收尾')
@@ -636,8 +644,11 @@
 				let nextBatchVerify = true
 				let nextRandom = null
 				let nextPlan = null
+				let nextGapMs = defaults.delayAfterMs
+				let nextCounter = null
 				if (flow.kind === 'random') {
 					nextMode = 'random'
+					nextCounter = null
 					const r = flow.random || {}
 					nextRandom = {
 						count: (flow.steps || []).length,
@@ -647,37 +658,18 @@
 					}
 					nextPlan = { seed: (flow.seed != null ? flow.seed : 0) >>> 0, steps: flow.steps.map(function (s, i) { return T.normalizeStep(s, i, defaults) }) }
 				} else {
-					// 批量编辑器只支持写步骤：read / verify / wait / send-raw 的语义在批量清单里无法表达，
-					// 静默降级成写会改变流程语义——明确拒绝，草稿保持原样。
-					// 每步的延时 / 超时 / 重试 / 随机取值编辑器也无法逐行表达：与流程默认不一致就拒绝导入
-					nextBatchSteps = flow.steps.map(function (s, i) {
-						const norm = T.normalizeStep(s, i, defaults)
-						if (norm.kind !== 'write') {
-							throw new Error('批量流程仅支持写步骤（第 ' + (i + 1) + ' 步是「' + norm.kind + '」），请用随机 / 命名流程保存这类步骤')
-						}
-						if (norm.delayAfterMs !== defaults.delayAfterMs) {
-							throw new Error('第 ' + (i + 1) + ' 步的延时为自定义值（' + norm.delayAfterMs + 'ms），批量清单只有全局间隔，无法表达')
-						}
-						if (norm.timeoutMs !== defaults.timeoutMs) {
-							throw new Error('第 ' + (i + 1) + ' 步的超时为自定义值（' + norm.timeoutMs + 'ms），批量清单只有全局超时，无法表达')
-						}
-						if (norm.retries !== defaults.retries) {
-							throw new Error('第 ' + (i + 1) + ' 步的重试为自定义值（' + norm.retries + '），批量清单只有全局重试，无法表达')
-						}
-						if (norm.randomValue) {
-							throw new Error('第 ' + (i + 1) + ' 步是随机取值步骤，批量清单无法表达')
-						}
-						return { field: norm.field, value: norm.value, step: s.step != null ? String(s.step) : '0' }
-					})
-					// 写后回读是全局开关：各步不一致时无法用单个开关表达，拒绝导入
-					const verif = nextBatchSteps.map(function (_, i) { return T.normalizeStep(flow.steps[i], i, defaults).verify })
-					if (verif.some(function (v) { return v !== verif[0] })) {
-						throw new Error('各步骤的「写后回读」不一致，批量清单只有一个全局开关，无法表达')
-					}
-					nextBatchVerify = verif[0]
+					// 批量导入规范化（纯函数，见 test-flow.js）：非写步骤 / 逐步定制 / 回读不一致一律拒绝，
+					// 全局间隔随流程默认值同步（否则导入成功却按旧间隔执行）
+					const imp = T.normalizeBatchImport(flow)
+					nextBatchSteps = imp.steps
+					nextBatchVerify = imp.verify
+					nextGapMs = imp.gapMs
+					nextDefaults = imp.defaults
 				}
 				draft.defaults = nextDefaults
-				if (flow.counter && flow.counter.value != null) current = Math.max(0, Number(flow.counter.value) || 0)
+				draft.batch.gapMs = nextGapMs
+				if (el.batchGap) el.batchGap.value = String(nextGapMs)
+				if (nextCounter && nextCounter.value != null) current = Math.max(0, Number(nextCounter.value) || 0)
 				mode = nextMode
 				draft.mode = nextMode
 				if (nextMode === 'random') {
@@ -932,9 +924,15 @@
 
 	function stopAll() {
 		if (pump.writeUnclosed) {
-			// 故障占用的手动释放：清掉钉扎与归属，恢复面板到可用状态
-			try { window.serialApi.forceReleaseTransaction() } catch (e) { /* */ }
+			// 故障终态的手动释放：先作废旧执行代次（停止标记 + 撤掉等待者），
+			// 再按归属与令牌释放钉扎——其它事务的钉扎不受影响
+			stopFlag = true
+			cancelWaiters('已停止')
+			try {
+				window.serialApi.forceReleaseTransaction('flow', flowTxToken)
+			} catch (e) { /* */ }
 			pump.writeUnclosed = false
+			pump.unclosedTask = null
 			flowTxToken = null
 			setStatus('事务占用已手动释放', 'ok')
 			running = false

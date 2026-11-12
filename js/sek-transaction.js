@@ -283,7 +283,8 @@
 			const p = waitFor(matchFn, timeoutMs, function (w) { pendingWaiter = w })
 			// 写入尚未结束时等待也可能超时/取消，先挂拒绝处理避免未处理的 Promise。
 			p.catch(function () {})
-			await serialApi.writeData(built.frame)
+			// 发送携带事务令牌：本事务的钉扎下才能通过发送入口的归属检查
+			await serialApi.writeData(built.frame, { token: token })
 			const res = await p
 			return {
 				tx: built.frame,

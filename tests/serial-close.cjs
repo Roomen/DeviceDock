@@ -81,7 +81,7 @@ function harness() {
 		}
 		now = end; await settle()
 	}
-	return { recovered, sessions, hub, logs, errors, statuses, wants, timers, api: context.api, advance }
+	return { recovered, sessions, hub, logs, errors, statuses, wants, timers, api: context.api, advance, ctx: context }
 }
 async function testFlushAndIsolation() {
 	for (const bytes of [[0x68, 0x01], [0, 0]]) {
@@ -192,6 +192,31 @@ async function testLateSuccessfulWrite() {
 	assert.equal(h.logs.filter(v => !v.rx).length, 0, 'invalidated write cannot append TX after close')
 	assert.equal(h.sessions.S.txBytes, 0)
 }
+async function testTransactionSendGuard() {
+	// 回修 6 · 4/6：发送归属检查按目标物理路比较——A 路被事务钉扎时，B 路发送不受影响；
+	// 被钉扎路的普通发送与终端写入被拒
+	const h = harness()
+	h.ctx.pinSid = 'S'
+	h.ctx.pinOwner = 'flow'
+	h.ctx.pinToken = 'txn-1'
+	h.sessions.S.port = { writable: { getWriter: () => ({ write: async () => {}, releaseLock: () => {} }) }, close: async () => {} }
+	h.sessions.B.port = { writable: { getWriter: () => ({ write: async () => {}, releaseLock: () => {} }) }, close: async () => {} }
+	// B 路发送不受 A 路事务影响
+	const bWrite = h.api.writeData(Uint8Array.of(0x41), 'B')
+	const bResult = await bWrite
+	assert.ok(bResult, 'B 路发送不受 A 路事务影响（5dbfab5 会返回 undefined）')
+	// 被钉扎路的普通发送被拒
+	const sWrite = await h.api.writeData(Uint8Array.of(0x41), 'S')
+	assert.equal(sWrite, undefined, '被钉扎路的普通发送被拒')
+	assert.ok(h.errors.some(v => v.msg.indexOf('另一事务') !== -1), '拒绝有提示')
+	// 终端写入同样按路检查（txBytes 反映真实写入）
+	await h.api.writeTermBytes('B', Uint8Array.of(1))
+	assert.equal(h.sessions.B.txBytes, 2, 'B 路终端写入不受影响（writeData + 终端各 1；5dbfab5 会拦掉）')
+	await h.api.writeTermBytes('S', Uint8Array.of(1))
+	assert.equal(h.sessions.S.txBytes, 0, '被钉扎路的终端写入被拒（5dbfab5 会照常写）')
+	assert.equal(h.sessions.S.writer, null, '被钉扎路不获取 writer')
+}
+
 async function testWriteNetworkErrorRecovers() {
 	// 写入遇到 NetworkError(设备拔出)要触发读循环死亡同款恢复；其它错误不触发
 	for (const [name, expect] of [['NetworkError', 1], ['AbortError', 0]]) {
@@ -325,6 +350,7 @@ async function testOpenLaneCancelledIsAborted() {
 	await testHangingReader()
 	await testPendingWrite()
 	await testLateSuccessfulWrite()
+	await testTransactionSendGuard()
 	await testWriteNetworkErrorRecovers()
 	await testRealWritableStream()
 	await testSharedPortAndStuckWrite()

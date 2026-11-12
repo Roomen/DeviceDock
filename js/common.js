@@ -4895,9 +4895,9 @@
 	async function writeData(data, sid, sendName, opts) {
 		if (window.serialApi && window.serialApi.updatePreparing) throw new Error('正在安装应用更新，暂不能发送')
 		opts = opts || {}
-		// 发送入口的事务归属检查：该路被别的事务（测试流程 / 固件升级）独占时拒绝普通发送，
-		// 本事务的发送带令牌放行（协议立即下发 / 循环发送 / 快捷发送都经过这里）
-		if (pinSid && (!opts || opts.token !== pinToken)) {
+		// 发送入口的事务归属检查（按目标物理路比较）：该路被别的事务（测试流程 / 固件升级）独占时
+		// 拒绝普通发送，本事务的发送带令牌放行；其它物理路（如 A 路事务期间的 B 路）不受影响
+		if (pinSid === sid && (!opts || opts.token !== pinToken)) {
 			const msg = '另一事务（' + (pinOwner || '其他事务') + '）正在进行，暂不能发送'
 			if (opts.throwOnError) throw new Error(msg)
 			addLogErr(msg, sid)
@@ -4974,6 +4974,11 @@
 	// 终端键盘直写：不走 HEX 开关、不加 CRLF、不记 TX 行（设备自己 echo）
 	async function writeTermBytes(sid, bytes) {
 		sid = sid || SerialHub.activeSendPhys()
+		// 终端写入走同一归属检查：被钉扎路（测试流程 / 固件升级）不接受终端插入字节
+		if (pinSid === sid && pinOwner) {
+			addLogErr('另一事务（' + (pinOwner || '其他事务') + '）正在进行，暂不能从终端发送', sid)
+			return
+		}
 		const port = SerialHub.getPort(sid)
 		if (!port || !port.writable || !SerialHub.isOpen(sid)) {
 			addLogErr('请先打开串口再发送数据', sid)
@@ -5556,9 +5561,9 @@
 		async rebuildReceive(id) {
 			return await rebuildSerialReceive(id)
 		},
-		// 字节写入不解析转义；用户编写的发送显式传 composed: true 才按偏好追加 NUL
+		// 字节写入不解析转义；用户编写的发送显式传 composed: true 才按偏好追加 NUL；token 用于事务归属检查
 		async writeData(data, opts) {
-			await writeData(data, SerialHub.activeSendPhys(), undefined, { composed: !!(opts && opts.composed) })
+			await writeData(data, SerialHub.activeSendPhys(), undefined, { composed: !!(opts && opts.composed), token: opts && opts.token })
 		},
 		// 协议事务专用: 不追加 CR/LF/NUL；logData 存在时日志只显示这份（已脱敏）字节
 		async writeRaw(data, opts) {
@@ -5647,7 +5652,8 @@
 			return pinToken
 		},
 		unpinSession(token) {
-			if (pinToken && token != null && token !== pinToken) return
+			// 令牌必须严格相等：null / undefined 不能解锁带归属的事务
+			if (pinToken && token !== pinToken) return
 			if (pinDepth > 0) pinDepth--
 			if (pinDepth === 0) {
 				pinSid = null
@@ -5655,13 +5661,19 @@
 				pinToken = null
 			}
 		},
-		// 手动释放事务占用（钉扎卡死时的兜底，面板 / 状态栏提供入口）：清掉钉扎与归属，不让故障永久占住串口
-		forceReleaseTransaction() {
-			if (pinSid) addLogErr('事务占用已手动释放（原归属：' + (pinOwner || '未知') + '）')
+		// 手动释放事务占用（钉扎卡死时的兜底）：只接受归属与令牌都匹配的调用，
+		// 且只应在该事务已进入故障终态时使用——其它入口解不掉别人的事务
+		forceReleaseTransaction(owner, token) {
+			if (!pinSid || pinOwner !== owner || pinToken !== token) {
+				addLogErr('事务手动释放被拒（归属或令牌不符）')
+				return false
+			}
+			addLogErr('事务占用已手动释放（原归属：' + (pinOwner || '未知') + '）')
 			pinDepth = 0
 			pinSid = null
 			pinOwner = ''
 			pinToken = null
+			return true
 		},
 		isPinned() {
 			return pinSid != null

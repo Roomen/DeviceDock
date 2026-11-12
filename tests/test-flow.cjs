@@ -553,6 +553,72 @@ async function runFlow(flow, io) {
 		assert.equal(report.results.length, 2, 'unclosed 后不再继续')
 	}
 
+	// 回修 6 · 1：写收尾超时后，unclosed 立即终止重试与读原值分支（设备只被写一次）
+	{
+		const device = makeDevice({ u8: 1 })
+		let sends = 0
+		const io = makeIo({ device: device })
+		const rawSend = io.send
+		io.send = function (bytes, request, timeoutMs) {
+			sends++
+			if (sends === 1) return rawSend(bytes, request, timeoutMs)
+			const e = new Error('写入未确认收尾')
+			e.unclosed = true
+			return Promise.reject(e)
+		}
+		const flow = T.normalizeFlow({ defaults: { restoreOriginals: false, delayAfterMs: 0 }, steps: [{ kind: 'write', field: 'u8', value: '7', verify: true, retries: 3 }] })
+		const report = await runFlow(flow, io)
+		assert.equal(report.results[0].attempts, 1, 'unclosed 立即终止重试（不重发）')
+		assert.equal(report.fatal, '写入未确认收尾', 'unclosed 置 fatal')
+		assert.equal(sends, 2, '写 + 回读各一次：失败后没有再次发送（5dbfab5 会重试到 4 次发送）')
+		// 读原值分支不吞 unclosed
+		let sends2 = 0
+		const io2 = makeIo({ device: makeDevice({ u8: 1 }) })
+		const rawSend2 = io2.send
+		io2.send = function (bytes, request, timeoutMs) {
+			sends2++
+			const e = new Error('写入未确认收尾')
+			e.unclosed = true
+			return Promise.reject(e)
+		}
+		const flow2 = T.normalizeFlow({ defaults: { restoreOriginals: false, delayAfterMs: 0 }, steps: [{ kind: 'write', field: 'u8', value: '7' }] })
+		const report2 = await runFlow(flow2, io2)
+		assert.equal(report2.results[0].unclosed, true, '读原值分支不吞 unclosed 标记')
+		assert.equal(report2.fatal, '写入未确认收尾', 'unclosed 经读原值分支也置 fatal')
+		assert.equal(sends2, 1, '读原值失败后没有发送写入')
+	}
+
+	// 回修 6 · 3：原值登记只接受完整有效的解码值（null / NaN / ±Infinity → 未写入（原值无效））
+	{
+		const device = makeDevice({ u8: 4 })
+		const io = makeIo({ device: device, fields: [{ key: 'u32', name: 'U32', type: 'uint32le', min: 0, max: 100, read: true, write: true, random: true }] })
+		device.readBytes = function (field) { return field.type === 'uint32le' ? [0x01] : [4] } // 短字节 → 解码 null
+		const flow = T.normalizeFlow({ defaults: { restoreOriginals: true, delayAfterMs: 0 }, steps: [{ kind: 'write', field: 'u32', value: '9' }] })
+		const report = await runFlow(flow, io)
+		assert.equal(report.results[0].status, 'fail')
+		assert.match(report.results[0].reason, /原值无效，未写入/)
+		assert.equal(device.store.get('u32'), undefined, '原值无效时设备未被写入')
+		// 浮点 NaN
+		const device2 = makeDevice({})
+		const io2 = makeIo({ device: device2, fields: [{ key: 'f', name: 'F', type: 'float32le', min: 0, max: 100, read: true, write: true, random: true }] })
+		device2.readBytes = function () { return [0x00, 0x00, 0xc0, 0x7f] } // float32 NaN（小端：0x7FC00000）
+		const report2 = await runFlow(T.normalizeFlow({ defaults: { restoreOriginals: true, delayAfterMs: 0 }, steps: [{ kind: 'write', field: 'f', value: '1' }] }), io2)
+		assert.match(report2.results[0].reason, /原值无效，未写入/)
+		assert.equal(report2.restore.failed.length + report2.restore.restored.length, 0, '无效原值不进恢复清单')
+	}
+
+	// 回修 6 · 7：批量导入规范化——全局间隔随流程默认值走，逐步差异拒绝
+	{
+		const imp = T.normalizeBatchImport({ name: 'x', defaults: { delayAfterMs: 1000 }, steps: [{ kind: 'write', field: 'a', value: '1' }, { kind: 'write', field: 'a', value: '2' }] })
+		assert.equal(imp.gapMs, 1000, '全局间隔取流程默认值（导入后实际按 1000ms 执行）')
+		assert.equal(imp.verify, false)
+		assert.equal(imp.steps.length, 2)
+		assert.throws(function () { T.normalizeBatchImport({ defaults: { delayAfterMs: 1000 }, steps: [{ kind: 'write', field: 'a', value: '1', delayAfterMs: 50 }] }) }, /延时为自定义值/, '逐步自定义延时拒绝')
+		assert.throws(function () { T.normalizeBatchImport({ defaults: { delayAfterMs: 1000 }, steps: [{ kind: 'write', field: 'a', value: '1', randomValue: true }] }) }, /随机取值/, '随机取值步骤拒绝')
+		assert.throws(function () { T.normalizeBatchImport({ defaults: { timeoutMs: 5000 }, steps: [{ kind: 'write', field: 'a', value: '1', verify: true }, { kind: 'write', field: 'a', value: '2', verify: false }] }) }, /写后回读.*不一致/, '回读不一致拒绝')
+		assert.throws(function () { T.normalizeBatchImport({ defaults: {}, steps: [{ kind: 'read', field: 'a' }] }) }, /仅支持写步骤/, '非写步骤拒绝')
+	}
+
 	console.log('test-flow: ok')
 })().catch(function (e) {
 	console.error(e)

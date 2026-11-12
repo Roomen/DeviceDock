@@ -14,6 +14,8 @@ function makeWorld() {
 	const scans = { sek: 0 }
 	let writes = 0
 	let pins = 0
+	let lastWriteToken = null
+	let wrongUnpin = false
 	let writer = function () { return Promise.resolve() }
 	const window = {
 		registerProtocol() {},
@@ -21,9 +23,9 @@ function makeWorld() {
 			onReceive(cb) { receivers.push(cb) },
 			isOpen() { return true },
 			pinSession() { pins++; return 'txn-stub' },
-			unpinSession() { pins-- },
+			unpinSession(t) { if (t !== 'txn-stub') { wrongUnpin = true; return } pins-- },
 			getActiveSendSid() { return 'S' },
-			writeData(bytes) { writes++; return writer(bytes) },
+			writeData(bytes, opts) { writes++; lastWriteToken = opts && opts.token; return writer(bytes) },
 		},
 	}
 	const ctx = { window, Uint8Array, Float32Array, BigInt, TextDecoder, TextEncoder, console, setTimeout, clearTimeout, Date, performance,
@@ -44,6 +46,7 @@ function makeWorld() {
 			fields: { '功能码': 0x81, '帧序号': frame[2] }, tlv: [{ tag: 11, items: [{ resultCode: frame[3] }] }] } }
 	}
 	return { window, scans, get writes() { return writes }, get pins() { return pins },
+		get lastWriteToken() { return lastWriteToken }, get wrongUnpin() { return wrongUnpin },
 		setWriter(fn) { writer = fn }, feed(bytes) { for (const cb of receivers) cb(bytes) } }
 }
 
@@ -64,6 +67,16 @@ const feedChunks = function (w, data, size) { for (let o = 0; o < data.length; o
 		feedChunks(w, text(11520), 1024)
 		assert.deepEqual(w.scans, { sek: 0 }, '闲置普通流量不调用找帧器')
 
+		// 回修 6 · 5：SEK 事务拿到令牌后，发送必须携带令牌（无令牌会被归属检查拦截）
+		{
+			const w2 = makeWorld()
+			const opts = { timeoutMs: 500 }
+			const p2 = w2.window.sekTx.sendAndWait(opts)
+			w2.feed(new Uint8Array([0xA9, 0x9A, 1, 1, ...new Array(23).fill(0)]))
+			await p2
+			assert.equal(w2.lastWriteToken, 'txn-stub', 'SEK 事务发送携带事务令牌（5dbfab5 不传 → undefined）')
+			assert.equal(w2.wrongUnpin, false, '成对的 unpin 带令牌')
+		}
 		// 有事务在等：应答混在文本里，前后都有噪声，照样认出
 		const up = new Uint8Array([0xA9, 0x9A, 1, 1, ...new Array(23).fill(0)])
 		const p = w.window.sekTx.waitFor(function (f) { return f.dir === 'up' }, 1000)

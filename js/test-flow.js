@@ -318,6 +318,45 @@
 
 	// ---------- 生成 ----------
 	// 批量配置：从可写字段挑若干项，按顺序写；每项可单独设值 / 延时 / 超时 / 重试 / 写后回读
+	// 批量导入的规范化（纯函数）：编辑器只能表达「全局间隔 / 全局超时 / 全局重试 / 全局写后回读 / 逐行值与步进」，
+	// 逐步定制（延时 / 超时 / 重试 / 随机取值）与非写步骤一律拒绝，避免导入成功却改变行为。
+	// 返回 { steps, gapMs, verify, defaults, counter }：gapMs 是流程默认延时，导入方要把它同步到全局间隔
+	function normalizeBatchImport(flow) {
+		const defaults = normalizeDefaults(flow && flow.defaults)
+		const stepsSrc = Array.isArray(flow && flow.steps) ? flow.steps : []
+		if (!stepsSrc.length) throw new Error('流程没有步骤')
+		const steps = stepsSrc.map(function (s, i) {
+			const norm = normalizeStep(s, i, defaults)
+			if (norm.kind !== 'write') {
+				throw new Error('批量流程仅支持写步骤（第 ' + (i + 1) + ' 步是「' + norm.kind + '」）')
+			}
+			if (norm.delayAfterMs !== defaults.delayAfterMs) {
+				throw new Error('第 ' + (i + 1) + ' 步的延时为自定义值（' + norm.delayAfterMs + 'ms），批量清单只有全局间隔，无法表达')
+			}
+			if (norm.timeoutMs !== defaults.timeoutMs) {
+				throw new Error('第 ' + (i + 1) + ' 步的超时为自定义值（' + norm.timeoutMs + 'ms），批量清单只有全局超时，无法表达')
+			}
+			if (norm.retries !== defaults.retries) {
+				throw new Error('第 ' + (i + 1) + ' 步的重试为自定义值（' + norm.retries + '），批量清单只有全局重试，无法表达')
+			}
+			if (norm.randomValue) {
+				throw new Error('第 ' + (i + 1) + ' 步是随机取值步骤，批量清单无法表达')
+			}
+			return { field: norm.field, value: norm.value, step: s.step != null ? String(s.step) : '0' }
+		})
+		const verif = stepsSrc.map(function (s, i) { return normalizeStep(s, i, defaults).verify })
+		if (verif.some(function (v) { return v !== verif[0] })) {
+			throw new Error('各步骤的「写后回读」不一致，批量清单只有一个全局开关，无法表达')
+		}
+		return {
+			steps: steps,
+			gapMs: defaults.delayAfterMs,
+			verify: verif[0],
+			defaults: defaults,
+			counter: flow.counter && typeof flow.counter === 'object' ? flow.counter : null,
+		}
+	}
+
 	function batchSteps(items, defaults) {
 		const d = normalizeDefaults(defaults)
 		return (items || []).map(function (it, i) {
@@ -520,8 +559,14 @@
 		// 否则恢复阶段要么跳过（无从恢复）、要么按错误的原值把设备改得更乱
 		async function readOriginal(field, timeoutMs) {
 			const cur = await readOnce(field, timeoutMs)
-			originals.set(field.key, { field: field, value: cur.value })
-			return cur.value
+			const v = cur.value
+			// 原值登记只接受完整有效的解码值：null（字段缺失 / 字节不足）/ NaN / ±Infinity
+			// 不能作为恢复基准，否则恢复阶段会静默跳过或写坏设备
+			if (v == null || (typeof v === 'number' && !Number.isFinite(v))) {
+				throw Object.assign(new Error('原值无效'), { invalid: true })
+			}
+			originals.set(field.key, { field: field, value: v })
+			return v
 		}
 		async function writeOnce(field, value, timeoutMs, verify) {
 			const req = io.buildWrite(field, value)
@@ -581,6 +626,9 @@
 					try {
 						await readOriginal(field, step.timeoutMs)
 					} catch (e) {
+						if (e && e.unclosed) {
+							return record(step, index, { status: STATUS.fail, reason: (e && e.message) || '写入未确认收尾', unclosed: true })
+						}
 						const why = e && e.timeout ? '读原值超时' : e && e.unsupported ? '设备未返回原值' : (e && e.message) || '读原值失败'
 						const status = e && e.timeout ? STATUS.timeout : e && e.unsupported ? STATUS.unsupported : STATUS.fail
 						return record(step, index, { status: status, reason: why + '，未写入' })
@@ -667,6 +715,7 @@
 					break
 				}
 				result = await runStep(step, i)
+				if (result.unclosed) break
 				if (result.status === STATUS.success || result.status === STATUS.skipped || result.status === STATUS.unsupported) break
 				if (attempt >= step.retries) break
 				// 停止后不再重试：attempts 只统计真实发生过的尝试
@@ -796,6 +845,7 @@
 		validateFlow: validateFlow,
 		checkValue: checkValue,
 		batchSteps: batchSteps,
+		normalizeBatchImport: normalizeBatchImport,
 		randomPlan: randomPlan,
 		mulberry32: mulberry32,
 		pickRandomValue: pickRandomValue,

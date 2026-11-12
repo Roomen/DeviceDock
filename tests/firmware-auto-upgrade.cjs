@@ -239,6 +239,7 @@ function makeDevice(current, opts) {
 		h.els['fw-start'].click()
 		assert.ok(await h.waitFor(() => h.logs.some(l => l.indexOf('无法开始升级') !== -1)), '抢锁失败有明确日志')
 		assert.equal(h.events.slice(before).some(e => e && e.type === 'start'), false, '抢锁失败不发布 start 事件')
+		assert.equal(h.events.slice(before).some(e => e && e.type === 'end'), false, '抢锁失败不进入启动清理（不发 end；5dbfab5 会发）')
 		assert.equal(h.pins.depth, 0, '抢锁失败不持有钉扎')
 		assert.equal(h.pins.released, undefined, '失败路径不做多余的 unpin')
 		assert.ok(!h.els['fw-start'].disabled, '开始按钮已恢复')
