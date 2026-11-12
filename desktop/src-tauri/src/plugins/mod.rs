@@ -93,7 +93,7 @@ impl PluginsState {
     pub fn serve_gates(&self) -> Option<scheme::ServeGates> {
         let blocked = self.blocked.lock().ok()?.clone();
         let active = self.active.lock().ok()?.clone();
-        Some(scheme::ServeGates { blocked, active })
+        Some(scheme::ServeGates { blocked, active, all_busy: false })
     }
 }
 
@@ -280,13 +280,42 @@ fn list_all(root: &Path, blocked: &BTreeSet<String>, active: &BTreeSet<String>) 
     out
 }
 
-fn list_all_state(state: &PluginsState) -> Vec<PluginInfo> {
-    let blocked = state.blocked.lock().map(|b| b.clone()).unwrap_or_default();
-    let active = state.active.lock().map(|a| a.clone()).unwrap_or_default();
-    list_all(state.root(), &blocked, &active)
+// 门禁锁异常（中毒）时把每个插件都标成不可用：与 scheme 的行为一致，
+// 绝不把「读不到禁用集合」当成「没有禁用插件」。
+fn mark_unavailable(mut out: Vec<PluginInfo>) -> Vec<PluginInfo> {
+    for info in &mut out {
+        info.repair = Some("插件状态锁异常，本次进程内不可用".to_string());
+        info.enabled = false;
+        info.installing = false;
+    }
+    out
 }
 
+// 有排他事务在跑（共享锁拿不到）：列表照常给出便于显示，但一律标 installing
+fn mark_all_installing(mut out: Vec<PluginInfo>) -> Vec<PluginInfo> {
+    for info in &mut out {
+        info.installing = true;
+        info.enabled = false;
+    }
+    out
+}
 
+// 只读路径：整个读取过程（读 state、manifest、文件）持跨进程共享锁。
+// 拿不到共享锁（有进程正在安装 / 卸载）→ 全部插件标 installing，不提供启用视图；
+// 进程内门禁锁中毒 → 与 scheme 一致把全部插件标为不可用。
+fn list_all_state(state: &PluginsState) -> Vec<PluginInfo> {
+    let root = state.root();
+    if state.blocked.lock().is_err() || state.active.lock().is_err() {
+        eprintln!("插件状态锁异常：本次列出全部插件时按不可用处理");
+        return mark_unavailable(list_all(root, &BTreeSet::new(), &BTreeSet::new()));
+    }
+    let blocked = state.blocked.lock().map(|b| b.clone()).unwrap_or_default();
+    let active = state.active.lock().map(|a| a.clone()).unwrap_or_default();
+    match store::read_lock(root) {
+        Ok(_guard) => list_all(root, &blocked, &active),
+        Err(_) => mark_all_installing(list_all(root, &blocked, &active)),
+    }
+}
 
 // 下载 → 校验 → 解压 → 逐文件校验，返回 (manifest, 包 sha256, 临时目录, release)。
 // 调用方负责把临时目录换进正式位置，任何一步失败都要删掉它。
@@ -312,7 +341,7 @@ async fn download_and_stage(root: &Path, repo: &github::RepoRef) -> Result<(Mani
         }
         let m = store::read_manifest(&staging)?;
         store::verify_dir(&staging, &m)?;
-        store::seal_staging(&staging)?;
+        store::seal_staging(root, &staging)?;
         Ok(m)
     })();
     match result {
@@ -499,25 +528,28 @@ pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>
 pub fn plugin_set_enabled(app: AppHandle, state: State<'_, PluginsState>, id: String, enabled: bool) -> Result<Vec<PluginInfo>, String> {
     state.guard()?;
     let root = state.root().to_path_buf();
-    let _file = store::file_lock(&root)?;
-    let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
-    // 全部门槛检查都在同一段锁内，避免并发恢复只写入标记时读到过期结果
-    if enabled {
-        let st = store::load_state(&root);
-        let marker = store::read_repair(&root, &id).is_some();
-        let blocked = state.blocked.lock().map(|b| b.contains(&id)).unwrap_or_else(|_| true);
-        if !store::can_enable(&st, &id, marker, blocked) {
-            return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
+    {
+        // 排他锁覆盖全部门槛检查 + 落盘；离开这段后读路径才能拿共享锁
+        let _file = store::file_lock(&root)?;
+        let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        // 全部门槛检查都在同一段锁内，避免并发恢复只写入标记时读到过期结果
+        if enabled {
+            let st = store::load_state(&root);
+            let marker = store::read_repair(&root, &id).is_some();
+            let blocked = state.blocked.lock().map(|b| b.contains(&id)).unwrap_or_else(|_| true);
+            if !store::can_enable(&st, &id, marker, blocked) {
+                return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
+            }
         }
+        store::load_and_save(&root, |st| -> Result<(), String> {
+            let entry = st.plugins.get_mut(&id).ok_or_else(|| "插件没有安装".to_string())?;
+            if enabled && entry.repair.is_some() {
+                return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
+            }
+            entry.enabled = enabled;
+            Ok(())
+        })??;
     }
-    store::load_and_save(&root, |st| -> Result<(), String> {
-        let entry = st.plugins.get_mut(&id).ok_or_else(|| "插件没有安装".to_string())?;
-        if enabled && entry.repair.is_some() {
-            return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
-        }
-        entry.enabled = enabled;
-        Ok(())
-    })??;
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(list_all_state(&state))
 }
@@ -671,8 +703,20 @@ pub fn serve(app: &AppHandle, request: &tauri::http::Request<Vec<u8>>) -> tauri:
         }
         None => return scheme::serve(Path::new("/nonexistent"), &store::State::default(), request),
     };
+    // 共享锁覆盖「读 state + 读 manifest + 读文件内容」全过程：拿不到说明正在改目录 → 503。
+    let _read = match store::read_lock(&root) {
+        Ok(g) => g,
+        Err(_) => return scheme::serve_gated(&root, &store::State::default(), request, &unavailable_gates()),
+    };
     let st = store::load_state(&root);
     scheme::serve_gated(&root, &st, request, &gates)
+}
+
+// 读锁拿不到时用「所有 id 都 active」的门禁：scheme 统一回 503
+fn unavailable_gates() -> scheme::ServeGates {
+    let mut g = scheme::ServeGates::default();
+    g.all_busy = true;
+    g
 }
 
 
@@ -717,6 +761,19 @@ mod tests {
         let during = list_all(&root, &empty, &active);
         assert_eq!(during[0].installing, true, "事务期间标为 installing");
         assert_eq!(during[0].enabled, false, "事务期间不提供启用视图");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // 回修 6 · 5：门禁锁中毒时把插件标为不可用，不能当成「没有禁用项」
+    #[test]
+    fn mark_unavailable_hides_every_plugin() {
+        let root = fixture("poison");
+        let empty = BTreeSet::new();
+        let out = mark_unavailable(list_all(&root, &empty, &empty));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].enabled, false, "锁异常时不给启用视图");
+        assert_eq!(out[0].installing, false);
+        assert!(out[0].repair.as_deref().unwrap_or("").contains("锁异常"), "{:?}", out[0].repair);
         fs::remove_dir_all(&root).unwrap();
     }
 }

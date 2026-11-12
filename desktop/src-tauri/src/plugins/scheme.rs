@@ -92,6 +92,8 @@ fn text_response(status: StatusCode, message: &str) -> Response<Cow<'static, [u8
 pub struct ServeGates {
     pub blocked: BTreeSet<String>,
     pub active: BTreeSet<String>,
+    // 共享读锁拿不到 / 门禁锁异常：所有插件都按「正在修改」处理，统一 503
+    pub all_busy: bool,
 }
 
 pub fn serve(root: &Path, state: &store::State, request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
@@ -106,6 +108,10 @@ pub fn serve_gated(root: &Path, state: &store::State, request: &Request<Vec<u8>>
         return text_response(StatusCode::NOT_FOUND, "not found");
     };
     // 只出当前启用版本：停用 / 升级途中旧版本立刻不可加载。
+    // 共享读锁拿不到（有排他事务在写目录）：统一 503，稍后重试
+    if gates.all_busy {
+        return text_response(StatusCode::SERVICE_UNAVAILABLE, "plugin install in progress");
+    }
     // 事务进行中：旧授权可能与新 manifest 混用，直接拒绝供包（503 表示稍后重试）。
     if gates.active.contains(&target.id) {
         return text_response(StatusCode::SERVICE_UNAVAILABLE, "plugin install in progress");
@@ -259,6 +265,9 @@ mod tests {
         let mut g2 = ServeGates::default();
         g2.blocked.insert("hello".to_string());
         assert_eq!(gated(&root, &st, &g2), 404, "内存禁用集合也必须拦住 scheme");
+        // 回修 6 · 1：共享读锁拿不到（有排他事务）→ 统一 503
+        let busy = ServeGates { blocked: BTreeSet::new(), active: BTreeSet::new(), all_busy: true };
+        assert_eq!(gated(&root, &st, &busy), 503, "共享读锁拿不到时回 503");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
