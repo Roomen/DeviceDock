@@ -70,4 +70,23 @@ css.split('\n').forEach((line, i) => {
 })
 assert.deepEqual(infinite, [], '无限循环动画只允许解释进行中的状态，装饰性循环要去掉：\n' + infinite.join('\n'))
 
+// ---- 5. 图标尺寸只有一份来源：css/icons.css 的三档，数值取自 --icon* 令牌 ----
+// style.css 里不得再给图标写 font-size: var(--icon*)（会和 .icon 的 width/height 打架）
+const iconSizeInStyle = css.split('\n').filter(l => /font-size:\s*var\(--icon(-sm|-lg)?\)/.test(l))
+assert.deepEqual(iconSizeInStyle, [], 'style.css 不得再定义图标尺寸，尺寸只来自 css/icons.css 的 .icon / .icon-sm / .icon-lg')
+
+const iconsCss = fs.readFileSync(path.join(__dirname, '../css/icons.css'), 'utf8')
+const iconClasses = ['icon', 'icon-sm', 'icon-lg']
+iconClasses.forEach(cls => {
+	const block = iconsCss.match(new RegExp('\\.' + cls + '\\s*\\{([^}]*)\\}'))
+	assert.ok(block, 'css/icons.css 缺少 .' + cls)
+	const body = block[1]
+	;['width', 'height', 'font-size'].forEach(prop => {
+		const m = body.match(new RegExp(prop + ':\\s*([^;]+);'))
+		assert.ok(m, '.' + cls + ' 必须定义 ' + prop)
+		const v = m[1].trim()
+		assert.ok(/^var\(--icon(-sm|-lg)?(,\s*\d+px)?\)$/.test(v), '.' + cls + ' 的 ' + prop + ' 必须引用 --icon 令牌（可带 px 兜底），实际：' + v)
+	})
+})
+
 console.log('css token checks passed')

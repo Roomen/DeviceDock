@@ -1762,7 +1762,7 @@
 				? '也支持 Ctrl/Cmd+V'
 				: '首次需浏览器授权'
 		return '<div class="sk-hex-empty" aria-hidden="true">' +
-			'<div class="sk-hex-empty-main"><i class="icon icon-clipboard-plus"></i><span>' + main + '</span></div>' +
+			'<div class="sk-hex-empty-main"><i class="icon icon-lg icon-clipboard-plus"></i><span>' + main + '</span></div>' +
 			'<div class="sk-hex-empty-sub">' + sub + '</div></div>'
 	}
 	function refreshHexEmptyHtml() {

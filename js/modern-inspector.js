@@ -177,14 +177,14 @@
 		if (d !== 'tx' && d !== 'rx') return { cls: 'manual', text: '手动解析' }
 		const lane = frame ? laneLabel(frame.sid) : ''
 		const sid = frame ? frame.sid : ''
-		const base = d === 'tx' ? '↑ TX' : '↓ RX'
+		const base = d === 'tx' ? 'TX ↑' : 'RX ↓'
 		const tail = lane ? (d === 'tx' ? ' · 发给 ' : ' · 来自 ') + lane : ''
 		return { cls: d + (sid === 'A' || sid === 'B' ? ' lane-' + sid.toLowerCase() : ''), text: base + tail }
 	}
 
 	function emptyView() {
 		const box = el('div', 'mi-empty')
-		const icon = el('i', 'icon icon-search')
+		const icon = el('i', 'icon icon-lg icon-search')
 		icon.setAttribute('aria-hidden', 'true')
 		box.append(icon, el('div', 'mi-empty-main', '点选日志行查看这一帧'))
 		const btn = el('button', 'btn btn-sm btn-outline-secondary mi-paste', '粘贴 HEX')
@@ -282,7 +282,7 @@
 		info.list.forEach(function (x) {
 			const row = el('div', 'mi-rel-row' + (x.self ? ' is-self' : ''))
 			const tag = el('span', 'mi-rel-tag ' + x.dir + (x.sid === 'A' || x.sid === 'B' ? ' lane-' + x.sid.toLowerCase() : ''),
-				(x.dir === 'tx' ? '↑ TX' : '↓ RX') + (x.sid === 'A' || x.sid === 'B' ? ' ' + x.sid : ''))
+				(x.dir === 'tx' ? 'TX ↑' : 'RX ↓') + (x.sid === 'A' || x.sid === 'B' ? ' ' + x.sid : ''))
 			if (x.label) tag.title = x.label
 			row.append(tag, el('span', 'mi-rel-name', x.name), el('span', 'mi-rel-d', x.d ? (x.d < 1000 ? '+' + x.d + ' ms' : '+' + (x.d / 1000).toFixed(2) + ' s') : '0'))
 			sec.appendChild(row)

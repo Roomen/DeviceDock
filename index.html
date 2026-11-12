@@ -82,20 +82,20 @@
         <nav id="activity-rail">
             <div class="rail-top">
                 <button class="rail-item active" data-view="view-serial" title="通信调试">
-                    <i class="icon icon-terminal"></i>
+                    <i class="icon icon-lg icon-terminal"></i>
                     <span class="rail-label">通信调试</span>
                 </button>
                 <button class="rail-item" data-view="view-fw-pack" data-feature="view.firmware-pack" title="固件打包">
-                    <i class="icon icon-package"></i>
+                    <i class="icon icon-lg icon-package"></i>
                     <span class="rail-label">固件打包</span>
                 </button>
-                <button class="rail-item" data-view="view-ble" data-feature="view.ble" title="USB BLE 桥 · 外置桥连接与 GATT 配置"><i class="icon icon-bluetooth"></i><span class="rail-label">USB BLE 桥</span></button>
+                <button class="rail-item" data-view="view-ble" data-feature="view.ble" title="USB BLE 桥 · 外置桥连接与 GATT 配置"><i class="icon icon-lg icon-bluetooth"></i><span class="rail-label">USB BLE 桥</span></button>
             </div>
             <div class="rail-bottom">
                 <div class="dropend rail-config">
                     <button class="rail-item" id="rail-config-btn" type="button" title="配置：导入 / 导出 / 重置"
                         data-bs-toggle="dropdown" aria-expanded="false">
-                        <i class="icon icon-sliders"></i>
+                        <i class="icon icon-lg icon-sliders"></i>
                         <span class="rail-label">配置</span>
                     </button>
                     <ul class="dropdown-menu rail-config-menu" aria-labelledby="rail-config-btn">
@@ -108,7 +108,7 @@
                 <div class="dropend rail-theme">
                     <button class="rail-item" id="rail-theme-btn" type="button" title="主题：跟随系统"
                         data-bs-toggle="dropdown" aria-expanded="false">
-                        <i class="icon icon-contrast"></i><span class="rail-label">主题</span>
+                        <i class="icon icon-lg icon-contrast"></i><span class="rail-label">主题</span>
                     </button>
                     <div class="dropdown-menu rail-theme-menu" aria-labelledby="rail-theme-btn">
                         <div id="theme-switch" role="radiogroup" aria-label="主题">
@@ -119,15 +119,15 @@
                     </div>
                 </div>
                 <a href="https://github.com/Roomen/DeviceDock/issues/new" target="_blank" rel="noopener" class="rail-item" data-feature="shell.browser" title="提交建议 / Bug">
-                    <i class="icon icon-message-circle-more"></i>
+                    <i class="icon icon-lg icon-message-circle-more"></i>
                     <span class="rail-label">反馈</span>
                 </a>
                 <a href="https://github.com/Roomen/DeviceDock" target="_blank" rel="noopener" class="rail-item" data-feature="shell.browser" title="GitHub 仓库">
-                    <i class="icon icon-globe"></i>
+                    <i class="icon icon-lg icon-globe"></i>
                     <span class="rail-label">GitHub</span>
                 </a>
                 <a href="https://github.com/Roomen/DeviceDock/releases" target="_blank" rel="noopener" class="rail-item" id="rail-download" data-feature="shell.browser" title="下载客户端">
-                    <i class="icon icon-download"></i>
+                    <i class="icon icon-lg icon-download"></i>
                     <span class="rail-label">客户端</span>
                 </a>
                 <div class="rail-version" id="app-version" title="应用版本"></div>
@@ -776,7 +776,7 @@
                                             <input type="file" id="fw-file" class="d-none" accept=".bin,.hex,.fw">
                                             <div class="fw-upgrade-dropzone" id="fw-drop-zone">
                                                 <div class="fw-upgrade-dropzone-inner">
-                                                    <i class="icon icon-cloud-upload fw-upgrade-drop-icon"></i>
+                                                    <i class="icon icon-lg icon-cloud-upload fw-upgrade-drop-icon"></i>
                                                     <div class="fw-upgrade-drop-text">拖拽固件文件到此处</div>
                                                     <div class="fw-upgrade-drop-hint">或 <button class="fw-drop-browse" id="fw-select">点击浏览</button></div>
                                                 </div>
@@ -851,7 +851,7 @@
                 <!--顶栏：与通信调试的连接条同高同样式；生成动作放右侧-->
                 <div class="view-bar">
                     <div class="view-bar-title">
-                        <i class="icon icon-package"></i>
+                        <i class="icon icon-lg icon-package"></i>
                         <span>固件打包</span>
                         <span class="view-bar-sub">原始包 · 压缩包 · 双向差分包</span>
                     </div>
@@ -873,7 +873,7 @@
                             </div>
                             <input type="file" id="fp-old-file" class="d-none" accept=".bin">
                             <div class="fw-drop-zone" id="fp-old-zone">
-                                <i class="icon icon-cloud-upload fw-drop-zone-icon"></i>
+                                <i class="icon icon-lg icon-cloud-upload fw-drop-zone-icon"></i>
                                 <div class="fw-drop-zone-text">拖拽文件到此处</div>
                                 <div class="fw-drop-zone-hint">或 <button class="fw-drop-browse" id="fp-old-select">点击浏览</button></div>
                             </div>
@@ -892,7 +892,7 @@
                             </div>
                             <input type="file" id="fp-new-file" class="d-none" accept=".bin">
                             <div class="fw-drop-zone" id="fp-new-zone">
-                                <i class="icon icon-cloud-upload fw-drop-zone-icon"></i>
+                                <i class="icon icon-lg icon-cloud-upload fw-drop-zone-icon"></i>
                                 <div class="fw-drop-zone-text">拖拽文件到此处</div>
                                 <div class="fw-drop-zone-hint">或 <button class="fw-drop-browse" id="fp-new-select">点击浏览</button></div>
                             </div>
@@ -942,7 +942,7 @@
                     </div>
                     <div class="fw-log-card">
                         <div class="fw-log-header">
-                            <span><i class="icon icon-terminal"></i> 生成日志</span>
+                            <span><i class="icon icon-lg icon-terminal"></i> 生成日志</span>
                             <button class="fw-log-clear" id="fp-log-clear"><i class="icon icon-trash-2"></i> 清空</button>
                         </div>
                         <pre id="fp-log" class="fw-log-body"></pre>

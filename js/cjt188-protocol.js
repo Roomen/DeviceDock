@@ -344,7 +344,7 @@
 		result.ctrl = ctrl
 		result.dataLen = dataLen
 		result.fields = {
-			方向: dataFrom ? '↑ 应答(设备→平台)' : '↓ 请求(平台→设备)',
+			方向: dataFrom ? '应答(设备→平台)' : '请求(平台→设备)',
 			表号: describeAddr(addr),
 			功能码: { value: hexByte(cmd), name: isTime ? '写标准时间' : cmdDef ? cmdDef.name : '未知' },
 			通讯状态: commuStatus,

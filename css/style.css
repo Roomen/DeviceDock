@@ -74,7 +74,7 @@
   /* 实心底（危险 / 成功 / 强调）上的文字：深色下强调色变亮，用 --accent-text 换深字 */
   --on-solid: #ffffff;
 
-  /* 通道色：A 青、B 琥珀；单路用 accent。方向不靠色相，靠字形（↑ ↓ + 等宽 TX/RX） */
+  /* 通道色：A 青、B 琥珀；单路用 accent。方向不靠色相，靠字形（TX ↑ / RX ↓ + 等宽小字） */
   --ch-a: #0b6b7d;
   --ch-a-soft: rgba(11, 107, 125, 0.1);
   --ch-b: #9a5b06;
@@ -303,7 +303,6 @@ body {
 }
 
 .rail-bottom .rail-item i {
-  font-size: var(--icon);
 }
 
 .rail-config {
@@ -350,12 +349,6 @@ body {
   text-decoration: none;
   transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
   border-radius: 0;
-}
-
-.rail-item i {
-  font-size: var(--icon-lg);
-  line-height: 1;
-  transition: transform var(--transition-fast);
 }
 
 .rail-item:hover {
@@ -813,14 +806,16 @@ body {
   background: none;
 }
 
-/* 方向靠字形：↑ 收（RX，设备→本机）、↓ 发（TX，本机→设备），与解析块里的方向箭头一致 */
-.log-row[data-dir='rx'] > .log-dir::before,
-.sk-parse-block[data-dir='rx'] .log-dir::before,
-.sk-parse-block.sk-parse-up .log-dir::before { content: '\2191'; margin-right: 3px; }
+/* 方向只在这一处画，写在收发字样的后面：TX ↑（本机发出去）、RX ↓（设备收进来），
+   与检查器头部、聊天视图同一套约定。解析块与协议 logView 都不再画箭头
+   （两处一起画会出现「↓ RX + ↑ 应答」这种自相矛盾） */
+.log-row[data-dir='tx'] > .log-dir::after,
+.sk-parse-block[data-dir='tx'] .log-dir::after,
+.sk-parse-block.sk-parse-down .log-dir::after { content: '\2191'; margin-left: 3px; }
 
-.log-row[data-dir='tx'] > .log-dir::before,
-.sk-parse-block[data-dir='tx'] .log-dir::before,
-.sk-parse-block.sk-parse-down .log-dir::before { content: '\2193'; margin-right: 3px; }
+.log-row[data-dir='rx'] > .log-dir::after,
+.sk-parse-block[data-dir='rx'] .log-dir::after,
+.sk-parse-block.sk-parse-up .log-dir::after { content: '\2193'; margin-left: 3px; }
 
 .log-row[data-dir='sys'] > .log-dir {
   color: var(--danger);
@@ -846,7 +841,7 @@ body {
 }
 
 /* 行：中性面 + 左缘 2px 通道条。
-   颜色只编码通道（单路 --ch-s、A 路 --ch-a、B 路 --ch-b），方向由字形承担（见 .log-dir 的 ↑ ↓），
+   颜色只编码通道（单路 --ch-s、A 路 --ch-a、B 路 --ch-b），方向由字形承担（见 .log-dir 的 TX ↑ / RX ↓），
    所以「A 路 TX」与「B 路 RX」不会再因为同一色相而读混。 */
 .log-row {
   --row-ch: var(--ch-s);
@@ -1567,21 +1562,6 @@ body {
   display: block;
 }
 
-.pv-dir {
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.pv-up > .pv-head .pv-dir,
-.pv-up.pv-fold > summary .pv-dir {
-  color: var(--success);
-}
-
-.pv-down > .pv-head .pv-dir,
-.pv-down.pv-fold > summary .pv-dir {
-  color: var(--accent);
-}
-
 .pv-title {
   font-weight: 600;
   font-size: var(--fs-body);
@@ -1620,7 +1600,7 @@ body {
 .pv-sv {
   font-family: var(--font-mono);
   font-size: var(--fs-small);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .pv-badge {
@@ -2199,7 +2179,6 @@ hr {
 .issue-tip-icon {
   flex-shrink: 0;
   margin-top: 2px;
-  font-size: var(--icon-lg);
   color: var(--accent);
 }
 
@@ -2500,8 +2479,7 @@ hr {
   color: var(--text-primary);
 }
 
-.sk-hex-empty-main .bi {
-  font-size: var(--icon-lg);
+.sk-hex-empty-main .icon {
   color: var(--accent);
 }
 
@@ -3083,7 +3061,6 @@ hr {
 
 .serial-device-chip .serial-open-btn i {
   margin: 0;
-  font-size: var(--icon);
 }
 
 /* 已连接时动作键是「断开」, 用危险色提示后果 */
@@ -3256,7 +3233,6 @@ hr {
 }
 
 .fw-upgrade-drop-icon {
-  font-size: var(--icon-lg);
   color: var(--text-muted);
   display: block;
   margin-bottom: 6px;
@@ -3292,7 +3268,6 @@ hr {
 }
 
 .fw-upgrade-file-icon {
-  font-size: var(--icon);
   color: var(--success);
   flex-shrink: 0;
 }
@@ -3429,7 +3404,6 @@ hr {
 }
 
 .fw-drop-zone-icon {
-  font-size: var(--icon-lg);
   color: var(--text-muted);
   display: block;
   margin-bottom: 8px;
@@ -3487,7 +3461,6 @@ hr {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--icon);
   color: var(--on-solid);
   flex-shrink: 0;
 }
@@ -4022,7 +3995,7 @@ hr {
   flex-shrink: 0;
 }
 
-#serial-cmdk-inputbar .bi-search {
+#serial-cmdk-inputbar .icon-search {
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -4338,7 +4311,7 @@ hr {
   background: var(--bg-input);
   color: var(--text-primary);
   font-size: var(--fs-small);
-  font-weight: 600;
+  font-weight: 500;
   text-align: center;
   font-family: var(--font-mono);
   transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -5003,7 +4976,6 @@ hr {
 }
 
 .native-port-icon {
-  font-size: var(--icon);
   color: var(--text-secondary);
   flex: none;
   width: 24px;
@@ -5135,7 +5107,6 @@ hr {
 }
 
 .wb-dock-btn i {
-  font-size: var(--icon);
 }
 
 .wb-dock-btn:hover {
@@ -5967,11 +5938,11 @@ summary {
   background: var(--accent-light);
 }
 
-/* 选中态加勾，不只靠颜色区分 */
+/* 选中态加勾，不只靠颜色区分（用文字勾，不依赖图标字体的私有码位） */
 .ctl-chip input:checked + span::after {
-  content: '\F26E';
-  font-family: 'bootstrap-icons';
-  font-size: var(--fs-body);
+  content: '✓';
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
   line-height: 1;
   margin-left: 1px;
 }
@@ -6017,9 +5988,9 @@ summary {
 }
 
 .ctl-chip-btn[aria-pressed='true']::after {
-  content: '\F26E';
-  font-family: 'bootstrap-icons';
-  font-size: var(--fs-body);
+  content: '✓';
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
   line-height: 1;
   margin-left: 1px;
 }
@@ -6688,7 +6659,7 @@ html[data-layout='modern'] .mi-v {
 	flex: 0 1 auto;
 	max-width: 62%;
 	font-family: var(--font-mono);
-	font-weight: 600;
+	font-weight: 500;
 	text-align: right;
 	overflow-wrap: anywhere;
 }
@@ -6796,10 +6767,6 @@ html[data-layout='modern'] .mi-empty {
 	border-radius: var(--radius-md);
 	text-align: center;
 	color: var(--text-secondary);
-}
-
-html[data-layout='modern'] .mi-empty .bi {
-	font-size: var(--icon-lg);
 }
 
 html[data-layout='modern'] .mi-empty-main {
@@ -7065,7 +7032,7 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 	border-top-right-radius: 2px;
 }
 
-/* 气泡：中性面 + 一条发丝线，通道色只出现在外侧那条 2px 边上；方向靠气泡里的 ↑ ↓ 字形 */
+/* 气泡：中性面 + 一条发丝线，通道色只出现在外侧那条 2px 边上；方向靠气泡里的 TX ↑ / RX ↓ 小字 */
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row:is([data-sid='A'], [data-sid='B'], [data-sid='S']):is([data-dir='tx'], [data-dir='rx']) {
 	--bb-bg: var(--bb-surface);
 	--bb-bd: var(--border-light);
@@ -7147,13 +7114,13 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 	vertical-align: middle;
 	font-family: var(--font-mono);
 	font-size: var(--fs-micro);
-	font-weight: 600;
+	font-weight: 500;
 	color: var(--text-secondary);
 	opacity: 1;
 }
 
-/* 方向标签：文字清零，改由 ::before 显示「↑ RX / ↓ TX」，与列表和解析块同一套约定
-   （↑ 收 = 设备→本机，↓ 发 = 本机→设备）。不上底色、不换色相：通道色只在那条 2px 边上。
+/* 方向标签：文字清零，改由 ::before 显示「TX ↑ / RX ↓」，与列表行和检查器头部同一套约定
+   （↑ = 本机发出去，↓ = 设备收进来）。不上底色、不换色相：通道色只在那条 2px 边上。
    复制日志读元素文本，伪元素不进剪贴板 */
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row:is([data-sid='A'], [data-sid='B'], [data-sid='S']):is([data-dir='tx'], [data-dir='rx']) > .log-dir::before {
 	padding: 0;
@@ -7168,12 +7135,17 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 	line-height: 1.25;
 }
 
-html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row[data-dir='rx'] > .log-dir::before {
-	content: '↑ RX';
+/* 气泡里方向由 ::before 的整段文字表达，别再让列表那套 ::after 再补一个箭头 */
+html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row > .log-dir::after {
+	content: none;
 }
 
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row[data-dir='tx'] > .log-dir::before {
-	content: '↓ TX';
+	content: 'TX ↑';
+}
+
+html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row[data-dir='rx'] > .log-dir::before {
+	content: 'RX ↓';
 }
 
 /* 气泡内的解析卡片：保持各帧独立的块级容器，多帧依次排列不打散，防止标题正文错位 */
@@ -7351,7 +7323,7 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 
 /* ---------- 聊天：单路(按方向分左右) ---------- */
 /* 单路只有一路，气泡左右由收发方向决定(聊天软件习惯)：RX 接收靠左、TX 发送靠右，系统行居中。
-   单路只有一个通道，通道色固定 --ch-s；方向由气泡里的 ↑ ↓ 字形表达 */
+   单路只有一个通道，通道色固定 --ch-s；方向由气泡里的 TX ↑ / RX ↓ 小字表达 */
 html[data-layout='modern'][data-dual-view='bubble'] #serial-logs-single .log-row {
 	--bb-c: var(--ch-s);
 	--bb-t: var(--text-secondary);
@@ -7733,7 +7705,6 @@ html[data-layout='modern'] .mdn-fw .fw-drop-zone {
 html[data-layout='modern'] .mdn-fw .fw-drop-zone-icon {
 	grid-row: 1 / span 2;
 	margin: 0;
-	font-size: var(--icon-lg);
 }
 
 html[data-layout='modern'] .mdn-fw .fw-drop-zone-text {
@@ -8007,7 +7978,7 @@ html[data-layout='modern'] .mdn-fw-prog {
 html[data-layout='modern'] .mdn-fw-big {
 	font-family: var(--font-mono);
 	font-size: var(--fs-page);
-	font-weight: 600;
+	font-weight: 500;
 	line-height: 1;
 	font-variant-numeric: tabular-nums;
 }
@@ -8677,8 +8648,7 @@ html[data-layout='modern'] .mdn-fmt-cap-val {
 	text-overflow: ellipsis;
 }
 
-html[data-layout='modern'] .mdn-fmt-cap .bi {
-	font-size: var(--fs-micro);
+html[data-layout='modern'] .mdn-fmt-cap .icon {
 	color: var(--text-secondary);
 }
 
@@ -8932,8 +8902,9 @@ html[data-layout='modern'] .mdn-fold:hover {
 	color: var(--text-primary);
 }
 
-html[data-layout='modern'] .mdn-fold[aria-expanded='false'] i::before {
-	content: '\F286';
+/* 收起态把已有的 chevron 转 90°，不换图标码位（图标字体已换成 lucide） */
+html[data-layout='modern'] .mdn-fold[aria-expanded='false'] i {
+	transform: rotate(-90deg);
 }
 
 /* 输入行：拆开原有两层(输入框 + 发送键 / 开关一排)，按设计稿排成一行，节点不动 */
@@ -9611,7 +9582,6 @@ html[data-layout='modern'] .mdn-logbar-toggle[aria-expanded='true'] {
 	}
 
 	html[data-layout='modern'] #activity-rail .rail-item i {
-		font-size: var(--icon-lg);
 	}
 
 	html[data-layout='modern'] #activity-rail .rail-version {
@@ -10002,7 +9972,7 @@ html[data-layout='modern'] #activity-rail .rail-item { flex-shrink: 0; }
 	padding: 8px 10px; border: 0; border-radius: 6px; background: transparent;
 	color: var(--text-primary); font: inherit; text-align: left;
 }
-#theme-switch button > i { font-size: var(--icon); width: 18px; text-align: center; }
+#theme-switch button > i { width: 18px; text-align: center; }
 #theme-switch button .theme-check { margin-left: auto; visibility: hidden; }
 #theme-switch button.active .theme-check { visibility: visible; }
 #theme-switch button:hover { background: var(--bg-surface-hover); }

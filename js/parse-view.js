@@ -32,9 +32,9 @@
 	}
 
 	function headHtml(m, opts) {
-		const dir = m.dir === 'up' || m.dir === 'down' ? m.dir : (opts.dir === 'up' || opts.dir === 'down' ? opts.dir : '')
+		// 方向不再在标题前画箭头：日志行的元信息列已经表达方向（TX ↑ / RX ↓），
+		// 两处一起画会出现「↑ RX + ↓ 应答」这种自相矛盾（帧的 up/down 是协议方向，和行的收发不一定同向）
 		let h = ''
-		if (dir) h += '<span class="pv-dir">' + (dir === 'up' ? '↑' : '↓') + '</span> '
 		h += '<span class="pv-title">' + esc(m.title || '帧') + '</span>'
 		if (m.code) h += ' <span class="pv-code">' + esc(m.code) + '</span>'
 		if (opts.tag) h += ' <span class="pv-tag" title="快捷发送名称">' + esc(opts.tag) + '</span>'

@@ -2074,10 +2074,10 @@
 	}
 
 	W.skFormatFrame = function (p) {
-		const dirArrow = p.dir === 'up' ? '↑' : p.dir === 'down' ? '↓' : '?'
+		// 方向由日志行的元信息列表达（TX ↑ / RX ↓），解析条只报校验状态，不再画箭头
 		const status = (p.crcOk ? '✓' : '✗') + (p.encrypted ? ' 🔒' : '') + (p.truncated || p.missingTail ? ' ⚠截断' : '')
 		let h = '<div class="sk-parse">'
-		h += '<div class="sk-parse-bar">' + dirArrow + ' ' + status + '</div>'
+		h += '<div class="sk-parse-bar">' + status + '</div>'
 		// 会话基准水量条
 		const sb = p.sessionBase || {
 			has: W.skSession.hasBase(),

@@ -948,7 +948,7 @@
 			cap.setAttribute('aria-expanded', 'false')
 			const name = mk('span', 'mdn-fmt-cap-lane')
 			const val = mk('span', 'mdn-fmt-cap-val')
-			cap.append(name, val, icon('icon-chevron-down'))
+			cap.append(name, val, icon('icon-sm icon-chevron-down'))
 			const pop = mk('div', 'mdn-fmt-pop')
 			pop.id = 'mdn-fmt-pop-' + sid.toLowerCase()
 			cap.setAttribute('aria-controls', pop.id)
