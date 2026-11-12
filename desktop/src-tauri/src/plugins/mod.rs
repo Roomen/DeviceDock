@@ -33,6 +33,11 @@ impl PluginsState {
     pub fn init(app: &AppHandle) -> Result<Self, String> {
         let root = store::root(app)?;
         std::fs::create_dir_all(&root).map_err(|e| format!("无法创建插件目录：{e}"))?;
+        // 上次进程可能在安装事务中途被杀：启动时按 .tx.json 的提交标记还原或补做清理
+        {
+            let _file = store::file_lock(&root)?;
+            store::recover_transactions(&root)?;
+        }
         Ok(PluginsState { root, tx: Mutex::new(()) })
     }
     pub fn root(&self) -> &Path {
@@ -72,6 +77,7 @@ pub struct InspectInfo {
     pub name: String,
     pub version: String,
     pub current_version: Option<String>,
+    pub current_package_sha256: Option<String>,
     pub repo: String,
     pub tag: String,
     pub package_sha256: String,
@@ -88,6 +94,7 @@ pub struct UpdateInfo {
     pub id: String,
     pub name: String,
     pub current_version: String,
+    pub current_package_sha256: String,
     pub version: String,
     pub repo: String,
     pub tag: String,
@@ -265,6 +272,7 @@ pub async fn plugin_inspect(state: State<'_, PluginsState>, repo: String, tag: O
         name: m.name.clone(),
         version: m.version.clone(),
         current_version: existing.map(|e| e.version.clone()),
+        current_package_sha256: existing.map(|e| e.package_sha256.clone()),
         repo: format!("https://github.com/{}/{}", parsed.owner, parsed.repo),
         tag: release.tag_name,
         package_sha256: digest,
@@ -277,7 +285,15 @@ pub async fn plugin_inspect(state: State<'_, PluginsState>, repo: String, tag: O
 }
 
 #[tauri::command]
-pub async fn plugin_install(app: AppHandle, state: State<'_, PluginsState>, repo: String, tag: Option<String>, expected_sha256: Option<String>) -> Result<PluginInfo, String> {
+pub async fn plugin_install(
+    app: AppHandle,
+    state: State<'_, PluginsState>,
+    repo: String,
+    tag: Option<String>,
+    expected_sha256: String,
+    expected_current_version: Option<String>,
+    expected_current_sha256: Option<String>,
+) -> Result<PluginInfo, String> {
     let mut parsed = github::parse_repo_url(&repo)?;
     if let Some(t) = tag {
         let t = t.trim().to_string();
@@ -285,24 +301,37 @@ pub async fn plugin_install(app: AppHandle, state: State<'_, PluginsState>, repo
             parsed.tag = Some(t);
         }
     }
+    // 摘要必填且必须是完整 64 位十六进制：没有确认过的包不能落盘
+    let expected = expected_sha256.trim().to_ascii_lowercase();
+    if !store::valid_sha256(&expected) {
+        return Err("安装缺少确认时校验过的包 SHA-256，请重新检查并确认".to_string());
+    }
     let root = state.root().to_path_buf();
     let (m, digest, staging, release) = download_and_stage(&root, &parsed).await?;
-    if let Some(exp) = expected_sha256.as_deref() {
-        let norm = exp.trim().to_ascii_lowercase();
-        if !norm.is_empty() && norm != digest {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err("远端插件包摘要与确认时不一致，请重新检查后再安装".to_string());
-        }
+    if expected != digest {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err("远端插件包摘要与确认时不一致，请重新检查后再安装".to_string());
     }
     if m.kind != "web" {
         let _ = std::fs::remove_dir_all(&staging);
         return Err("本地进程（native）插件尚未支持，请安装 web 类型插件".to_string());
     }
-    // 目录切换与 state.json 提交在同一把锁里完成：旧版本目录一直留到状态写成功才清
+    // 目录切换与 state.json 提交在同一把进程内锁 + 同一把跨进程文件锁里完成；
+    // 旧版本目录一直留到状态写成功才清，失败按事务记录回滚，崩溃由启动时恢复。
     let outcome = (|| -> Result<store::State, String> {
+        let _file = store::file_lock(&root)?;
         let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        // 提交前重新核对确认时的已安装状态：并发变更会让能力差异展示过期
+        let before = store::load_state(&root);
+        if !store::baseline_matches(
+            before.plugins.get(&m.id),
+            expected_current_version.as_deref(),
+            expected_current_sha256.as_deref(),
+        ) {
+            return Err("插件安装状态在确认后发生变化，请重新检查并确认".to_string());
+        }
         let tx = store::begin_install(&root, &m.id, &m.version, &staging)?;
-        let st = store::load_and_save(&root, |st| {
+        let saved = store::load_and_save(&root, |st| {
             st.plugins.insert(
                 m.id.clone(),
                 store::Entry {
@@ -317,13 +346,15 @@ pub async fn plugin_install(app: AppHandle, state: State<'_, PluginsState>, repo
                 },
             );
         });
-        match st {
+        match saved {
             Ok(_) => {
-                tx.commit();
+                tx.commit()?; // 提交失败也如实上报；事务记录留给启动恢复
                 Ok(store::load_state(&root))
             }
             Err(e) => {
-                tx.rollback();
+                if let Err(rb) = tx.rollback() {
+                    return Err(format!("{e}；回滚也失败：{rb}"));
+                }
                 Err(e)
             }
         }
@@ -357,6 +388,7 @@ pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>
         id: m.id.clone(),
         name: m.name.clone(),
         current_version: entry.version.clone(),
+        current_package_sha256: entry.package_sha256.clone(),
         version: m.version.clone(),
         repo: entry.repo.clone(),
         tag: release.tag_name.clone(),
@@ -371,6 +403,7 @@ pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>
 #[tauri::command]
 pub fn plugin_set_enabled(app: AppHandle, state: State<'_, PluginsState>, id: String, enabled: bool) -> Result<Vec<PluginInfo>, String> {
     let root = state.root().to_path_buf();
+    let _file = store::file_lock(&root)?;
     store::update_state(&root, &state.tx, |st| {
         let entry = st.plugins.get_mut(&id).ok_or_else(|| "插件没有安装".to_string())?;
         entry.enabled = enabled;
@@ -383,13 +416,16 @@ pub fn plugin_set_enabled(app: AppHandle, state: State<'_, PluginsState>, id: St
 #[tauri::command]
 pub fn plugin_uninstall(app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Vec<PluginInfo>, String> {
     let root = state.root().to_path_buf();
-    store::update_state(&root, &state.tx, |st| {
-        if st.plugins.remove(&id).is_none() {
+    {
+        let _file = store::file_lock(&root)?;
+        let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        // 状态提交与目录删除必须在同一段锁内：否则可能删掉并发安装刚放进来的包
+        let removed = store::load_and_save(&root, |st| st.plugins.remove(&id).is_some())?;
+        if !removed {
             return Err("插件没有安装".to_string());
         }
-        Ok::<(), String>(())
-    })??;
-    store::remove_plugin(&root, &id)?;
+        store::remove_plugin(&root, &id)?;
+    }
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(list_all(&root))
 }

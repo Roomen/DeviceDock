@@ -4,6 +4,8 @@ use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use unicode_normalization::UnicodeNormalization;
+
 use super::manifest::{safe_rel_path, MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES};
 
 #[derive(Debug)]
@@ -65,16 +67,21 @@ struct PathTable {
 }
 
 impl PathTable {
+    // 键用 NFC 归一化 + 小写：macOS 的 NFD 与 Windows / zip 里的 NFC 在大小写不敏感系统上
+    // 会指向同一个文件（café 的两种写法），只比小写会漏掉这类碰撞。
+    fn norm(rel: &str) -> String {
+        rel.nfc().collect::<String>().to_lowercase()
+    }
     fn ancestors(rel: &str) -> Vec<String> {
         let parts: Vec<&str> = rel.split('/').collect();
         (1..parts.len())
-            .map(|i| parts[..i].join("/").to_lowercase())
+            .map(|i| Self::norm(&parts[..i].join("/")))
             .collect()
     }
     fn add_file(&mut self, rel: &str) -> Result<(), String> {
-        let n = rel.to_lowercase();
+        let n = Self::norm(rel);
         if self.files.contains(&n) {
-            return Err(format!("包内有重复或大小写碰撞的文件：{rel}"));
+            return Err(format!("包内有重复、大小写或 Unicode 归一化碰撞的文件：{rel}"));
         }
         if self.dirs.contains(&n) {
             return Err(format!("包内路径同时是文件与目录：{rel}"));
@@ -89,7 +96,7 @@ impl PathTable {
         Ok(())
     }
     fn add_dir(&mut self, rel: &str) -> Result<(), String> {
-        let n = rel.to_lowercase();
+        let n = Self::norm(rel);
         if self.files.contains(&n) {
             return Err(format!("包内路径同时是文件与目录：{rel}"));
         }
@@ -288,9 +295,27 @@ mod tests {
         let dir = tmpdir("zip-case");
         let collision = zip_with(&[("index.html", b"a"), ("INDEX.html", b"b")]);
         let err = extract_zip(&collision, &dir).unwrap_err();
-        assert!(err.contains("大小写碰撞"), "{err}");
+        assert!(err.contains("碰撞"), "{err}");
         // 大小写不敏感的系统上不能靠后者覆盖前者
         assert_eq!(std::fs::read(dir.join("index.html")).unwrap(), b"a");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_unicode_normalization_collisions() {
+        // é (NFC) 与 e + combining acute (NFD) 在 macOS 上是同一个文件
+        let dir = tmpdir("zip-nfc");
+        let collision = zip_with(&[("caf\u{e9}.html", b"a"), ("cafe\u{301}.html", b"b")]);
+        let err = extract_zip(&collision, &dir).unwrap_err();
+        assert!(err.contains("归一化碰撞"), "{err}");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "不能出现两个同名文件");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // 正常的非 ASCII 路径仍然可用
+        let dir = tmpdir("zip-unicode-ok");
+        let ok = zip_with(&[("说明.txt", b"x")]);
+        assert!(extract_zip(&ok, &dir).is_ok());
+        assert_eq!(std::fs::read(dir.join("说明.txt")).unwrap(), b"x");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -111,7 +111,7 @@
 	function pushTheme() {
 		const payload = themeState()
 		views.forEach(function (view) {
-			if (view.ready) post(view, Rpc.eventEnvelope('theme-change', payload))
+			if (view.ready) postEvent(view, Rpc.eventEnvelope('theme-change', payload))
 		})
 	}
 
@@ -137,13 +137,13 @@
 		view = {
 			plugin: plugin, el: el, iframe: iframe, ready: false, closed: false,
 			claims: new Map(), busy: new Map(), busySeq: 0, teardowns: [], ctx: null,
-			admission: Rpc.newAdmissionState(),
+			admission: Rpc.newAdmissionState(), eventState: Rpc.newEventState(),
 		}
 		view.ctx = makeContext(view)
 		iframe.addEventListener('load', function () {
 			if (view.closed) return
 			view.ready = true
-			post(view, Rpc.eventEnvelope('ready', Object.assign({
+			postEvent(view, Rpc.eventEnvelope('ready', Object.assign({
 				plugin: { id: plugin.id, name: plugin.name, version: plugin.version },
 				platform: platformInfo(),
 			}, themeState())))
@@ -165,21 +165,37 @@
 	}
 	// 停用 / 卸载 / 重装 / 更新准备统一走这里：iframe 立刻拿下，串口与扫描的收尾必须等完。
 	// 关闭失败时保留 serialPortClaims 占用声明与 busy 源，应用更新不能提前放行。
-	function releaseView(view) {
-		const teardowns = view.teardowns.slice()
-		view.teardowns = []
-		const cleanup = teardowns.map(function (fn) {
-			return Promise.resolve().then(fn).catch(function () { /* 清理失败也会由串口关闭结果兜住 */ })
-		})
-		return Promise.all([
-			Promise.all(cleanup),
-			Api.closeClaims ? Api.closeClaims(view.ctx) : Promise.resolve([]),
-		]).then(function (res) {
-			const failures = res[1] || []
+	// 停用 / 卸载 / 重装 / 更新准备统一走这里。teardown（BLE 扫描等）失败与串口关闭失败
+	// 都如实记录，不能吞掉；失败的释放留在 pendingReleases 里可重试，确认前不放行应用更新。
+	function releaseView(view, state) {
+		return (async function () {
+			const failures = []
+			for (let i = 0; i < state.teardowns.length; i++) {
+				const t = state.teardowns[i]
+				if (t.done) continue
+				try {
+					await Promise.resolve().then(t.fn)
+					t.done = true
+				} catch (e) {
+					failures.push({ claimId: 'teardown', message: '清理回调失败：' + String(e && e.message ? e.message : e) })
+				}
+			}
+			const claimFailures = Api.closeClaims ? await Api.closeClaims(view.ctx, { cancelled: true }) : []
+			for (let i = 0; i < (claimFailures || []).length; i++) failures.push(claimFailures[i])
 			if (!failures.length && root.serialPortClaims && root.serialPortClaims.releasePlugin) {
 				root.serialPortClaims.releasePlugin(view.plugin.id)
 			}
 			return { ok: failures.length === 0, failures: failures }
+		})()
+	}
+	function runRelease(entry) {
+		const label = entry.view.plugin.name || entry.id
+		entry.label = label + ' · 正在释放资源'
+		return releaseView(entry.view, entry.state).then(function (res) {
+			entry.failed = !res.ok
+			entry.label = label + (res.ok ? ' · 已释放' : ' · 释放失败（可重试）')
+			if (res.ok) pendingReleases.delete(entry.id)
+			return res
 		})
 	}
 	function destroyView(id) {
@@ -190,18 +206,29 @@
 		view.el.remove()
 		views.delete(id)
 		view.busy.clear()
-		const label = (view.plugin.name || id)
-		const entry = { promise: null, failed: false, label: label + ' · 正在释放串口' }
-		entry.promise = releaseView(view).then(function (res) {
-			entry.failed = !res.ok
-			entry.label = label + (res.ok ? ' · 已释放' : ' · 串口释放失败')
-			if (res.ok) pendingReleases.delete(id)
-			return res
-		})
+		const entry = {
+			id: id, view: view, failed: false, promise: null,
+			label: (view.plugin.name || id) + ' · 正在释放资源',
+			state: { teardowns: view.teardowns.map(function (fn) { return { fn: fn, done: false } }) },
+		}
+		view.teardowns = []
+		entry.promise = runRelease(entry)
 		pendingReleases.set(id, entry)
 		return entry.promise
 	}
-	function platformInfo() {
+	// 释放失败的重试入口：管理面板 / 重开插件 / 更新准备前都能调，避免永久占口或挡更新
+	function retryRelease(id) {
+		const entry = pendingReleases.get(id)
+		if (!entry || !entry.failed) return Promise.resolve({ ok: true, failures: [] })
+		entry.promise = runRelease(entry)
+		return entry.promise
+	}
+	function failedReleases() {
+		const out = []
+		pendingReleases.forEach(function (entry, id) { if (entry.failed) out.push(id) })
+		return out
+	}
+function platformInfo() {
 		return {
 			os: P.os, runtime: P.runtime, profile: P.profile, lanes: P.lanes,
 			version: root.APP_VERSION || '',
@@ -211,12 +238,23 @@
 		if (!view || view.closed || !view.iframe.contentWindow) return
 		try { view.iframe.contentWindow.postMessage(msg, '*') } catch (e) {}
 	}
+	// 宿主 → 插件的事件按插件限流，超额丢弃；窗口切换时先补一条 events.dropped 计数事件
+	function postEvent(view, envelope) {
+		if (!view || view.closed) return
+		const a = Rpc.eventAdmission(view.eventState, Date.now(), Rpc.EVENT_LIMITS)
+		view.eventState = a.state
+		if (a.report > 0) {
+			// 丢失提示本身不受限流，且必须直接 post，避免递归
+			post(view, Rpc.eventEnvelope('events.dropped', { count: a.report, windowMs: Rpc.EVENT_LIMITS.windowMs }))
+		}
+		if (a.ok) post(view, envelope)
+	}
 
 	function makeContext(view) {
 		const plugin = view.plugin
 		const ctx = {
 			id: plugin.id, name: plugin.name, version: plugin.version, capabilities: plugin.capabilities || [],
-			send: function (name, payload) { post(view, Rpc.eventEnvelope(name, payload)) },
+			send: function (name, payload) { postEvent(view, Rpc.eventEnvelope(name, payload)) },
 			theme: themeState,
 			onTeardown: function (fn) {
 				if (typeof fn !== 'function') return
@@ -259,39 +297,40 @@
 		const view = viewBySource(event.source)
 		if (!view || view.closed) return
 		const data = event.data
-		const req = Rpc.validateRequest(data)
-		if (!req.ok) {
-			// 请求本身不合法：能取到 id 就回错误，取不到就静默丢弃（插件写坏了不该拖垮宿主）
-			const id = data && typeof data.id === 'string' ? data.id : ''
-			if (id) post(view, Rpc.errorEnvelope(id, req.error.code, req.error.message))
-			return
-		}
-		// 每插件实例的在飞 / 速率上限：失控的第三方代码不能靠高频 RPC（含被拒的方法）拖慢界面
+		// O(1) 轻量准入先做：无效 / 超大 / 高频消息都要先计数限流，
+		// 不能等遍历完整条消息（甚至整个大数组）才判断是否拒绝
+		const quickId = data && typeof data === 'object' && typeof data.id === 'string' ? data.id : ''
 		const adm = Rpc.admission(view.admission, Date.now(), Rpc.LIMITS)
 		if (!adm.ok) {
-			post(view, Rpc.errorEnvelope(req.id, adm.error.code, adm.error.message))
+			if (quickId) post(view, Rpc.errorEnvelope(quickId, adm.error.code, adm.error.message))
 			return
 		}
 		view.admission = adm.state
-		const denied = Rpc.authorize(view.plugin.capabilities || [], req.method)
-		if (denied) {
-			view.admission = Rpc.releaseInflight(view.admission)
-			post(view, Rpc.errorEnvelope(req.id, denied.code, denied.message))
-			return
-		}
 		try {
-			const result = await Api.call(req.method, req.params, view.ctx)
-			post(view, Rpc.resultEnvelope(req.id, result))
-		} catch (e) {
-			const code = e && e.code ? e.code : 'internal'
-			const message = String(e && e.message ? e.message : e)
-			post(view, Rpc.errorEnvelope(req.id, code, message))
+			const req = Rpc.validateRequest(data)
+			if (!req.ok) {
+				// 请求本身不合法：能取到 id 就回错误，取不到就静默丢弃
+				if (quickId) post(view, Rpc.errorEnvelope(quickId, req.error.code, req.error.message))
+				return
+			}
+			const denied = Rpc.authorize(view.plugin.capabilities || [], req.method)
+			if (denied) {
+				post(view, Rpc.errorEnvelope(req.id, denied.code, denied.message))
+				return
+			}
+			try {
+				const result = await Api.call(req.method, req.params, view.ctx)
+				post(view, Rpc.resultEnvelope(req.id, result))
+			} catch (e) {
+				const code = e && e.code ? e.code : 'internal'
+				const message = String(e && e.message ? e.message : e)
+				post(view, Rpc.errorEnvelope(req.id, code, message))
+			}
 		} finally {
 			view.admission = Rpc.releaseInflight(view.admission)
 		}
 	}
-
-	// ---------- 原始字节 / 解析帧 / 设备事件 ----------
+// ---------- 原始字节 / 解析帧 / 设备事件 ----------
 	function ensureByteTap() {
 		if (byteTapInstalled || !root.serialByteTap) return
 		byteTapInstalled = true
@@ -302,7 +341,7 @@
 				if ((view.plugin.capabilities || []).indexOf('serial.io') === -1) return
 				// 同一块字节只转成数组一次，postMessage 各自结构化克隆
 				if (!payload) payload = { lane: sid, at: Date.now(), bytes: Array.from(data) }
-				post(view, Rpc.eventEnvelope(direction === 'rx' ? 'serial.rx' : 'serial.tx', payload))
+				postEvent(view, Rpc.eventEnvelope(direction === 'rx' ? 'serial.rx' : 'serial.tx', payload))
 			})
 		})
 		doc.addEventListener('serial-parse-frame', function (e) {
@@ -310,7 +349,7 @@
 			views.forEach(function (view) {
 				if (view.closed || !view.ready) return
 				if ((view.plugin.capabilities || []).indexOf('protocol.read') === -1) return
-				post(view, Rpc.eventEnvelope('protocol.frame', detail))
+				postEvent(view, Rpc.eventEnvelope('protocol.frame', detail))
 			})
 		})
 		doc.addEventListener('serial-session', function (e) {
@@ -319,7 +358,7 @@
 			views.forEach(function (view) {
 				if (view.closed || !view.ready) return
 				if ((view.plugin.capabilities || []).indexOf('device.read') === -1) return
-				post(view, Rpc.eventEnvelope('device.lane', { sid: d.sid, state: d.state, generation: d.generation }))
+				postEvent(view, Rpc.eventEnvelope('device.lane', { sid: d.sid, state: d.state, generation: d.generation }))
 			})
 		})
 		const adapter = root.SerialAdapter
@@ -329,7 +368,7 @@
 					views.forEach(function (view) {
 						if (view.closed || !view.ready) return
 						if ((view.plugin.capabilities || []).indexOf('device.read') === -1) return
-						post(view, Rpc.eventEnvelope('device.ports', { type: type }))
+						postEvent(view, Rpc.eventEnvelope('device.ports', { type: type }))
 					})
 				})
 			})
@@ -449,7 +488,8 @@
 		// 同版本重装 / 停用后立刻重新打开：等旧 iframe 的资源收尾完成再加载新包
 		const pending = pendingReleases.get(id)
 		if (pending) {
-			const res = await pending.promise
+			let res = await pending.promise
+			if (!res.ok) res = await retryRelease(id)
 			if (!res.ok) return
 		}
 		const view = ensureView(plugin)
@@ -550,12 +590,19 @@
 		open: openPlugin,
 		// 给管理面板用：停用 / 卸载后立刻收起对应视图
 		close: destroyView,
+		retryRelease: retryRelease,
+		failedReleases: failedReleases,
 		list: function () { return plugins.slice() },
 		order: function () { return order.slice() },
 	}
 	P.provide('plugin-host', {
 		isBusyForUpdate: isBusyForUpdate,
 		release: async function () {
+			// 确认前先重试一次失败的释放，一次瞬时失败不该永久挡住应用更新
+			const stale = failedReleases()
+			for (let i = 0; i < stale.length; i++) {
+				try { await retryRelease(stale[i]) } catch (e) {}
+			}
 			Array.from(views.keys()).forEach(destroyView)
 			const results = await Promise.all(Array.from(pendingReleases.values(), function (e) { return e.promise }))
 			const failed = results.filter(function (r) { return !r.ok })

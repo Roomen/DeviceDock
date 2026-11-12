@@ -206,7 +206,7 @@
 		async 'claim.release'(params, ctx) {
 			const rec = ctx.claimRecord(params.claimId)
 			if (!rec) return { released: false }
-			await closeClaim(rec)
+			await closeClaim(rec, { cancelled: true })
 			if (root.serialPortClaims) root.serialPortClaims.release(rec.id)
 			ctx.dropClaim(rec.id)
 			return { released: true }
@@ -225,21 +225,31 @@
 		async 'claim.close'(params, ctx) {
 			const rec = ctx.claimRecord(params.claimId)
 			if (!rec) return { closed: false }
-			await closeClaim(rec)
+			// 普通关闭不是停用：不置 cancelled，同一声明之后还能重新 open
+			await closeClaim(rec, { cancelled: false })
 			return { closed: true }
 		},
 		async 'claim.write'(params, ctx) {
 			const rec = ctx.claimRecord(params.claimId)
 			if (!rec) throw fail('not_found', '占用声明不存在')
+			if (rec.cancelled) throw fail('not_found', '插件已停用')
 			if (!rec.open || !rec.port.writable) throw fail('not_found', '串口未打开')
 			const bytes = bytesOf(params.bytes)
-			const writer = rec.port.writable.getWriter()
-			try {
-				await writer.write(bytes)
-			} finally {
-				try { writer.releaseLock() } catch (e) {}
+			// 写任务记在 rec 上并串行化：关闭时必须等持锁的 writer 写完、释放锁再 close
+			const run = async function () {
+				if (rec.cancelled || !rec.open || !rec.port.writable) throw fail('not_found', '串口已关闭')
+				const writer = rec.port.writable.getWriter()
+				try {
+					await writer.write(bytes)
+				} finally {
+					try { writer.releaseLock() } catch (e) {}
+				}
+				return { bytes: bytes.length }
 			}
-			return { bytes: bytes.length }
+			const task = (rec.writeTask || Promise.resolve()).catch(function () {}).then(run)
+			rec.writeTask = task
+			task.catch(function () {}) // 避免排队中间的 rejection 变成未处理错误
+			return await task
 		},
 
 		async 'protocol.info'(params) {
@@ -384,7 +394,9 @@
 	async function stopBleScan(owner) {
 		if (owner.stopping) return owner.stopping
 		const p = (async function () {
-			if (owner.ble.stopScan) await owner.ble.stopScan()
+			// 重试时取当前服务（不钉死启动扫描那一刻的对象），瞬时失败修好后能真正收尾
+			const ble = service('computer-ble') || owner.ble
+			if (ble && ble.stopScan) await ble.stopScan()
 			if (owner.task) {
 				try { await owner.task } catch (e) { /* 扫描任务的失败由错误事件上报 */ }
 			}
@@ -400,6 +412,14 @@
 		if (rec.open) return
 		if (rec.openTask) throw fail('bad_request', '正在打开，请稍候')
 		if (rec.cancelled) throw fail('not_found', '插件已停用')
+		if (rec.portOpened && !rec.portClosed) throw fail('internal', '上一次关闭未确认完成，请重试')
+		// 普通 claim.close 之后可以重新打开同一声明：重置这一轮的流状态
+		rec.portOpened = false
+		rec.portClosed = false
+		rec.open = false
+		rec.reading = false
+		rec.reader = null
+		rec.readTask = null
 		// 把在飞打开记在 rec 上：停用时要等它收尾，不能让打开在视图销毁后继续完成并起读循环
 		const task = (async function () {
 			await rec.port.open({
@@ -464,37 +484,52 @@
 		rec.reading = false
 	}
 
-	async function closeClaim(rec) {
-		rec.cancelled = true
+	// opts.cancelled=true 是停用 / 卸载（该声明此后不可再用）；false 是普通 claim.close（可重新 open）。
+	// 串行化关闭：失败的释放重试时不能并发再跑一次 close。
+	async function closeClaim(rec, opts) {
+		if (opts && opts.cancelled) rec.cancelled = true
 		rec.reading = false
-		// 1) 等打开收尾：打开途中停用不能留下没人管的句柄
-		if (rec.openTask) {
-			try { await rec.openTask } catch (e) { /* 打开失败也要继续把已开的口关掉 */ }
+		if (rec.closingTask) return rec.closingTask
+		const task = (async function () {
+			// 1) 等打开收尾：打开途中停用不能留下没人管的句柄
+			if (rec.openTask) {
+				try { await rec.openTask } catch (e) { /* 打开失败也要继续把已开的口关掉 */ }
+			}
+			// 2) 等在飞写入结束：写流还被锁着时 close 会失败
+			if (rec.writeTask) {
+				try { await rec.writeTask } catch (e) { /* 写失败也继续收尾 */ }
+			}
+			// 3) 取消并等待持锁的 reader，读循环结束后才关端口
+			if (rec.reader) {
+				try { await rec.reader.cancel() } catch (e) {}
+			}
+			if (rec.readTask) {
+				try { await rec.readTask } catch (e) {}
+				rec.readTask = null
+			}
+			// 4) 关闭失败要如实抛出：占用声明与 busy 源都保留，应用更新也不能放行
+			if (rec.portOpened && !rec.portClosed) {
+				await rec.port.close()
+				rec.portClosed = true
+			}
+			rec.open = false
+		})()
+		rec.closingTask = task
+		try {
+			return await task
+		} finally {
+			rec.closingTask = null
 		}
-		// 2) 取消并等待持锁的 reader，读循环结束后才关端口
-		if (rec.reader) {
-			try { await rec.reader.cancel() } catch (e) {}
-		}
-		if (rec.readTask) {
-			try { await rec.readTask } catch (e) {}
-			rec.readTask = null
-		}
-		// 3) 关闭失败要如实抛出：占用声明与 busy 源都保留，应用更新也不能放行
-		if (rec.portOpened && !rec.portClosed) {
-			await rec.port.close()
-			rec.portClosed = true
-		}
-		rec.open = false
 	}
 
-	// 停用 / 卸载 / 更新准备统一走这里：逐个等串口收尾，成功才注销声明，失败保留占用
-	async function closeClaims(ctx) {
+	// 停用 / 卸载 / 更新准备统一走这里：逐个等串口收尾，成功才注销声明，失败保留占用供重试
+	async function closeClaims(ctx, opts) {
 		const failures = []
 		const recs = ctx.claims()
 		for (let i = 0; i < recs.length; i++) {
 			const rec = recs[i]
 			try {
-				await closeClaim(rec)
+				await closeClaim(rec, opts || { cancelled: true })
 				if (root.serialPortClaims) root.serialPortClaims.release(rec.id)
 				ctx.dropClaim(rec.id)
 			} catch (e) {

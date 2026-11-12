@@ -53,7 +53,7 @@
 	}
 
 	// 宿主 → 插件的事件名(插件端订阅前不需要授权，内容本身来自已授权的方法)
-	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'app.busy']
+	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'app.busy', 'events.dropped']
 
 	const ERROR_TEXT = {
 		bad_request: '请求格式不正确',
@@ -63,6 +63,7 @@
 		unsupported: '当前环境不支持',
 		too_large: '数据超过上限',
 		rate_limited: '插件请求过于频繁',
+		unsupported_async: '不支持异步协议函数',
 		internal: '宿主内部错误',
 	}
 
@@ -76,19 +77,28 @@
 		maxRequestsPerWindow: 60,
 		windowMs: 1000,
 	}
+	// 宿主 → 插件的事件也要限流：高频串口字节 / 解析帧不能无限 postMessage
+	const EVENT_LIMITS = { maxEventsPerWindow: 120, windowMs: 1000 }
+	// 有界遍历：节点数与字符数都受 budget 限制。大数组先只压入预算允许的少量元素，
+	// 长度一超预算立即返回 Infinity，绝不把整个数组先压进栈。
 	function estimateSize(value, budget) {
 		let total = 0
+		let steps = 0
 		const stack = [value]
 		while (stack.length) {
+			if (++steps > budget) return Infinity
 			const v = stack.pop()
 			if (typeof v === 'string') total += v.length
 			else if (v === null || v === undefined) total += 4
 			else if (typeof v === 'number' || typeof v === 'boolean') total += 8
 			else if (Array.isArray(v)) {
 				total += 2
-				for (let i = 0; i < v.length; i++) stack.push(v[i])
+				const n = Math.min(v.length, budget)
+				if (v.length > n) return Infinity
+				for (let i = 0; i < n; i++) stack.push(v[i])
 			} else if (typeof v === 'object') {
 				const keys = Object.keys(v)
+				if (keys.length > budget) return Infinity
 				for (let i = 0; i < keys.length; i++) {
 					total += keys[i].length + 4
 					stack.push(v[keys[i]])
@@ -97,6 +107,29 @@
 			if (total > budget) return Infinity
 		}
 		return total
+	}
+	function newEventState() {
+		return { windowStart: 0, count: 0, dropped: 0, reported: 0 }
+	}
+	// 返回 report>0 时宿主应先发一条 events.dropped 计数事件（该事件本身不受限流）。
+	// 本窗口第一次丢弃立刻报一次，窗口切换时再补报剩余计数，避免事件流突然静止时插件完全不知情。
+	function eventAdmission(state, now, limits) {
+		const l = limits || EVENT_LIMITS
+		const s = state || newEventState()
+		if (now - s.windowStart >= l.windowMs) {
+			const report = s.dropped - s.reported
+			return { ok: true, report: report > 0 ? report : 0, state: { windowStart: now, count: 1, dropped: 0, reported: 0 } }
+		}
+		if (s.count >= l.maxEventsPerWindow) {
+			const dropped = s.dropped + 1
+			const report = s.reported === 0 ? dropped - s.reported : 0
+			return {
+				ok: false,
+				report: report,
+				state: { windowStart: s.windowStart, count: s.count, dropped: dropped, reported: s.reported === 0 ? dropped : s.reported },
+			}
+		}
+		return { ok: true, report: 0, state: { windowStart: s.windowStart, count: s.count + 1, dropped: s.dropped, reported: s.reported } }
 	}
 	function newAdmissionState() {
 		return { windowStart: 0, windowCount: 0, inflight: 0 }
@@ -260,7 +293,7 @@
 
 	const lib = {
 		PROTOCOL, CAPABILITIES, CAPABILITY_TEXT, METHODS, EVENTS, ERROR_TEXT,
-		LIMITS, estimateSize, newAdmissionState, admission, releaseInflight,
+		LIMITS, EVENT_LIMITS, estimateSize, newEventState, eventAdmission, newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,
 		resultEnvelope, errorEnvelope, eventEnvelope, themePayload, capabilitySummary,
 		pluginChanged, changedCapabilities, orderPlugins, movePlugin, movePluginTo, lanesForMode, toBytes,

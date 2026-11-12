@@ -199,12 +199,22 @@ fn client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("无法创建网络客户端：{e}"))
 }
 
+// with_auth 不再设 Accept：reqwest 的 .header() 是追加语义，资产下载再加一个会变成两个 Accept，
+// GitHub 可能因此返回资产元数据而不是文件内容。每个请求只设一个明确的 Accept。
 fn with_auth(req: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
-    let req = req.header("Accept", "application/vnd.github+json").header("X-GitHub-Api-Version", "2022-11-28");
+    let req = req.header("X-GitHub-Api-Version", "2022-11-28");
     match token {
         Some(t) if !t.trim().is_empty() => req.bearer_auth(t.trim()),
         _ => req,
     }
+}
+
+fn release_request(client: &reqwest::Client, url: &str, token: Option<&str>) -> reqwest::RequestBuilder {
+    with_auth(client.get(url), token).header("Accept", "application/vnd.github+json")
+}
+
+fn asset_request(client: &reqwest::Client, url: &str, token: Option<&str>) -> reqwest::RequestBuilder {
+    with_auth(client.get(url), token).header("Accept", "application/octet-stream")
 }
 
 pub async fn fetch_release(repo: &RepoRef, token: Option<&str>) -> Result<Release, String> {
@@ -212,7 +222,7 @@ pub async fn fetch_release(repo: &RepoRef, token: Option<&str>) -> Result<Releas
         Some(tag) => format!("{API_ROOT}/repos/{}/{}/releases/tags/{}", repo.owner, repo.repo, tag),
         None => format!("{API_ROOT}/repos/{}/{}/releases/latest", repo.owner, repo.repo),
     };
-    let resp = with_auth(client()?.get(&url), token)
+    let resp = release_request(&client()?, &url, token)
         .send()
         .await
         .map_err(|e| format!("无法访问 GitHub：{e}"))?;
@@ -223,9 +233,9 @@ pub async fn fetch_release(repo: &RepoRef, token: Option<&str>) -> Result<Releas
     resp.json::<Release>().await.map_err(|e| format!("GitHub 返回的发布信息无法解析：{e}"))
 }
 
-async fn download_with(url: &str, token: Option<&str>, accept: &str) -> Result<Vec<u8>, String> {
+async fn download_with(url: &str, token: Option<&str>) -> Result<Vec<u8>, String> {
     // 私有仓库的资产下载也要令牌；GitHub 会重定向到带签名的对象存储，reqwest 跟随后不再带令牌
-    let resp = with_auth(client()?.get(url).header("Accept", accept), token)
+    let resp = asset_request(&client()?, url, token)
         .send()
         .await
         .map_err(|e| format!("下载失败：{e}"))?;
@@ -260,7 +270,7 @@ pub async fn download_asset(asset: &Asset, token: Option<&str>, repo: &RepoRef) 
     if !redirect_target_allowed(&url) {
         return Err("资产下载地址不在 GitHub API 域名上".to_string());
     }
-    download_with(&url, token, "application/octet-stream").await
+    download_with(&url, token).await
 }
 
 #[cfg(test)]
@@ -343,6 +353,33 @@ mod tests {
         let evil = Asset { id: 7, name: "devicedock-plugin.zip".into(), size: 1, browser_download_url: "https://evil.example/steal".into() };
         assert!(!redirect_target_allowed(&evil.browser_download_url));
         assert!(redirect_target_allowed(&asset_api_url(&r.owner, &r.repo, evil.id)));
+    }
+
+    #[test]
+    fn each_request_has_exactly_one_accept_header() {
+        let c = client().unwrap();
+        let rel = release_request(&c, "https://api.github.com/repos/o/r/releases/latest", None).build().unwrap();
+        let rel_accept: Vec<_> = rel.headers().get_all(reqwest::header::ACCEPT).iter().collect();
+        assert_eq!(rel_accept.len(), 1, "release API 只能有一个 Accept");
+        assert_eq!(rel_accept[0], "application/vnd.github+json");
+
+        let asset = asset_request(&c, "https://api.github.com/repos/o/r/releases/assets/7", None).build().unwrap();
+        let asset_accept: Vec<_> = asset.headers().get_all(reqwest::header::ACCEPT).iter().collect();
+        assert_eq!(asset_accept.len(), 1, "资产下载不能同时带 JSON 与 octet-stream 两个 Accept");
+        assert_eq!(asset_accept[0], "application/octet-stream");
+    }
+
+    #[test]
+    fn auth_header_is_sensitive_so_redirects_strip_it() {
+        // reqwest 在跨 host 重定向时移除标了 sensitive 的 Authorization；
+        // 这里确认 bearer_auth 走的是 header_sensitive，令牌不会带到对象存储域名。
+        let req = with_auth(client().unwrap().get("https://api.github.com/x"), Some("ghp_example"));
+        let built = req.build().unwrap();
+        let auth = built.headers().get(reqwest::header::AUTHORIZATION).unwrap();
+        assert!(auth.is_sensitive());
+        assert_eq!(auth.to_str().unwrap(), "Bearer ghp_example");
+        let plain = with_auth(client().unwrap().get("https://api.github.com/x"), None);
+        assert!(plain.build().unwrap().headers().get(reqwest::header::AUTHORIZATION).is_none());
     }
 
     #[test]

@@ -81,8 +81,15 @@
 	if (!P.has || P.has('plugins')) P.provide('plugins', {
 		list: function () { return T.core.invoke('plugin_list') },
 		inspect: function (repo, tag) { return T.core.invoke('plugin_inspect', { repo: repo, tag: tag == null ? null : tag }) },
-		install: function (repo, tag, expectedSha256) {
-			return T.core.invoke('plugin_install', { repo: repo, tag: tag == null ? null : tag, expectedSha256: expectedSha256 == null ? null : expectedSha256 })
+		install: function (repo, tag, expectedSha256, expectedCurrentVersion, expectedCurrentSha256) {
+			// 摘要必填；确认时的已安装版本 / 摘要也要回传，Rust 提交前再核对一次
+			return T.core.invoke('plugin_install', {
+				repo: repo,
+				tag: tag == null ? null : tag,
+				expectedSha256: expectedSha256,
+				expectedCurrentVersion: expectedCurrentVersion == null ? null : expectedCurrentVersion,
+				expectedCurrentSha256: expectedCurrentSha256 == null ? null : expectedCurrentSha256,
+			})
 		},
 		checkUpdate: function (id) { return T.core.invoke('plugin_check_update', { id: id }) },
 		setEnabled: function (id, enabled) { return T.core.invoke('plugin_set_enabled', { id: id, enabled: !!enabled }) },

@@ -7543,10 +7543,25 @@
 		removeLaneB: removeLaneB,
 		protocolOf: protocolIdForSid,
 		protocolName: protocolName,
-		// 插件宿主调用协议函数：换入该路协议 + 一次性隔离的 SEK 会话 / ansi 状态，
-		// 用完即丢，插件传入的字节不能改动实时会话的基准水量，双路 A/B 也不串。
+		// 插件宿主调用协议函数：换入该路协议 + 该路实时 skSession 的快照（拷贝，不回写）/ 隔离 ansi 状态。
+		// 快照让解析能读到这一路已有的基准水量，但 fn 里的改动只落在用完即丢的 st 上；双路 A/B 不串。
+		// 协议函数若返回 thenable，隔离上下文退出后异步代码还会跑，必须明确拒绝。
 		callInIsolatedLane: function (sid, fn) {
-			return inLane(sid, { sess: null, ansi: new AnsiUp() }, fn)
+			const live = sid === 'A' || sid === 'B' ? laneLiveState(sid).sess : (skSess() ? skSess().snapshot() : null)
+			const copy = live ? {
+				deviceUid: live.deviceUid, baseCode: live.baseCode, baseLiters: live.baseLiters,
+				baseLabel: live.baseLabel, baseSource: live.baseSource,
+			} : null
+			const st = { sess: copy, ansi: new AnsiUp() }
+			return inLane(sid, st, function () {
+				const value = fn()
+				if (value && typeof value.then === 'function') {
+					const err = new Error('插件协议函数不支持异步返回（隔离上下文已退出）')
+					err.code = 'unsupported_async'
+					throw err
+				}
+				return value
+			})
 		},
 		setProtocol: setLaneProtocol,
 		transportOf: laneTransport,

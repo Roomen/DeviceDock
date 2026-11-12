@@ -143,7 +143,10 @@
 		s.installing = true
 		s.addError = ''
 		render(s)
-		Promise.resolve(svc.install(info.repo, info.tag || null, info.packageSha256)).then(function () {
+		Promise.resolve(svc.install(
+			info.repo, info.tag || null, info.packageSha256,
+			info.currentVersion || null, info.currentPackageSha256 || null
+		)).then(function () {
 			if (s.closed) return
 			s.pendingConfirm = null
 			s.repoInput.value = ''
@@ -381,6 +384,20 @@
 		}
 
 		const foot = mk('div', 'mdn-src-actions')
+		// 释放失败（串口 / BLE 扫描收尾没成功）时给一个显式重试入口，别让 busy 源永久挡住更新
+		if (s.failedReleases.indexOf(p.id) !== -1) {
+			const retryBtn = mk('button', 'btn btn-sm btn-outline-warning', '重试释放')
+			retryBtn.type = 'button'
+			retryBtn.disabled = !!s.busy['retry:' + p.id]
+			retryBtn.addEventListener('click', function () {
+				runPluginAction(s, 'retry:' + p.id, function () {
+					if (!root.PluginHost || !root.PluginHost.retryRelease) return
+					return Promise.resolve(root.PluginHost.retryRelease(p.id)).then(function () { return refreshList(s) })
+				}, '重试中…')
+			})
+			foot.appendChild(retryBtn)
+			card.appendChild(mk('div', 'mdn-src-err', '资源释放未确认完成，应用更新会被阻止；可在此重试'))
+		}
 		const enableKey = 'enable:' + p.id
 		const enableWrap = mk('label', 'form-check form-switch ctl-switch')
 		const enableInput = mk('input', 'form-check-input')
@@ -412,6 +429,7 @@
 		if (s.errors['check:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['check:' + p.id]))
 		if (s.errors['remove:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['remove:' + p.id]))
 		if (s.errors[enableKey]) card.appendChild(mk('div', 'mdn-src-err', s.errors[enableKey]))
+		if (s.errors['retry:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['retry:' + p.id]))
 		return card
 	}
 
@@ -453,6 +471,7 @@
 			if (s.closed) return
 			s.plugins = Array.isArray(res[0]) ? res[0] : []
 			s.tokenSet = !!(res[1] && res[1].set)
+			s.failedReleases = root.PluginHost && root.PluginHost.failedReleases ? root.PluginHost.failedReleases() : []
 			if (root.PluginHost && root.PluginHost.reload) root.PluginHost.reload()
 			render(s)
 		})
@@ -477,6 +496,7 @@
 			addError: '',
 			confirmRemove: '',
 			confirmTimer: 0,
+			failedReleases: [],
 		}
 		session = s
 		opening = false

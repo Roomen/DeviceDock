@@ -236,6 +236,92 @@ function fakeCtx() {
 	assert.equal(registry.size, 1, '关闭失败时占用声明不注销')
 	assert.equal(box2.recs.size, 1, '关闭失败时记录保留，应用更新继续被阻挡')
 
+	// ---- 7. 回修 2：estimateSize 有界遍历 + 宿主事件限流 ----
+	{
+		const huge = new Array(2000000).fill(0)
+		assert.equal(Rpc.estimateSize(huge, 1000), Infinity, '大数组不能先整体压栈')
+		assert.ok(Rpc.estimateSize({ a: [1, 2, 3] }, 1000) < 1000)
+		let ev = Rpc.newEventState()
+		for (let i = 0; i < Rpc.EVENT_LIMITS.maxEventsPerWindow; i++) {
+			const a = Rpc.eventAdmission(ev, 1000, Rpc.EVENT_LIMITS)
+			assert.equal(a.ok, true)
+			ev = a.state
+		}
+		const denied = Rpc.eventAdmission(ev, 1000, Rpc.EVENT_LIMITS)
+		assert.equal(denied.ok, false)
+		assert.equal(denied.state.dropped, 1)
+		assert.equal(denied.report, 1, '本窗口第一次丢弃要立刻上报')
+		const next = Rpc.eventAdmission(denied.state, 1000 + Rpc.EVENT_LIMITS.windowMs, Rpc.EVENT_LIMITS)
+		assert.equal(next.ok, true)
+		assert.equal(next.report, 0, '已上报过的计数不能重复报')
+		assert.equal(next.state.dropped, 0)
+		// 一个窗口里多次丢弃：首报 1，窗口切换补报剩余
+		let ev2 = Rpc.newEventState()
+		for (let i = 0; i < Rpc.EVENT_LIMITS.maxEventsPerWindow; i++) ev2 = Rpc.eventAdmission(ev2, 1000, Rpc.EVENT_LIMITS).state
+		for (let i = 0; i < 5; i++) ev2 = Rpc.eventAdmission(ev2, 1000, Rpc.EVENT_LIMITS).state
+		const roll = Rpc.eventAdmission(ev2, 1000 + Rpc.EVENT_LIMITS.windowMs, Rpc.EVENT_LIMITS)
+		assert.equal(roll.report, 4, '剩余丢弃数在窗口切换时补报')
+	}
+
+	// ---- 8. 回修 2：普通 claim.close 不置 cancelled，同一声明可重新 open ----
+	function makeClaimPort() {
+		const port = {
+			openCalls: 0, closeCalls: 0, writable: { getWriter: () => ({ write: async () => {}, releaseLock() {} }) },
+			open() { this.openCalls++; return Promise.resolve() },
+			close() { this.closeCalls++; return Promise.resolve() },
+		}
+		port.readable = {
+			getReader() {
+				let cancel
+				const pending = new Promise((resolve, reject) => { cancel = () => reject(new Error('cancelled')) })
+				return { read: () => pending, cancel: async () => { cancel() }, releaseLock() {} }
+			},
+		}
+		return port
+	}
+	function newClaimHost() {
+		return loadApi({
+			SerialHub: { allPhys: () => [], getPort: () => null, isOpen: () => false, isOpening: () => false, isVisible: () => true },
+			serialPortClaims: { claim: () => 'c1', release: () => {}, list: () => [], ownerOf: () => null },
+		})
+	}
+	{
+		const host = newClaimHost()
+		const box = fakeCtx()
+		const port = makeClaimPort()
+		await host.PluginApi.call('claim.acquire', { portKey: host.PluginApi.keyOfPort(port) }, box.ctx)
+		await host.PluginApi.call('claim.open', { claimId: 'c1' }, box.ctx)
+		assert.equal(box.recs.get('c1').open, true)
+		await host.PluginApi.call('claim.close', { claimId: 'c1' }, box.ctx)
+		const rec = box.recs.get('c1')
+		assert.equal(rec.cancelled, false, '普通关闭不能把声明永久作废')
+		assert.equal(port.closeCalls, 1)
+		await host.PluginApi.call('claim.open', { claimId: 'c1' }, box.ctx)
+		assert.equal(port.openCalls, 2, '同一声明可重新打开')
+	}
+
+	// ---- 9. 回修 2：closeClaims 等在飞 claim.write 结束后才关端口 ----
+	{
+		const host = newClaimHost()
+		const box = fakeCtx()
+		const port = makeClaimPort()
+		let resolveWrite
+		port.writable = { getWriter: () => ({ write: () => new Promise((r) => { resolveWrite = r }), releaseLock() {} }) }
+		await host.PluginApi.call('claim.acquire', { portKey: host.PluginApi.keyOfPort(port) }, box.ctx)
+		await host.PluginApi.call('claim.open', { claimId: 'c1' }, box.ctx)
+		const writing = host.PluginApi.call('claim.write', { claimId: 'c1', bytes: [1, 2, 3] }, box.ctx)
+		await new Promise((r) => setTimeout(r, 0))
+		const closing = host.PluginApi.closeClaims(box.ctx, { cancelled: true })
+		await new Promise((r) => setTimeout(r, 30))
+		assert.equal(port.closeCalls, 0, '写流还被锁着时不能关端口')
+		resolveWrite()
+		await writing
+		const failures = await closing
+		assert.equal(failures.length, 0)
+		assert.equal(port.closeCalls, 1)
+		assert.equal(box.recs.size, 0)
+	}
+
 	console.log('plugin-host-fixes: ok')
 })().catch((err) => {
 	console.error(err)
