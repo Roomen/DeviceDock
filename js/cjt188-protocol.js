@@ -674,11 +674,10 @@
 				const el = document.getElementById(id)
 				if (el) el.style.display = isSek ? '' : 'none'
 			})
-			// 随机读写 / 批量配置是协议驱动的工具：非 188 协议都显示，由它们自己按当前协议是否提供字段目录给出提示
-			;['sk-rw-card', 'sk-batch-card'].forEach(function (id) {
-				const el = document.getElementById(id)
-				if (el) el.style.display = isCjt188 ? 'none' : ''
-			})
+			// 测试流程（批量配置 / 随机读写）是协议驱动的工具：非 188 协议都显示，
+			// 由它自己按当前协议是否提供字段目录与构帧钩子给出提示；188 没有字段目录，按旧行为直接隐藏
+			const flowCard = document.getElementById('sk-flow-card')
+			if (flowCard) flowCard.style.display = isCjt188 ? 'none' : ''
 		}
 		const protoSel = document.getElementById('serial-protocol-select')
 		if (protoSel) protoSel.addEventListener('change', applyVisibility)

@@ -3726,7 +3726,7 @@ hr {
   }
 }
 
-/* ========== Random Read/Write Test ========== */
+/* ========== 测试流程（批量配置 / 随机读写，js/test-flow-panel.js）========== */
 .sk-rw-card {
   flex-shrink: 0;
 }
@@ -3824,12 +3824,15 @@ hr {
   pointer-events: none;
 }
 
-.sk-rw-card.is-disabled #sk-rw-start {
+.sk-rw-card.is-disabled #sk-flow-start {
   pointer-events: none;
 }
 
-/* ========== Batch Config ========== */
-.sk-batch-list {
+.sk-flow-mode {
+  margin-bottom: 8px;
+}
+
+.sk-flow-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -3838,20 +3841,22 @@ hr {
   margin-bottom: 4px;
 }
 
-.sk-batch-item-row {
+.sk-flow-item-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.sk-batch-item-no {
+.sk-flow-item-no {
   flex: 0 0 1.4rem;
   text-align: center;
   font-size: var(--fs-micro);
   color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-.sk-batch-item-name {
+.sk-flow-item-name {
   flex: 0 0 8rem;
   font-size: var(--fs-small);
   color: var(--text-secondary);
@@ -3860,40 +3865,110 @@ hr {
   white-space: nowrap;
 }
 
-.sk-batch-item-value {
+.sk-flow-item-value {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.sk-batch-step {
+.sk-flow-item-static {
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.sk-flow-item-step {
   flex: 0 0 4rem !important;
 }
 
-.sk-batch-step-placeholder {
+.sk-flow-item-step-ph {
   flex: 0 0 4rem;
 }
 
-.sk-batch-item-del {
+.sk-flow-item-btn {
   flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--fs-micro);
+  line-height: 1;
 }
 
-.sk-batch-list-empty {
+.sk-flow-item-btn:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+.sk-flow-list-empty {
   font-size: var(--fs-small);
   color: var(--text-muted);
   padding: 6px 0;
 }
 
-.sk-batch-readback {
+.sk-flow-counter {
+  font-size: var(--fs-micro);
+  color: var(--text-muted);
+}
+
+.sk-flow-results {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
   margin-bottom: 6px;
   font-size: var(--fs-micro);
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-.sk-batch-readback-row.sk-rw-pass { color: var(--success); }
-.sk-batch-readback-row.sk-rw-fail { color: var(--danger); font-weight: 600; }
+.sk-flow-result-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.5;
+}
+
+.sk-flow-result-no {
+  flex: 0 0 1.6rem;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.sk-flow-result-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.sk-flow-result-status {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.sk-flow-result-row.is-success .sk-flow-result-status { color: var(--success); }
+.sk-flow-result-row.is-fail .sk-flow-result-status { color: var(--danger); }
+.sk-flow-result-row.is-mismatch .sk-flow-result-status { color: var(--danger); }
+.sk-flow-result-row.is-timeout .sk-flow-result-status { color: var(--warning); }
+.sk-flow-result-row.is-unsupported .sk-flow-result-status { color: var(--text-muted); }
+.sk-flow-result-row.is-skipped .sk-flow-result-status { color: var(--text-muted); }
+
+.sk-flow-result-ms {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+}
+
+.sk-flow-result-hex {
+  flex: 0 1 auto;
+  max-width: 30%;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Collapsible cards */
 .collapsible-header {
@@ -10150,7 +10225,6 @@ html[data-layout='modern'] .mdn-pop-params[hidden] {
 @media (max-width: 640px) {
 	.connection-filters { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
-
 /* ========== 曲线面板（工作台 curves） ==========
    图表是这一屏唯一的「浓」处：中性栅格 + 通道色曲线，A 青 / B 琥珀 / 单路 accent，
    颜色全部来自 CSS 变量（主题切换时 js/curves-panel.js 重取并重建图表）。 */

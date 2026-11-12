@@ -60,9 +60,9 @@ test('MCP 服务运行中不阻止应用更新(blocksUpdate: false 的任务被 
 	assert.deepEqual(blockers(s.env), [])
 	// 同一份真实 TASKS：面板任务运行中(停止键可用)照样阻断，证明过滤确实在跑
 	const running = realWorkbench({ state: () => 'off', port: () => 38992, open() {} }, {
-		getElementById: (id) => (id === 'sk-rw-stop' ? { disabled: false } : null),
+		getElementById: (id) => (id === 'sk-flow-stop' ? { disabled: false } : null),
 	})
-	assert.deepEqual(Array.from(running.updateBlockers()), ['随机读写'])
+	assert.deepEqual(Array.from(running.updateBlockers()), ['测试流程'])
 	// MCP 运行时仍可进入安装准备
 	const installing = s.controller.install()
 	s.install.resolve()

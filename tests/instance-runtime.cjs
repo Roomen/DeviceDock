@@ -1,20 +1,20 @@
 'use strict'
-// Actual batch persistence functions with shared settings and isolated session progress.
+// 编辑中的流程（localStorage 共享）与产线计数（sessionStorage 按实例隔离）的真实存取函数。
 const assert = require('node:assert/strict')
 const vm = require('node:vm')
 const fs = require('node:fs')
-const source = fs.readFileSync(require('node:path').join(__dirname, '../js/batch-config.js'), 'utf8')
+const source = fs.readFileSync(require('node:path').join(__dirname, '../js/test-flow-panel.js'), 'utf8')
 const begin = source.indexOf('\tfunction saveState()')
-const end = source.indexOf('\t// ---------- UI 状态', begin)
-const shared = new Map([['sk-batch-state', JSON.stringify({ list: [], index: 99, gapMs: 200 })]])
+const end = source.indexOf('\t// ---------- 命名流程', begin)
+if (begin < 0 || end < 0) throw new Error('anchors not found')
+const shared = new Map([['sk-batch-state', JSON.stringify({ mode: 'batch', batch: { steps: [{ field: 'a', value: '1', step: '0' }] }, index: 99, gapMs: 200 })]])
 const storage = map => ({ getItem: k => map.get(k) || null, setItem: (k, v) => map.set(k, v) })
 function instance(session) {
 	const ctx = vm.createContext({
-		localStorage: storage(shared), sessionStorage: storage(session), STATE_KEY: 'sk-batch-state',
-		DEFAULT_TIMEOUT_MS: 5000, DEFAULT_GAP_MS: 200,
-		el: { timeout: { value: 5000 }, gap: { value: 200 }, continueOnFail: { checked: false } },
+		localStorage: storage(shared), sessionStorage: storage(session), STATE_KEY: 'sk-batch-state', COUNTER_KEY: 'sk-batch-state.index',
+		defaultDraft: () => ({ mode: 'batch', batch: { steps: [{ field: 'a', value: '1', step: '0' }] }, random: {}, defaults: {} }),
 	})
-	vm.runInContext('let current = 0, list = []\n' + source.slice(begin, end) + '\nglobalThis.api = { saveState, loadState, set(v) { current = v }, get() { return current } }', ctx)
+	vm.runInContext('let current = 0, draft = null\n' + source.slice(begin, end) + '\nglobalThis.api = { saveState, loadState, set(v) { current = v }, get() { return current }, draft() { return draft } }', ctx)
 	ctx.api.loadState()
 	return ctx.api
 }
@@ -30,4 +30,5 @@ b.saveState()
 assert.equal(instance(aSession).get(), 17, 'refresh retains own progress')
 assert.equal(instance(bSession).get(), 4)
 assert.equal(Object.hasOwn(JSON.parse(shared.get('sk-batch-state')), 'index'), false)
+assert.equal(a.draft().batch.steps.length, 1, 'draft comes from the shared localStorage copy')
 console.log('instance-runtime: ok')

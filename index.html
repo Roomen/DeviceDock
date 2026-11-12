@@ -685,91 +685,105 @@
                                         <textarea class="form-control form-control-sm mt-1 sk-hex-copyable" rows="2" id="cjt188-down-preview"
                                             readonly placeholder="待发送的完整 HEX（空格分隔，点击可复制）" title="点击复制生成的 HEX"></textarea>
                                     </div>
-                                    <div class="protocol-down-card mb-2 sk-rw-card" id="sk-rw-card" data-dock-own="rw">
+                                    <div class="protocol-down-card mb-2 sk-flow-card" id="sk-flow-card" data-dock-own="flow">
                                         <h6 class="pane-section-title">
-                                            <i class="icon icon-shuffle"></i> 随机读写测试
-                                            <span class="sk-rw-proto-badge" id="sk-rw-proto-name">SEK</span>
+                                            <i class="icon icon-list-check"></i> 测试流程
+                                            <span class="sk-rw-proto-badge" id="sk-flow-proto-name">SEK</span>
                                         </h6>
-                                        <p class="sk-rw-hint mb-2" id="sk-rw-case-hint">跟随上方协议 · seed=随机序列种子</p>
-                                        <div class="sk-rw-controls d-flex flex-wrap gap-2 mb-2">
-                                            <div class="input-group input-group-sm" style="width:auto;">
-                                                <span class="input-group-text">步数</span>
-                                                <input type="number" class="form-control" id="sk-rw-steps" value="40" min="5" max="500" style="width:4.5rem;" title="随机指令步数">
-                                            </div>
-                                            <div class="input-group input-group-sm" style="width:auto;">
-                                                <span class="input-group-text">间隔ms</span>
-                                                <input type="number" class="form-control" id="sk-rw-gap" value="200" min="0" max="10000" style="width:5rem;">
-                                            </div>
-                                            <div class="input-group input-group-sm" style="width:auto;">
-                                                <span class="input-group-text">超时ms</span>
-                                                <input type="number" class="form-control" id="sk-rw-timeout" value="5000" min="1000" max="60000" style="width:5.5rem;">
-                                            </div>
-                                            <div class="input-group input-group-sm" style="width:auto;" title="伪随机种子：相同 seed 生成相同指令序列，便于复现问题；留空自动生成">
-                                                <span class="input-group-text">seed</span>
-                                                <input type="number" class="form-control" id="sk-rw-seed" placeholder="自动" style="width:6rem;">
-                                            </div>
+                                        <div class="ctl-seg sk-flow-mode" id="sk-flow-mode" role="group" aria-label="流程类型">
+                                            <button type="button" data-mode="batch" aria-pressed="true">批量配置</button>
+                                            <button type="button" data-mode="random" aria-pressed="false">随机读写</button>
                                         </div>
-                                        <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
-                                            <div class="form-check form-switch ctl-switch">
-                                                <input class="form-check-input" type="checkbox" id="sk-rw-continue" checked>
-                                                <label class="form-check-label" for="sk-rw-continue">失败继续</label>
+                                        <p class="sk-rw-hint mb-2" id="sk-flow-hint">跟随上方协议 · 批量配置逐台下发并回读，随机读写按字段量程随机取值</p>
+                                        <div id="sk-flow-batch-box">
+                                            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                                <select class="form-select form-select-sm" id="sk-flow-field-select" style="min-width:12rem;" aria-label="选择可写字段"></select>
+                                                <input type="text" class="form-control form-control-sm" id="sk-flow-value" placeholder="值，{n} 为台号" style="width:10rem;" title="支持 {n} 替换为产线计数；BCD 字段另有步进">
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">间隔ms</span>
+                                                    <input type="number" class="form-control" id="sk-flow-batch-gap" value="200" min="0" max="10000" style="width:5rem;">
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-secondary" id="sk-flow-add">添加</button>
                                             </div>
-                                            <div class="form-check form-switch ctl-switch">
-                                                <input class="form-check-input" type="checkbox" id="sk-rw-restore" checked>
-                                                <label class="form-check-label" for="sk-rw-restore">写后恢复原值</label>
+                                            <div class="sk-flow-list" id="sk-flow-list"></div>
+                                        </div>
+                                        <div id="sk-flow-random-box" hidden>
+                                            <div class="sk-rw-controls d-flex flex-wrap gap-2 mb-2">
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">步数</span>
+                                                    <input type="number" class="form-control" id="sk-flow-count" value="40" min="1" max="500" style="width:4.5rem;" title="随机指令步数">
+                                                </div>
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">间隔ms</span>
+                                                    <input type="number" class="form-control" id="sk-flow-gap" value="200" min="0" max="10000" style="width:5rem;">
+                                                </div>
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">超时ms</span>
+                                                    <input type="number" class="form-control" id="sk-flow-timeout" value="5000" min="200" max="120000" style="width:5.5rem;">
+                                                </div>
+                                                <div class="input-group input-group-sm" style="width:auto;" title="伪随机种子：相同 seed 生成相同指令序列，便于复现问题；留空自动生成">
+                                                    <span class="input-group-text">seed</span>
+                                                    <input type="number" class="form-control" id="sk-flow-seed" placeholder="自动" style="width:6rem;">
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-secondary" id="sk-flow-generate">生成步骤</button>
                                             </div>
-                                        </div>
-                                        <div class="d-flex gap-2 mb-2">
-                                            <button class="btn btn-sm btn-primary flex-grow-1" id="sk-rw-start">开始测试</button>
-                                            <button class="btn btn-sm btn-outline-danger" id="sk-rw-stop" disabled>停止</button>
-                                        </div>
-                                        <div class="sk-rw-progress mb-1">
-                                            <div class="sk-rw-progress-bar" id="sk-rw-progress-bar">0/0</div>
-                                        </div>
-                                        <div class="sk-rw-status" id="sk-rw-status">就绪</div>
-                                        <div class="sk-rw-summary" id="sk-rw-summary"></div>
-                                        <div class="sk-rw-log" id="sk-rw-log"></div>
-                                    </div>
-                                    <div class="protocol-down-card mb-2 sk-rw-card" id="sk-batch-card" data-dock-own="batch">
-                                        <h6 class="pane-section-title">
-                                            <i class="icon icon-list-check"></i> 批量配置写入
-                                            <span class="sk-rw-proto-badge" id="sk-batch-proto-name">SEK</span>
-                                        </h6>
-                                        <p class="sk-rw-hint mb-2">从当前协议的常用指令预设中添加配置项, 组成清单按顺序逐条下发并整包回读确认</p>
-                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                                            <div class="input-group input-group-sm" style="width:auto;">
-                                                <span class="input-group-text">添加配置</span>
-                                                <select class="form-select" id="sk-batch-preset-select" style="min-width:12rem;"></select>
+                                            <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
+                                                <div class="form-check form-switch ctl-switch">
+                                                    <input class="form-check-input" type="checkbox" id="sk-flow-verify">
+                                                    <label class="form-check-label" for="sk-flow-verify">每步写后回读</label>
+                                                </div>
                                             </div>
-                                            <button class="btn btn-sm btn-outline-secondary" id="sk-batch-add">添加</button>
+                                            <div class="sk-flow-list" id="sk-flow-random-list"></div>
                                         </div>
-                                        <div class="sk-batch-list" id="sk-batch-list"></div>
                                         <div class="d-flex flex-wrap align-items-center gap-3 mb-2 mt-2">
                                             <div class="input-group input-group-sm" style="width:auto;">
                                                 <span class="input-group-text">超时ms</span>
-                                                <input type="number" class="form-control" id="sk-batch-timeout" value="5000" min="1000" max="60000" style="width:5.5rem;">
+                                                <input type="number" class="form-control" id="sk-flow-default-timeout" value="5000" min="200" max="120000" style="width:5.5rem;">
                                             </div>
                                             <div class="input-group input-group-sm" style="width:auto;">
-                                                <span class="input-group-text">间隔ms</span>
-                                                <input type="number" class="form-control" id="sk-batch-gap" value="200" min="0" max="10000" style="width:5rem;">
+                                                <span class="input-group-text">重试</span>
+                                                <input type="number" class="form-control" id="sk-flow-retries" value="0" min="0" max="5" style="width:3.5rem;" title="每步失败后的重试次数">
                                             </div>
                                             <div class="form-check form-switch ctl-switch">
-                                                <input class="form-check-input" type="checkbox" id="sk-batch-continue" checked>
-                                                <label class="form-check-label" for="sk-batch-continue">失败继续</label>
+                                                <input class="form-check-input" type="checkbox" id="sk-flow-continue" checked>
+                                                <label class="form-check-label" for="sk-flow-continue">失败继续</label>
+                                            </div>
+                                            <div class="form-check form-switch ctl-switch">
+                                                <input class="form-check-input" type="checkbox" id="sk-flow-restore" checked>
+                                                <label class="form-check-label" for="sk-flow-restore">写后恢复原值</label>
+                                            </div>
+                                            <div class="form-check form-switch ctl-switch">
+                                                <input class="form-check-input" type="checkbox" id="sk-flow-batch-verify" checked>
+                                                <label class="form-check-label" for="sk-flow-batch-verify">每步写后回读</label>
                                             </div>
                                         </div>
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                            <select class="form-select form-select-sm" id="sk-flow-preset-select" style="min-width:11rem;" aria-label="已保存的流程"></select>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-load">载入</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-save">保存</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-delete">删除</button>
+                                            <label class="btn btn-sm btn-outline-secondary mb-0" title="导入流程 JSON">导入<input type="file" id="sk-flow-import" accept="application/json,.json" hidden></label>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-export" title="把当前流程导出为 JSON">导出</button>
+                                        </div>
                                         <div class="d-flex gap-2 mb-2">
-                                            <button class="btn btn-sm btn-primary flex-grow-1" id="sk-batch-primary">写入并确认下一台</button>
-                                            <button class="btn btn-sm btn-outline-danger" id="sk-batch-stop" disabled>停止</button>
-                                            <button class="btn btn-sm btn-outline-secondary" id="sk-batch-reset">重置计数</button>
+                                            <button class="btn btn-sm btn-primary flex-grow-1" id="sk-flow-start">开始</button>
+                                            <button class="btn btn-sm btn-outline-danger" id="sk-flow-stop" disabled>停止</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-reset" title="产线计数归零（下一台从第 1 台开始）">重置计数</button>
                                         </div>
                                         <div class="sk-rw-progress mb-1">
-                                            <div class="sk-rw-progress-bar" id="sk-batch-progress-bar">0/0</div>
+                                            <div class="sk-rw-progress-bar" id="sk-flow-progress-bar">0/0</div>
                                         </div>
-                                        <div class="sk-rw-status" id="sk-batch-status">就绪</div>
-                                        <div class="sk-rw-summary" id="sk-batch-summary"></div>
-                                        <div class="sk-batch-readback" id="sk-batch-readback"></div>
-                                        <div class="sk-rw-log" id="sk-batch-log"></div>
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                            <div class="sk-rw-status" id="sk-flow-status">就绪</div>
+                                            <span class="sk-flow-counter" id="sk-flow-counter">已配 0 台</span>
+                                        </div>
+                                        <div class="sk-rw-summary" id="sk-flow-summary"></div>
+                                        <div class="sk-flow-results" id="sk-flow-results"></div>
+                                        <div class="d-flex flex-wrap gap-2 mt-1 mb-1">
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-result-csv" title="结果导出为 CSV">结果 CSV</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-result-json" title="结果导出为 JSON">结果 JSON</button>
+                                        </div>
+                                        <div class="sk-rw-log" id="sk-flow-log"></div>
                                     </div>
                                 </div>
                                 <div class="tab-pane d-flex flex-column" id="nav-firmware" role="tabpanel">
@@ -1072,8 +1086,8 @@
     <script src="js/sek-transaction.js"></script>
     <script src="js/sek-test-profile.js"></script>
     <script src="js/protocol-sources-panel.js"></script>
-    <script src="js/random-rw-test.js"></script>
-    <script src="js/batch-config.js"></script>
+    <script src="js/test-flow.js"></script>
+    <script src="js/test-flow-panel.js"></script>
     <script src="js/collapsible-cards.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
     <script src="js/workbench.js"></script>

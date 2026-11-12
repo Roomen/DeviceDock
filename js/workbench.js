@@ -332,8 +332,7 @@
 		if (qs) registerPanel({ id: 'quick-send', title: '快捷发送', icon: 'icon-zap', el: qs, order: 10 })
 		const proto = $('nav-protocol')
 		if (proto) registerPanel({ id: 'protocol', title: '协议设置与下发', label: '协议', icon: 'icon-braces', el: proto, order: 20 })
-		standalonePanel('rw', '随机读写测试', '随机读写', 'icon-shuffle', 'sk-rw-card', 30, '当前协议不支持随机读写测试，在顶栏把协议切换到 SEK 后可用')
-		standalonePanel('batch', '批量配置写入', '批量配置', 'icon-list-check', 'sk-batch-card', 40, '当前协议不支持批量配置写入，在顶栏把协议切换到 SEK 后可用')
+		standalonePanel('flow', '测试流程（批量配置 / 随机读写）', '测试流程', 'icon-list-check', 'sk-flow-card', 30, '当前协议没有提供字段目录与构帧钩子，无法运行测试流程')
 		const fw = $('nav-firmware')
 		if (fw) registerPanel({ id: 'firmware', title: '固件升级', icon: 'icon-cpu', el: fw, order: 50 })
 		const parse = $('serial-parse-body')
@@ -372,8 +371,7 @@
 		}
 	}
 	const TASKS = [
-		panelTask('rw', 'sk-rw-stop', 'sk-rw-progress-bar', '随机读写'),
-		panelTask('batch', 'sk-batch-stop', 'sk-batch-progress-bar', '批量配置'),
+		panelTask('flow', 'sk-flow-stop', 'sk-flow-progress-bar', '测试流程'),
 		panelTask('firmware', 'fw-stop', 'fw-progress', '固件升级'),
 		{
 			label: '循环发送',
@@ -752,6 +750,8 @@
 		open: open,
 		toggle: toggle,
 		move: move,
+		// 协议变化影响面板可用性（曲线依赖 metrics）：非卡片面板手动触发重算
+		refreshAvailability: function () { if (ready) refreshAvailability() },
 		isShown: function (id) {
 			const p = find(id)
 			return !!(p && isShown(p))

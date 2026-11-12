@@ -16,8 +16,7 @@
 		'lane.dual', // 双路 A/B(由画像的 lanes 推出)
 		'panel.quick-send',
 		'panel.protocol', // 协议设置与下发
-		'panel.rw', // 随机读写测试
-		'panel.batch', // 批量配置写入
+		'panel.flow', // 测试流程（批量配置 / 随机读写，协议驱动）
 		'panel.firmware', // 固件升级
 		'panel.parse', // 协议解析
 		'transport.serial',
