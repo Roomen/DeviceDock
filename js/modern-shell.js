@@ -938,7 +938,7 @@
 		more.type = 'button'
 		more.setAttribute('aria-expanded', 'false')
 		more.title = '显示格式、分包与行数设置'
-		more.append(icon('bi-sliders'), mk('span', 'mdn-logbar-toggle-label', '设置'))
+		more.append(icon('icon-sliders'), mk('span', 'mdn-logbar-toggle-label', '设置'))
 		listen(more, 'click', function () {
 			const open = bar.getAttribute('data-open') === '1'
 			if (open) bar.removeAttribute('data-open')
