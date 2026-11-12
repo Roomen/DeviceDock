@@ -1260,7 +1260,7 @@ body {
   font-size: var(--fs-micro);
   padding: 1px 4px;
   background: var(--bg-code);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   white-space: nowrap;
 }
 
@@ -1323,7 +1323,7 @@ body {
 .sk-parse-series-wrap {
   max-height: 180px;
   overflow: auto;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 
 /* 历史序列: 图 + 统计 + 折叠明细 */
@@ -1350,7 +1350,7 @@ body {
 }
 
 .sk-series-title {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .sk-series-stats {
@@ -1566,7 +1566,7 @@ body {
 }
 
 .pv-dir {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-secondary);
 }
 
@@ -1581,7 +1581,7 @@ body {
 }
 
 .pv-title {
-  font-weight: 700;
+  font-weight: 600;
   font-size: var(--fs-body);
 }
 
@@ -1599,7 +1599,7 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: bottom;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   font-size: var(--fs-micro);
   font-weight: 600;
   color: var(--accent);
@@ -1698,7 +1698,7 @@ body {
   padding-left: 6px;
   border-left: 2px solid color-mix(in srgb, currentColor 35%, transparent);
   font-size: var(--fs-micro);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.25;
 }
 
@@ -1761,7 +1761,7 @@ body {
 
 .pv-v.pv-bad {
   color: var(--danger);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .pv-h {
@@ -1773,7 +1773,7 @@ body {
 .pv-pre {
   margin: 2px 0 0;
   padding: 3px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, currentColor 6%, transparent);
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
@@ -1817,7 +1817,7 @@ details.pv-fold[open] > summary::before {
 .pv-unk {
   display: inline-block;
   padding: 0 0.35rem;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, currentColor 10%, transparent);
   font-family: var(--font-sans);
   font-size: var(--fs-micro);
@@ -2606,7 +2606,7 @@ hr {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-color);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -2648,7 +2648,7 @@ hr {
 
 .serial-settings-title {
   font-size: var(--fs-small);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 12px;
   display: flex;
@@ -4336,7 +4336,7 @@ hr {
   background: var(--bg-input);
   color: var(--text-primary);
   font-size: var(--fs-small);
-  font-weight: 700;
+  font-weight: 600;
   text-align: center;
   font-family: var(--font-mono);
   transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -4450,7 +4450,7 @@ hr {
 .dual-send-btn {
   padding: 3px 10px;
   font-size: var(--fs-micro);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .dual-send-btn[hidden] {
@@ -4547,7 +4547,7 @@ hr {
   margin-bottom: 6px;
   border-bottom: 1px solid var(--border-light);
   font-size: var(--fs-small);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-secondary);
 }
 
@@ -4615,7 +4615,7 @@ hr {
   gap: 4px;
   max-width: 100%;
   font-size: var(--fs-small);
-  font-weight: 700;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5470,7 +5470,7 @@ hr {
 
 .sb-k {
   font-size: var(--fs-micro);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
@@ -5870,7 +5870,7 @@ summary {
 
 #serial-send-panel.is-looping #serial-send .send-btn-kbd::before {
   content: '循环中 · ';
-  font-weight: 700;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {
@@ -6557,7 +6557,7 @@ html[data-layout='modern'] .mi-dir {
 	border-radius: 4px;
 	color: var(--text-secondary);
 	font-size: var(--fs-micro);
-	font-weight: 700;
+	font-weight: 600;
 	letter-spacing: 0.02em;
 }
 
@@ -6600,7 +6600,7 @@ html[data-layout='modern'] .mi-dir--manual {
 
 html[data-layout='modern'] .mi-title {
 	font-size: var(--fs-title);
-	font-weight: 700;
+	font-weight: 600;
 	line-height: 1.35;
 	overflow-wrap: anywhere;
 }
@@ -6720,7 +6720,7 @@ html[data-layout='modern'] .mi-frame-title {
 	margin-top: 6px;
 	color: var(--text-secondary);
 	font-size: var(--fs-micro);
-	font-weight: 700;
+	font-weight: 600;
 	letter-spacing: 0.06em;
 }
 
@@ -6890,7 +6890,7 @@ html[data-layout='modern'] .mi-rel-row {
 }
 
 html[data-layout='modern'] .mi-rel-row.is-self .mi-rel-name {
-	font-weight: 700;
+	font-weight: 600;
 }
 
 html[data-layout='modern'] .mi-rel-tag {
@@ -6899,7 +6899,7 @@ html[data-layout='modern'] .mi-rel-tag {
 	border-radius: 4px;
 	color: var(--text-primary);
 	font-size: var(--fs-micro);
-	font-weight: 700;
+	font-weight: 600;
 	text-align: center;
 	white-space: nowrap;
 }
@@ -7195,7 +7195,7 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single):not(.ansi) .pv-title {
 	font-size: var(--fs-body-lg);
-	font-weight: 800;
+	font-weight: 600;
 	color: var(--text-primary);
 	letter-spacing: -0.1px;
 }
@@ -7213,7 +7213,7 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 /* ANSI 模式始终为深色黑底背景，文字恒定保持亮色，不可受浅色主题深黑字污染 */
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single).ansi .pv-title {
 	font-size: var(--fs-body-lg);
-	font-weight: 800;
+	font-weight: 600;
 	color: var(--plate-fg);
 	letter-spacing: -0.1px;
 }
@@ -7259,7 +7259,7 @@ html[data-layout='modern'][data-dual-view='bubble'] #serial-logs-dual.ansi-b:not
 /* 气泡内的原生代码徽标与微标清晰度提升 */
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .pv-code {
 	font-size: var(--fs-micro);
-	font-weight: 700;
+	font-weight: 600;
 	padding: 1px 5px;
 	border-radius: 4px;
 	background: color-mix(in srgb, currentColor 8%, transparent);
@@ -7293,7 +7293,7 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row[data-mdn-slow]::after {
 	color: var(--mdn-slow);
-	font-weight: 700;
+	font-weight: 600;
 }
 
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row[data-sid='A'][data-mdn-t]::before,
@@ -7401,7 +7401,7 @@ html[data-layout='modern'][data-dual-view='bubble'] .mdn-tl-head {
 	border-bottom: 1px solid var(--border-light);
 	background: var(--mdn-subtle);
 	font-size: var(--fs-small);
-	font-weight: 700;
+	font-weight: 600;
 }
 
 /* 哪一套日志容器可见，就只显示它自己的列头(单双路各一份) */
@@ -7552,7 +7552,7 @@ html[data-layout='modern'] .mdn-fw-step-badge {
 	border: 2px solid var(--c);
 	color: var(--text-secondary);
 	font-size: var(--fs-small);
-	font-weight: 700;
+	font-weight: 600;
 }
 
 html[data-layout='modern'] .mdn-fw-step:not([data-state='waiting']) .mdn-fw-step-badge {
@@ -7581,7 +7581,7 @@ html[data-layout='modern'] .mdn-fw-step-top {
 
 html[data-layout='modern'] .mdn-fw-step-name {
 	font-size: var(--fs-body);
-	font-weight: 700;
+	font-weight: 600;
 }
 
 html[data-layout='modern'] .mdn-fw-step-state {
@@ -7641,7 +7641,7 @@ html[data-layout='modern'] .mdn-fw-card-head {
 html[data-layout='modern'] .mdn-fw-cap {
 	margin: 0;
 	font-size: var(--fs-small);
-	font-weight: 700;
+	font-weight: 600;
 	letter-spacing: 0.06em;
 	color: var(--text-secondary);
 }
@@ -7836,7 +7836,7 @@ html[data-layout='modern'] .mdn-fw-out-size {
 html[data-layout='modern'] .mdn-fw-bar {
 	grid-column: 1 / -1;
 	height: 5px;
-	border-radius: 3px;
+	border-radius: var(--radius-xs);
 	background: var(--border-color);
 	overflow: hidden;
 }
@@ -7844,7 +7844,7 @@ html[data-layout='modern'] .mdn-fw-bar {
 html[data-layout='modern'] .mdn-fw-bar-fill {
 	display: block;
 	height: 100%;
-	border-radius: 3px;
+	border-radius: var(--radius-xs);
 	background: var(--accent);
 }
 
@@ -8482,13 +8482,13 @@ html[data-layout='modern'] .mdn-pop[hidden] {
 
 html[data-layout='modern'] .mdn-pop-title {
 	font-size: var(--fs-body);
-	font-weight: 700;
+	font-weight: 600;
 }
 
 html[data-layout='modern'] .mdn-pop-cap {
 	margin-bottom: 6px;
 	font-size: var(--fs-micro);
-	font-weight: 700;
+	font-weight: 600;
 	letter-spacing: 0.06em;
 	color: var(--text-secondary);
 }
@@ -8654,7 +8654,7 @@ html[data-layout='modern'] .mdn-fmt-cap-lane {
 	padding: 1px 6px;
 	border-radius: 4px;
 	font-size: var(--fs-micro);
-	font-weight: 700;
+	font-weight: 600;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
@@ -9015,7 +9015,7 @@ html[data-layout='modern'] #serial-send-body .send-btn-kbd {
 
 /* ---------- 状态栏：后台任务高亮胶囊，没有任务时给一句「无后台任务」 ---------- */
 html[data-layout='modern'] #serial-statusbar .sb-task {
-	border-radius: 3px;
+	border-radius: var(--radius-xs);
 	padding: 1px 8px;
 	background: var(--accent);
 	color: var(--on-solid);
