@@ -79,10 +79,20 @@
 	const DATA_EVENTS = ['serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'device.ble']
 	function isStateEvent(name) { return STATE_EVENTS.indexOf(name) !== -1 }
 	function isDataEvent(name) { return DATA_EVENTS.indexOf(name) !== -1 }
-	// 纯函数：限流期间同一类型只保留最新一份，旧的直接被覆盖
+	// 状态事件合并键：device.lane 按 lane 分键（A/B 各自最新），device.ports 是
+	// 「列表已变化，请重新查询」的单一通知（不带增量），其它按事件名 + 主体 id 分键。
+	function stateEventKey(name, payload) {
+		const p = payload && typeof payload === 'object' ? payload : {}
+		if (name === 'device.lane') return 'device.lane:' + String(p.sid || p.lane || '?')
+		if (name === 'device.ports') return 'device.ports'
+		if (name === 'claim.state') return 'claim.state:' + String(p.pluginId || '?')
+		const subject = p.id || p.pluginId || p.sid || p.lane || p.claimId || p.busyId
+		return subject ? name + ':' + String(subject) : name
+	}
+	// 纯函数：同一键只保留最新一份 { name, payload }，flush 时按原事件名重发
 	function coalesceState(pending, name, payload) {
 		const out = Object.assign({}, pending || {})
-		out[name] = payload
+		out[stateEventKey(name, payload)] = { name: name, payload: payload }
 		return out
 	}
 
@@ -324,7 +334,7 @@
 
 	const lib = {
 		PROTOCOL, CAPABILITIES, CAPABILITY_TEXT, METHODS, EVENTS, ERROR_TEXT,
-		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, isStateEvent, isDataEvent, coalesceState,
+		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, isStateEvent, isDataEvent, stateEventKey, coalesceState,
 		estimateSize, newEventState, eventAdmission, newStateEventState, stateEventPlan,
 		newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,

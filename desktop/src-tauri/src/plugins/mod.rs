@@ -11,6 +11,7 @@ pub mod scheme;
 pub mod store;
 pub mod token;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -27,26 +28,62 @@ pub struct PluginsState {
     // 安装事务（目录切换 + state.json）、启停 / 卸载与插件私有存储都经这把锁；
     // 多窗口并发时不能各按旧快照读改写 state.json 再互相覆盖
     pub tx: Mutex<()>,
+    // 隔离持久化两处都失败的插件：只在本次进程内存里强制不可用
+    pub blocked: Mutex<BTreeSet<String>>,
+    // 插件根目录 / 跨进程锁获取失败：整个子系统不可用，但客户端照常启动
+    pub unavailable: Option<String>,
 }
 
 impl PluginsState {
-    pub fn init(app: &AppHandle) -> Result<Self, String> {
-        let root = store::root(app)?;
-        std::fs::create_dir_all(&root).map_err(|e| format!("无法创建插件目录：{e}"))?;
-        // 上次进程可能在安装事务中途被杀：按 .tx.json 的阶段还原或补完。
-        // 恢复失败只隔离对应插件（.repair.json + 停用），返回值是问题清单，绝不当成启动失败。
-        {
-            let _file = store::file_lock(&root)?;
-            let problems = store::recover_transactions(&root);
-            for p in problems {
-                eprintln!("插件 {} 需要修复：{}", p.id, p.reason);
-            }
+    // 初始化绝不失败：拿不到根目录或文件锁时 subsystem 标记为不可用，页面提示原因。
+    pub fn init(app: &AppHandle) -> Self {
+        let root = match store::root(app) {
+            Ok(r) => r,
+            Err(e) => return PluginsState::disabled(PathBuf::new(), format!("找不到应用数据目录：{e}")),
+        };
+        if let Err(e) = std::fs::create_dir_all(&root) {
+            return PluginsState::disabled(root, format!("无法创建插件目录：{e}"));
         }
-        Ok(PluginsState { root, tx: Mutex::new(()) })
+        let lock = match store::file_lock(&root) {
+            Ok(l) => l,
+            Err(e) => return PluginsState::disabled(root, format!("无法取得插件事务锁：{e}")),
+        };
+        // 恢复按实际文件系统状态决策；单个插件失败只隔离该插件，不再让客户端起不来。
+        let outcome = store::recover_transactions(&root);
+        drop(lock);
+        for p in &outcome.problems {
+            eprintln!("插件 {} 需要修复：{}", p.id, p.reason);
+        }
+        PluginsState {
+            root,
+            tx: Mutex::new(()),
+            blocked: Mutex::new(outcome.blocked.into_iter().collect()),
+            unavailable: None,
+        }
     }
-    pub fn root(&self) -> &Path {
-        &self.root
+    fn disabled(root: PathBuf, reason: String) -> Self {
+        eprintln!("插件子系统不可用：{reason}");
+        PluginsState { root, tx: Mutex::new(()), blocked: Mutex::new(BTreeSet::new()), unavailable: Some(reason) }
     }
+    pub fn root(&self) -> &Path { &self.root }
+    pub fn guard(&self) -> Result<(), String> {
+        match &self.unavailable {
+            Some(r) => Err(format!("插件子系统不可用：{r}")),
+            None => Ok(()),
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginStatus {
+    pub available: bool,
+    pub reason: Option<String>,
+}
+
+#[tauri::command]
+pub fn plugin_status(state: State<'_, PluginsState>) -> PluginStatus {
+    PluginStatus { available: state.unavailable.is_none(), reason: state.unavailable.clone() }
 }
 
 #[derive(Serialize, Clone)]
@@ -152,7 +189,7 @@ fn build_info(root: &Path, id: &str, entry: Option<&store::Entry>) -> PluginInfo
         package_sha256: entry.map(|e| e.package_sha256.clone()).unwrap_or_default(),
         supported: true,
         error: Some("插件文件缺失或已损坏，请重新安装".to_string()),
-        repair: store::repair_reason(root, id),
+        repair: store::repair_reason(root, id).or_else(|| entry.and_then(|e| e.repair.clone())),
     };
     let m: Manifest = match store::read_manifest(&dir) {
         Ok(m) => m,
@@ -181,11 +218,11 @@ fn build_info(root: &Path, id: &str, entry: Option<&store::Entry>) -> PluginInfo
         package_sha256: entry.map(|e| e.package_sha256.clone()).unwrap_or_default(),
         supported: m.runs_on(current_os()),
         error: None,
-        repair: store::repair_reason(root, id),
+        repair: store::repair_reason(root, id).or_else(|| entry.and_then(|e| e.repair.clone())),
     }
 }
 
-fn list_all(root: &Path) -> Vec<PluginInfo> {
+fn list_all(root: &Path, blocked: &BTreeSet<String>) -> Vec<PluginInfo> {
     let state = store::load_state(root);
     let mut out: Vec<PluginInfo> = Vec::new();
     for (id, entry) in &state.plugins {
@@ -201,6 +238,11 @@ fn list_all(root: &Path) -> Vec<PluginInfo> {
             if manifest::valid_id(&name) {
                 out.push(build_info(root, &name, None));
             }
+        }
+    }
+    for info in &mut out {
+        if blocked.contains(&info.id) && info.repair.is_none() {
+            info.repair = Some("恢复隔离未能持久化，本次进程内不可用".to_string());
         }
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -249,12 +291,14 @@ async fn download_and_stage(root: &Path, repo: &github::RepoRef) -> Result<(Mani
 
 #[tauri::command]
 pub fn plugin_list(state: State<'_, PluginsState>) -> Vec<PluginInfo> {
-    list_all(state.root())
+    if state.guard().is_err() { return Vec::new(); }
+    list_all(state.root(), &state.blocked.lock().map(|b| b.clone()).unwrap_or_default())
 }
 
 // 安装前检查：下载并校验 release 资产，读出 manifest 与能力变化，供界面展示确认框（不落地安装）
 #[tauri::command]
 pub async fn plugin_inspect(state: State<'_, PluginsState>, repo: String, tag: Option<String>) -> Result<InspectInfo, String> {
+    state.guard()?;
     let mut parsed = github::parse_repo_url(&repo)?;
     if let Some(t) = tag {
         let t = t.trim().to_string();
@@ -302,6 +346,7 @@ pub async fn plugin_install(
     expected_current_version: Option<String>,
     expected_current_sha256: Option<String>,
 ) -> Result<PluginInfo, String> {
+    state.guard()?;
     let mut parsed = github::parse_repo_url(&repo)?;
     if let Some(t) = tag {
         let t = t.trim().to_string();
@@ -356,6 +401,7 @@ pub async fn plugin_install(
             installed_at: now_secs(),
             capabilities: m.capabilities.clone(),
             package_sha256: digest.clone(),
+            repair: None,
         };
         if let Err(e) = tx.write_state(entry) {
             return match tx.rollback() {
@@ -381,6 +427,7 @@ pub async fn plugin_install(
 // 检查更新：下载新包只为读出 manifest（版本与能力变化），不落地
 #[tauri::command]
 pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Option<UpdateInfo>, String> {
+    state.guard()?;
     let root = state.root().to_path_buf();
     let st = store::load_state(&root);
     let entry = st.plugins.get(&id).ok_or_else(|| "插件没有安装".to_string())?.clone();
@@ -410,19 +457,32 @@ pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>
 
 #[tauri::command]
 pub fn plugin_set_enabled(app: AppHandle, state: State<'_, PluginsState>, id: String, enabled: bool) -> Result<Vec<PluginInfo>, String> {
+    state.guard()?;
     let root = state.root().to_path_buf();
+    if enabled {
+        let st = store::load_state(&root);
+        let marker = store::read_repair(&root, &id).is_some();
+        let blocked = state.blocked.lock().map(|b| b.contains(&id)).unwrap_or(false);
+        if !store::can_enable(&st, &id, marker, blocked) {
+            return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
+        }
+    }
     let _file = store::file_lock(&root)?;
     store::update_state(&root, &state.tx, |st| {
         let entry = st.plugins.get_mut(&id).ok_or_else(|| "插件没有安装".to_string())?;
+        if enabled && entry.repair.is_some() {
+            return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
+        }
         entry.enabled = enabled;
         Ok::<(), String>(())
     })??;
     let _ = app.emit(EVENT_CHANGED, ());
-    Ok(list_all(&root))
+    Ok(list_all(&root, &state.blocked.lock().map(|b| b.clone()).unwrap_or_default()))
 }
 
 #[tauri::command]
 pub fn plugin_uninstall(app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Vec<PluginInfo>, String> {
+    state.guard()?;
     let root = state.root().to_path_buf();
     {
         let _file = store::file_lock(&root)?;
@@ -434,17 +494,20 @@ pub fn plugin_uninstall(app: AppHandle, state: State<'_, PluginsState>, id: Stri
         }
         store::remove_plugin(&root, &id)?;
     }
+    if let Ok(mut blocked) = state.blocked.lock() { blocked.remove(&id); }
     let _ = app.emit(EVENT_CHANGED, ());
-    Ok(list_all(&root))
+    Ok(list_all(&root, &state.blocked.lock().map(|b| b.clone()).unwrap_or_default()))
 }
 
 #[tauri::command]
 pub fn plugin_repair_list(state: State<'_, PluginsState>) -> Vec<store::RepairInfo> {
+    if state.guard().is_err() { return Vec::new(); }
     store::list_repairs(state.root())
 }
 
 #[tauri::command]
 pub fn plugin_retry_recovery(app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Vec<store::RepairInfo>, String> {
+    state.guard()?;
     let root = state.root().to_path_buf();
     {
         let _file = store::file_lock(&root)?;
@@ -453,12 +516,14 @@ pub fn plugin_retry_recovery(app: AppHandle, state: State<'_, PluginsState>, id:
         // 两条路各自把 state.json 处理好了，这里不要再改 enabled
         store::retry_recovery(&root, &id)?;
     }
+    if let Ok(mut blocked) = state.blocked.lock() { blocked.remove(&id); }
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(store::list_repairs(&root))
 }
 
 #[tauri::command]
 pub fn plugin_remove_repair(app: AppHandle, state: State<'_, PluginsState>, id: String) -> Result<Vec<store::RepairInfo>, String> {
+    state.guard()?;
     let root = state.root().to_path_buf();
     {
         let _file = store::file_lock(&root)?;
@@ -479,26 +544,31 @@ pub struct TokenStatus {
 }
 
 #[tauri::command]
-pub fn plugin_token_status() -> TokenStatus {
+pub fn plugin_token_status(state: State<'_, PluginsState>) -> TokenStatus {
+    if state.guard().is_err() { return TokenStatus { set: false }; }
     TokenStatus { set: token::is_set() }
 }
 
 #[tauri::command]
 pub fn plugin_token_set(
+    state: State<'_, PluginsState>,
     token: String,
 ) -> Result<TokenStatus, String> {
+    state.guard()?;
     self::token::set(&token)?;
     Ok(TokenStatus { set: true })
 }
 
 #[tauri::command]
-pub fn plugin_token_clear() -> Result<TokenStatus, String> {
+pub fn plugin_token_clear(state: State<'_, PluginsState>) -> Result<TokenStatus, String> {
+    state.guard()?;
     self::token::clear()?;
     Ok(TokenStatus { set: false })
 }
 
 #[tauri::command]
 pub fn plugin_storage_get(state: State<'_, PluginsState>, id: String, key: String) -> Result<serde_json::Value, String> {
+    state.guard()?;
     if !manifest::valid_id(&id) {
         return Err("插件 id 无效".to_string());
     }
@@ -512,6 +582,7 @@ pub fn plugin_storage_get(state: State<'_, PluginsState>, id: String, key: Strin
 
 #[tauri::command]
 pub fn plugin_storage_set(state: State<'_, PluginsState>, id: String, key: String, value: serde_json::Value) -> Result<(), String> {
+    state.guard()?;
     if !manifest::valid_id(&id) {
         return Err("插件 id 无效".to_string());
     }
@@ -533,6 +604,7 @@ pub fn plugin_storage_set(state: State<'_, PluginsState>, id: String, key: Strin
 
 #[tauri::command]
 pub fn plugin_storage_remove(state: State<'_, PluginsState>, id: String, key: String) -> Result<(), String> {
+    state.guard()?;
     if !manifest::valid_id(&id) {
         return Err("插件 id 无效".to_string());
     }
@@ -547,7 +619,12 @@ pub fn plugin_storage_remove(state: State<'_, PluginsState>, id: String, key: St
 // ddplugin:// 的处理函数：读状态、解析路径、只出校验过的文件
 pub fn serve(app: &AppHandle, request: &tauri::http::Request<Vec<u8>>) -> tauri::http::Response<std::borrow::Cow<'static, [u8]>> {
     let root = match app.try_state::<PluginsState>() {
-        Some(state) => state.root().to_path_buf(),
+        Some(state) => {
+            if state.guard().is_err() {
+                return scheme::serve(Path::new("/nonexistent"), &store::State::default(), request);
+            }
+            state.root().to_path_buf()
+        }
         None => return scheme::serve(Path::new("/nonexistent"), &store::State::default(), request),
     };
     let st = store::load_state(&root);

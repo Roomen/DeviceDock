@@ -80,6 +80,7 @@
 	// 客户端插件宿主(仅桌面客户端)：安装/校验/卸载与 GitHub 令牌钥匙串走 Rust，UI 沙箱与 RPC 在 js/plugin-host.js
 	if (!P.has || P.has('plugins')) P.provide('plugins', {
 		list: function () { return T.core.invoke('plugin_list') },
+		status: function () { return T.core.invoke('plugin_status') },
 		inspect: function (repo, tag) { return T.core.invoke('plugin_inspect', { repo: repo, tag: tag == null ? null : tag }) },
 		install: function (repo, tag, expectedSha256, expectedCurrentVersion, expectedCurrentSha256) {
 			// 摘要必填；确认时的已安装版本 / 摘要也要回传，Rust 提交前再核对一次

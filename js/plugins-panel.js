@@ -40,6 +40,10 @@
 		body.appendChild(mk('p', 'mdn-src-intro',
 			'插件从 GitHub Release 下载并经 SHA-256 校验，在独立沙箱 iframe 中隔离运行，只能按授予的能力调用宿主接口。更新版本或能力变化时须重新确认。'))
 
+		// 插件根目录 / 锁失败时整个子系统不可用：顶部说明原因，客户端仍照常运行
+		s.statusEl = mk('div', 'mdn-src-err mdn-plg-status')
+		s.statusEl.hidden = true
+		body.appendChild(s.statusEl)
 		// 顶部常显：安装事务恢复失败 / 停用或卸载后仍未释放的资源（即使插件已卸载也在）
 		s.issuesEl = mk('div', 'mdn-plg-issues')
 		s.issuesEl.hidden = true
@@ -408,7 +412,7 @@
 		const enableInput = mk('input', 'form-check-input')
 		enableInput.type = 'checkbox'
 		enableInput.checked = !!p.enabled
-		enableInput.disabled = !!p.error || !p.supported || !!s.busy[enableKey]
+		enableInput.disabled = !!p.error || !p.supported || !!p.repair || !!s.busy[enableKey]
 		enableInput.id = 'mdn-plg-en-' + p.id
 		enableInput.addEventListener('change', function () {
 			const on = enableInput.checked
@@ -517,6 +521,9 @@
 
 		renderConfirmCard(s)
 		renderIssues(s)
+		const st = s.status || {}
+		s.statusEl.hidden = st.available !== false
+		s.statusEl.textContent = st.available === false ? ('插件子系统不可用：' + (st.reason || '未知原因') + '。客户端其它功能不受影响。') : ''
 
 		s.tokenBadge.textContent = s.tokenSet ? '已设置' : '未设置'
 		s.tokenSaveBtn.disabled = !!s.tokenBusy
@@ -544,11 +551,13 @@
 			Promise.resolve(svc.tokenStatus ? svc.tokenStatus() : { set: false }).catch(function () { return { set: false } }),
 			Promise.resolve(svc.repairList ? svc.repairList() : []).catch(function () { return [] }),
 			Promise.resolve(root.PluginHost && root.PluginHost.failedResources ? root.PluginHost.failedResources() : []).catch(function () { return [] }),
+			Promise.resolve(svc.status ? svc.status() : { available: true }).catch(function () { return { available: true } }),
 		]).then(function (res) {
 			if (s.closed) return
 			s.plugins = Array.isArray(res[0]) ? res[0] : []
 			s.tokenSet = !!(res[1] && res[1].set)
 			s.issues = { repairs: Array.isArray(res[2]) ? res[2] : [], resources: Array.isArray(res[3]) ? res[3] : [] }
+			s.status = res[4] || { available: true }
 			s.failedReleases = root.PluginHost && root.PluginHost.failedReleases ? root.PluginHost.failedReleases() : []
 			if (root.PluginHost && root.PluginHost.reload) root.PluginHost.reload()
 			render(s)
@@ -576,6 +585,7 @@
 			confirmTimer: 0,
 			failedReleases: [],
 			issues: { repairs: [], resources: [] },
+			status: { available: true },
 		}
 		session = s
 		opening = false

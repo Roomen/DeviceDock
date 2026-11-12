@@ -92,8 +92,12 @@ pub fn serve(root: &Path, state: &store::State, request: &Request<Vec<u8>>) -> R
     let Some(entry) = state.plugins.get(&target.id) else {
         return text_response(StatusCode::NOT_FOUND, "not found");
     };
-    // 只出当前启用版本：停用 / 升级途中旧版本立刻不可加载
+    // 只出当前启用版本：停用 / 升级途中旧版本立刻不可加载。
+    // 待修复是硬门槛：.repair.json 或 state 条目里的 repair 字段任一存在就 404。
     if !entry.enabled || entry.version != target.version {
+        return text_response(StatusCode::NOT_FOUND, "not found");
+    }
+    if store::has_repair(root, state, &target.id) {
         return text_response(StatusCode::NOT_FOUND, "not found");
     }
     let dir = store::version_dir(root, &target.id, &target.version);
@@ -179,5 +183,47 @@ mod tests {
         assert!(csp.contains("connect-src 'none'"), "{csp}");
         let req = Request::builder().uri("http://ddplugin.localhost/hello/1.0.0/index.html").body(Vec::new()).unwrap();
         assert!(csp_for(&req).contains("script-src http://ddplugin.localhost"), "{}", csp_for(&req));
+    }
+
+    fn fixture(tag: &str) -> (std::path::PathBuf, store::State) {
+        let root = std::env::temp_dir().join(format!("ddplug-scheme-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("hello/1.0.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = b"<h1>hi</h1>";
+        std::fs::write(dir.join("index.html"), body).unwrap();
+        let m = serde_json::json!({
+            "schemaVersion": 1, "id": "hello", "name": "Hello", "version": "1.0.0",
+            "apiVersion": 1, "kind": "web", "entry": "index.html",
+            "capabilities": [],
+            "integrity": { "index.html": format!("sha256-{}", store::sha256_hex(body)) }
+        });
+        std::fs::write(dir.join("manifest.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+        let mut st = store::State::default();
+        st.plugins.insert("hello".to_string(), store::Entry {
+            enabled: true, repo: String::new(), tag: String::new(), version: "1.0.0".into(),
+            installed_at: 0, capabilities: vec![], package_sha256: "a".repeat(64), repair: None,
+        });
+        (root, st)
+    }
+
+    fn get(root: &std::path::Path, st: &store::State) -> u16 {
+        let req = Request::builder().uri("ddplugin://localhost/hello/1.0.0/index.html").body(Vec::new()).unwrap();
+        serve(root, st, &req).status().as_u16()
+    }
+
+    #[test]
+    fn repair_marker_or_state_field_blocks_serving() {
+        let (root, mut st) = fixture("repair");
+        assert_eq!(get(&root, &st), 200);
+        st.plugins.get_mut("hello").unwrap().repair = Some("需要修复".to_string());
+        assert_eq!(get(&root, &st), 404, "state 里的 repair 字段必须挡住");
+        st.plugins.get_mut("hello").unwrap().repair = None;
+        std::fs::write(
+            root.join("hello/.repair.json"),
+            b"{\"id\":\"hello\",\"reason\":\"repair\",\"stage\":\"Swapped\",\"at\":0}",
+        ).unwrap();
+        assert_eq!(get(&root, &st), 404, ".repair.json 必须挡住");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

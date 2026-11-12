@@ -97,6 +97,7 @@
 	// 串口占用 / 打开状态变化属于「状态事件」，宿主侧会合并成最新态并保证送达
 	function notifyClaimState(ctx) {
 		ctx.send('claim.state', {
+			pluginId: ctx.id,
 			at: Date.now(),
 			claims: ctx.claims().map(function (rec) {
 				return { claimId: rec.id, open: !!rec.open, closing: !!rec.closing, port: rec.port ? keyOfPort(rec.port) : null }
