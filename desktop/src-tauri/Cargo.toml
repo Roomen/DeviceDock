@@ -41,6 +41,7 @@ percent-encoding = "2"
 zip = { version = "4.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tar = "0.4"
 flate2 = "1"
+libc = "0.2"
 # 插件安装事务：跨进程文件锁（多开实例也要串行）与包内路径 NFC 归一化
 fs2 = "0.4"
 unicode-normalization = "0.1"

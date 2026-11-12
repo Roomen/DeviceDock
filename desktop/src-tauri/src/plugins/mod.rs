@@ -30,8 +30,24 @@ pub struct PluginsState {
     pub tx: Mutex<()>,
     // 隔离持久化两处都失败的插件：只在本次进程内存里强制不可用
     pub blocked: Mutex<BTreeSet<String>>,
+    // 正在跑安装 / 卸载事务的插件：读路径（plugin_list / ddplugin://）必须拒绝
+    pub active: Mutex<BTreeSet<String>>,
     // 插件根目录 / 跨进程锁获取失败：整个子系统不可用，但客户端照常启动
     pub unavailable: Option<String>,
+}
+
+// RAII：事务开始登记，任何返回路径（含错误）都在释放事务锁之前注销
+struct ActiveGuard<'a> { set: &'a Mutex<BTreeSet<String>>, id: String }
+impl<'a> ActiveGuard<'a> {
+    fn new(set: &'a Mutex<BTreeSet<String>>, id: &str) -> Result<Self, String> {
+        set.lock().map(|mut a| { a.insert(id.to_string()); }).map_err(|_| "插件事务表被占用".to_string())?;
+        Ok(ActiveGuard { set, id: id.to_string() })
+    }
+}
+impl Drop for ActiveGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut a) = self.set.lock() { a.remove(&self.id); }
+    }
 }
 
 impl PluginsState {
@@ -58,12 +74,13 @@ impl PluginsState {
             root,
             tx: Mutex::new(()),
             blocked: Mutex::new(outcome.blocked.into_iter().collect()),
+            active: Mutex::new(BTreeSet::new()),
             unavailable: None,
         }
     }
     fn disabled(root: PathBuf, reason: String) -> Self {
         eprintln!("插件子系统不可用：{reason}");
-        PluginsState { root, tx: Mutex::new(()), blocked: Mutex::new(BTreeSet::new()), unavailable: Some(reason) }
+        PluginsState { root, tx: Mutex::new(()), blocked: Mutex::new(BTreeSet::new()), active: Mutex::new(BTreeSet::new()), unavailable: Some(reason) }
     }
     pub fn root(&self) -> &Path { &self.root }
     pub fn guard(&self) -> Result<(), String> {
@@ -71,6 +88,12 @@ impl PluginsState {
             Some(r) => Err(format!("插件子系统不可用：{r}")),
             None => Ok(()),
         }
+    }
+    // 锁异常按禁用处理：拿不到 blocked/active 集合时返回 None，scheme 直接拒绝全部请求
+    pub fn serve_gates(&self) -> Option<scheme::ServeGates> {
+        let blocked = self.blocked.lock().ok()?.clone();
+        let active = self.active.lock().ok()?.clone();
+        Some(scheme::ServeGates { blocked, active })
     }
 }
 
@@ -111,6 +134,8 @@ pub struct PluginInfo {
     pub error: Option<String>,
     // 安装事务恢复失败的原因：该插件被停用，管理面板显示「重试恢复 / 移除」
     pub repair: Option<String>,
+    // 安装 / 卸载事务进行中：不给启用视图，ddplugin:// 也不供包
+    pub installing: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -190,6 +215,7 @@ fn build_info(root: &Path, id: &str, entry: Option<&store::Entry>) -> PluginInfo
         supported: true,
         error: Some("插件文件缺失或已损坏，请重新安装".to_string()),
         repair: store::repair_reason(root, id).or_else(|| entry.and_then(|e| e.repair.clone())),
+        installing: false,
     };
     let m: Manifest = match store::read_manifest(&dir) {
         Ok(m) => m,
@@ -219,10 +245,11 @@ fn build_info(root: &Path, id: &str, entry: Option<&store::Entry>) -> PluginInfo
         supported: m.runs_on(current_os()),
         error: None,
         repair: store::repair_reason(root, id).or_else(|| entry.and_then(|e| e.repair.clone())),
+        installing: false,
     }
 }
 
-fn list_all(root: &Path, blocked: &BTreeSet<String>) -> Vec<PluginInfo> {
+fn list_all(root: &Path, blocked: &BTreeSet<String>, active: &BTreeSet<String>) -> Vec<PluginInfo> {
     let state = store::load_state(root);
     let mut out: Vec<PluginInfo> = Vec::new();
     for (id, entry) in &state.plugins {
@@ -244,18 +271,22 @@ fn list_all(root: &Path, blocked: &BTreeSet<String>) -> Vec<PluginInfo> {
         if blocked.contains(&info.id) && info.repair.is_none() {
             info.repair = Some("恢复隔离未能持久化，本次进程内不可用".to_string());
         }
+        if active.contains(&info.id) {
+            info.installing = true;
+            info.enabled = false; // 事务期间不提供启用视图
+        }
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     out
 }
 
-fn staging_dir(root: &Path) -> Result<PathBuf, String> {
-    let mut suffix = [0u8; 8];
-    getrandom::fill(&mut suffix).map_err(|_| "系统熵源不可用".to_string())?;
-    let dir = root.join(format!(".staging-{}", suffix.iter().map(|b| format!("{b:02x}")).collect::<String>()));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建临时目录：{e}"))?;
-    Ok(dir)
+fn list_all_state(state: &PluginsState) -> Vec<PluginInfo> {
+    let blocked = state.blocked.lock().map(|b| b.clone()).unwrap_or_default();
+    let active = state.active.lock().map(|a| a.clone()).unwrap_or_default();
+    list_all(state.root(), &blocked, &active)
 }
+
+
 
 // 下载 → 校验 → 解压 → 逐文件校验，返回 (manifest, 包 sha256, 临时目录, release)。
 // 调用方负责把临时目录换进正式位置，任何一步失败都要删掉它。
@@ -270,7 +301,10 @@ async fn download_and_stage(root: &Path, repo: &github::RepoRef) -> Result<(Mani
     if actual != expected {
         return Err("下载的插件包 sha256 与发布方提供的校验文件不一致，已中止安装".to_string());
     }
-    let staging = staging_dir(root)?;
+    // staging 的创建与解压都在跨进程事务锁内：别的进程启动清理不会误删在用的包。
+    // owner.json（pid + 创建时间）与进程级 .lock 由 create_staging 登记。
+    let _file = store::file_lock(root)?;
+    let staging = store::create_staging(root)?;
     let result = (|| -> Result<Manifest, String> {
         let extracted = archive::extract_any(&package, &staging)?;
         if extracted.files.is_empty() {
@@ -278,12 +312,13 @@ async fn download_and_stage(root: &Path, repo: &github::RepoRef) -> Result<(Mani
         }
         let m = store::read_manifest(&staging)?;
         store::verify_dir(&staging, &m)?;
+        store::seal_staging(&staging)?;
         Ok(m)
     })();
     match result {
         Ok(m) => Ok((m, actual, staging, release)),
         Err(e) => {
-            let _ = std::fs::remove_dir_all(&staging);
+            store::drop_staging(root, &staging);
             Err(e)
         }
     }
@@ -292,7 +327,7 @@ async fn download_and_stage(root: &Path, repo: &github::RepoRef) -> Result<(Mani
 #[tauri::command]
 pub fn plugin_list(state: State<'_, PluginsState>) -> Vec<PluginInfo> {
     if state.guard().is_err() { return Vec::new(); }
-    list_all(state.root(), &state.blocked.lock().map(|b| b.clone()).unwrap_or_default())
+    list_all_state(&state)
 }
 
 // 安装前检查：下载并校验 release 资产，读出 manifest 与能力变化，供界面展示确认框（不落地安装）
@@ -308,7 +343,7 @@ pub async fn plugin_inspect(state: State<'_, PluginsState>, repo: String, tag: O
     }
     let root = state.root().to_path_buf();
     let (m, digest, staging, release) = download_and_stage(&root, &parsed).await?;
-    let _ = std::fs::remove_dir_all(&staging);
+    store::drop_staging(&root, &staging);
     if m.kind != "web" {
         return Err("本地进程（native）插件尚未支持，请安装 web 类型插件".to_string());
     }
@@ -362,17 +397,19 @@ pub async fn plugin_install(
     let root = state.root().to_path_buf();
     let (m, digest, staging, release) = download_and_stage(&root, &parsed).await?;
     if expected != digest {
-        let _ = std::fs::remove_dir_all(&staging);
+        store::drop_staging(&root, &staging);
         return Err("远端插件包摘要与确认时不一致，请重新检查后再安装".to_string());
     }
     if m.kind != "web" {
-        let _ = std::fs::remove_dir_all(&staging);
+        store::drop_staging(&root, &staging);
         return Err("本地进程（native）插件尚未支持，请安装 web 类型插件".to_string());
     }
-    // 分阶段事务：prepared → swapped → state_written → committed，每步都先落记录再做动作。
+    // 事务期间登记 active：plugin_list 不给启用视图，ddplugin:// 返回 503。
+    // 任何失败都在**释放锁之前**按决策表同步恢复或隔离，staging 是否删除由决策结果决定。
     let outcome = (|| -> Result<store::State, String> {
         let _file = store::file_lock(&root)?;
         let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        let _active = ActiveGuard::new(&state.active, &m.id)?;
         // 提交前重新核对确认时的已安装状态：并发变更会让能力差异展示过期
         let before = store::load_state(&root);
         if !store::baseline_matches(
@@ -380,46 +417,49 @@ pub async fn plugin_install(
             expected_current_version.as_deref(),
             expected_current_sha256.as_deref(),
         ) {
+            // 还没写事务记录，没有可恢复的目录动作；staging 是本进程刚创建的，可直接丢弃
+            store::drop_staging(&root, &staging);
             return Err("插件安装状态在确认后发生变化，请重新检查并确认".to_string());
         }
-        let mut tx = store::begin_install(
-            &root,
-            &m.id,
-            &m.version,
-            &staging,
-            before.plugins.get(&m.id).cloned(),
-        )?;
-        if let Err(e) = tx.swap() {
-            // swap 内部已尝试还原；事务记录保留，交给启动恢复或重试恢复
-            return Err(e);
-        }
-        let entry = store::Entry {
-            enabled: true,
-            repo: format!("https://github.com/{}/{}", parsed.owner, parsed.repo),
-            tag: release.tag_name.clone(),
-            version: m.version.clone(),
-            installed_at: now_secs(),
-            capabilities: m.capabilities.clone(),
-            package_sha256: digest.clone(),
-            repair: None,
-        };
-        if let Err(e) = tx.write_state(entry) {
-            return match tx.rollback() {
-                Ok(()) => Err(e),
-                Err(rb) => Err(format!("{e}；回滚也失败：{rb}")),
+        let result = (|| -> Result<store::State, String> {
+            let mut tx = store::begin_install(
+                &root, &m.id, &m.version, &staging,
+                before.plugins.get(&m.id).cloned(),
+            )?;
+            tx.swap()?;
+            let entry = store::Entry {
+                enabled: true,
+                repo: format!("https://github.com/{}/{}", parsed.owner, parsed.repo),
+                tag: release.tag_name.clone(),
+                version: m.version.clone(),
+                installed_at: now_secs(),
+                capabilities: m.capabilities.clone(),
+                package_sha256: digest.clone(),
+                repair: None,
             };
+            tx.write_state(entry)?;
+            tx.commit()?;
+            store::clear_repair(&root, &m.id);
+            Ok(store::load_state(&root))
+        })();
+        match result {
+            Ok(st) => {
+                store::release_staging(&root, &staging);
+                Ok(st)
+            }
+            Err(e) => {
+                let fin = store::finalize_failed_install(&root, &m.id);
+                if fin.blocked {
+                    if let Ok(mut b) = state.blocked.lock() { b.insert(m.id.clone()); }
+                }
+                if let Some(r) = &fin.reason {
+                    if !fin.recovered { return Err(format!("{e}；未能自动恢复：{r}")); }
+                }
+                Err(e)
+            }
         }
-        tx.commit()?;
-        store::clear_repair(&root, &m.id);
-        Ok(store::load_state(&root))
     })();
-    let st = match outcome {
-        Ok(st) => st,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(e);
-        }
-    };
+    let st = outcome?;
     let _ = app.emit(EVENT_CHANGED, ());
     Ok(build_info(&root, &m.id, st.plugins.get(&m.id)))
 }
@@ -433,7 +473,7 @@ pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>
     let entry = st.plugins.get(&id).ok_or_else(|| "插件没有安装".to_string())?.clone();
     let repo = github::parse_repo_url(&entry.repo)?;
     let (m, digest, staging, release) = download_and_stage(&root, &repo).await?;
-    let _ = std::fs::remove_dir_all(&staging);
+    store::drop_staging(&root, &staging);
     if !manifest::is_newer(&m.version, &entry.version) {
         return Ok(None);
     }
@@ -459,25 +499,27 @@ pub async fn plugin_check_update(_app: AppHandle, state: State<'_, PluginsState>
 pub fn plugin_set_enabled(app: AppHandle, state: State<'_, PluginsState>, id: String, enabled: bool) -> Result<Vec<PluginInfo>, String> {
     state.guard()?;
     let root = state.root().to_path_buf();
+    let _file = store::file_lock(&root)?;
+    let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+    // 全部门槛检查都在同一段锁内，避免并发恢复只写入标记时读到过期结果
     if enabled {
         let st = store::load_state(&root);
         let marker = store::read_repair(&root, &id).is_some();
-        let blocked = state.blocked.lock().map(|b| b.contains(&id)).unwrap_or(false);
+        let blocked = state.blocked.lock().map(|b| b.contains(&id)).unwrap_or_else(|_| true);
         if !store::can_enable(&st, &id, marker, blocked) {
             return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
         }
     }
-    let _file = store::file_lock(&root)?;
-    store::update_state(&root, &state.tx, |st| {
+    store::load_and_save(&root, |st| -> Result<(), String> {
         let entry = st.plugins.get_mut(&id).ok_or_else(|| "插件没有安装".to_string())?;
         if enabled && entry.repair.is_some() {
             return Err("插件处于待修复状态，请先重试恢复或移除".to_string());
         }
         entry.enabled = enabled;
-        Ok::<(), String>(())
+        Ok(())
     })??;
     let _ = app.emit(EVENT_CHANGED, ());
-    Ok(list_all(&root, &state.blocked.lock().map(|b| b.clone()).unwrap_or_default()))
+    Ok(list_all_state(&state))
 }
 
 #[tauri::command]
@@ -487,6 +529,7 @@ pub fn plugin_uninstall(app: AppHandle, state: State<'_, PluginsState>, id: Stri
     {
         let _file = store::file_lock(&root)?;
         let _guard = state.tx.lock().map_err(|_| "插件状态被占用".to_string())?;
+        let _active = ActiveGuard::new(&state.active, &id)?;
         // 状态提交与目录删除必须在同一段锁内：否则可能删掉并发安装刚放进来的包
         let removed = store::load_and_save(&root, |st| st.plugins.remove(&id).is_some())?;
         if !removed {
@@ -496,7 +539,7 @@ pub fn plugin_uninstall(app: AppHandle, state: State<'_, PluginsState>, id: Stri
     }
     if let Ok(mut blocked) = state.blocked.lock() { blocked.remove(&id); }
     let _ = app.emit(EVENT_CHANGED, ());
-    Ok(list_all(&root, &state.blocked.lock().map(|b| b.clone()).unwrap_or_default()))
+    Ok(list_all_state(&state))
 }
 
 #[tauri::command]
@@ -618,16 +661,62 @@ pub fn plugin_storage_remove(state: State<'_, PluginsState>, id: String, key: St
 
 // ddplugin:// 的处理函数：读状态、解析路径、只出校验过的文件
 pub fn serve(app: &AppHandle, request: &tauri::http::Request<Vec<u8>>) -> tauri::http::Response<std::borrow::Cow<'static, [u8]>> {
-    let root = match app.try_state::<PluginsState>() {
+    let (root, gates) = match app.try_state::<PluginsState>() {
         Some(state) => {
-            if state.guard().is_err() {
-                return scheme::serve(Path::new("/nonexistent"), &store::State::default(), request);
-            }
-            state.root().to_path_buf()
+            let denied = || scheme::serve(Path::new("/nonexistent"), &store::State::default(), request);
+            if state.guard().is_err() { return denied(); }
+            // 锁异常按禁用处理：拿不到门禁集合就拒绝全部插件请求
+            let Some(g) = state.serve_gates() else { return denied(); };
+            (state.root().to_path_buf(), g)
         }
         None => return scheme::serve(Path::new("/nonexistent"), &store::State::default(), request),
     };
     let st = store::load_state(&root);
-    scheme::serve(&root, &st, request)
+    scheme::serve_gated(&root, &st, request, &gates)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn fixture(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("ddplug-list-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let dir = root.join("hello/1.0.0");
+        fs::create_dir_all(&dir).unwrap();
+        let body = b"<h1>hi</h1>";
+        fs::write(dir.join("index.html"), body).unwrap();
+        let m = serde_json::json!({
+            "schemaVersion": 1, "id": "hello", "name": "Hello", "version": "1.0.0",
+            "apiVersion": 1, "kind": "web", "entry": "index.html",
+            "capabilities": [],
+            "integrity": { "index.html": format!("sha256-{}", store::sha256_hex(body)) }
+        });
+        fs::write(dir.join("manifest.json"), serde_json::to_vec(&m).unwrap()).unwrap();
+        let mut st = store::State::default();
+        st.plugins.insert("hello".to_string(), store::Entry {
+            enabled: true, repo: String::new(), tag: String::new(), version: "1.0.0".into(),
+            installed_at: 0, capabilities: vec![], package_sha256: "a".repeat(64), repair: None,
+        });
+        store::save_state(&root, &st).unwrap();
+        root
+    }
+
+    #[test]
+    fn list_all_marks_active_transaction_as_installing() {
+        let root = fixture("active");
+        let empty = BTreeSet::new();
+        let mut active = BTreeSet::new();
+        active.insert("hello".to_string());
+        let normal = list_all(&root, &empty, &empty);
+        assert_eq!(normal.len(), 1);
+        assert_eq!(normal[0].enabled, true);
+        assert_eq!(normal[0].installing, false);
+        let during = list_all(&root, &empty, &active);
+        assert_eq!(during[0].installing, true, "事务期间标为 installing");
+        assert_eq!(during[0].enabled, false, "事务期间不提供启用视图");
+        fs::remove_dir_all(&root).unwrap();
+    }
+}

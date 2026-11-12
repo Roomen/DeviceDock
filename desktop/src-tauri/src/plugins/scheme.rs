@@ -2,6 +2,7 @@
 // 插件页面在 sandbox iframe（allow-scripts，不给 allow-same-origin）里加载，因此与本页面不同源；
 // 这里的 CSP 只放行包内脚本 / 样式 / 图片，禁掉一切网络与表单出口，插件只能经 postMessage 与宿主通信。
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use percent_encoding::percent_decode_str;
@@ -85,7 +86,19 @@ fn text_response(status: StatusCode, message: &str) -> Response<Cow<'static, [u8
         .unwrap_or_else(|_| Response::new(Cow::Owned(Vec::new())))
 }
 
+// 读路径硬门槛：内存禁用集合 + 正在跑安装/卸载事务的插件集合。
+// 锁异常由调用方（PluginsState::serve_gates）返回 None，入口直接拒绝全部请求。
+#[derive(Debug, Default, Clone)]
+pub struct ServeGates {
+    pub blocked: BTreeSet<String>,
+    pub active: BTreeSet<String>,
+}
+
 pub fn serve(root: &Path, state: &store::State, request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    serve_gated(root, state, request, &ServeGates::default())
+}
+
+pub fn serve_gated(root: &Path, state: &store::State, request: &Request<Vec<u8>>, gates: &ServeGates) -> Response<Cow<'static, [u8]>> {
     let Some(target) = resolve_request_path(request.uri().path()) else {
         return text_response(StatusCode::NOT_FOUND, "not found");
     };
@@ -93,8 +106,12 @@ pub fn serve(root: &Path, state: &store::State, request: &Request<Vec<u8>>) -> R
         return text_response(StatusCode::NOT_FOUND, "not found");
     };
     // 只出当前启用版本：停用 / 升级途中旧版本立刻不可加载。
-    // 待修复是硬门槛：.repair.json 或 state 条目里的 repair 字段任一存在就 404。
-    if !entry.enabled || entry.version != target.version {
+    // 事务进行中：旧授权可能与新 manifest 混用，直接拒绝供包（503 表示稍后重试）。
+    if gates.active.contains(&target.id) {
+        return text_response(StatusCode::SERVICE_UNAVAILABLE, "plugin install in progress");
+    }
+    // 待修复是硬门槛：内存禁用集合、.repair.json、state 条目 repair 字段任一命中就 404。
+    if gates.blocked.contains(&target.id) || !entry.enabled || entry.version != target.version {
         return text_response(StatusCode::NOT_FOUND, "not found");
     }
     if store::has_repair(root, state, &target.id) {
@@ -226,4 +243,23 @@ mod tests {
         assert_eq!(get(&root, &st), 404, ".repair.json 必须挡住");
         std::fs::remove_dir_all(&root).unwrap();
     }
+
+    fn gated(root: &std::path::Path, st: &store::State, gates: &ServeGates) -> u16 {
+        let req = Request::builder().uri("ddplugin://localhost/hello/1.0.0/index.html").body(Vec::new()).unwrap();
+        serve_gated(root, st, &req, gates).status().as_u16()
+    }
+
+    #[test]
+    fn active_transaction_and_blocked_gate_block_serving() {
+        let (root, st) = fixture("gates");
+        assert_eq!(gated(&root, &st, &ServeGates::default()), 200);
+        let mut g = ServeGates::default();
+        g.active.insert("hello".to_string());
+        assert_eq!(gated(&root, &st, &g), 503, "安装/卸载事务期间拒绝供包");
+        let mut g2 = ServeGates::default();
+        g2.blocked.insert("hello".to_string());
+        assert_eq!(gated(&root, &st, &g2), 404, "内存禁用集合也必须拦住 scheme");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
 }

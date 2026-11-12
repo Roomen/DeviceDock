@@ -1,8 +1,9 @@
 // 插件落盘：plugins/<id>/<version>/ 是包内容，plugins/<id>/storage.json 是插件私有存储，
 // plugins/state.json 记启用状态、来源与安装摘要。写入一律「同目录临时文件 + 原子替换」。
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -150,6 +151,7 @@ pub fn load_and_save<R>(root: &Path, f: impl FnOnce(&mut State) -> R) -> Result<
     Ok(out)
 }
 
+#[allow(dead_code)] // 单测里验证并发写串行化；命令路径改用「持锁 + load_and_save」
 pub fn update_state<R>(root: &Path, lock: &std::sync::Mutex<()>, f: impl FnOnce(&mut State) -> R) -> Result<R, String> {
     let _guard = lock.lock().map_err(|_| "插件状态被占用".to_string())?;
     load_and_save(root, f)
@@ -215,6 +217,12 @@ pub fn verify_dir(dir: &Path, m: &Manifest) -> Result<u64, String> {
 // | 8 | 其它任意组合（T 身份不符 / T 与 B 都缺 / B 身份不符 / ST=Unknown / 路径非法） | | | | | **不删任何副本**，写 .repair.json 或 state 禁用并隔离待修复 | row8_unknown_isolates_without_deleting |
 //
 // S 只在 1~7 行「结论确定」时删除；第 8 行连 staging 都不动。
+// 身份计算（tree_sha256）超限 / 读失败 → Identity::Unknown，无法匹配任何 Known 行，落到第 8 行隔离。
+// 已提交残留：commit() 先删记录再清副本，崩溃可能留下 .old-* 备份且没有事务记录；
+// 启动清理对「无事务记录 + 对应 target 身份完整」的 .old-* 按规则删除并记日志（cleanup_committed_leftovers），
+// 不改动决策表本身；target 缺失或身份未知时保留备份。
+// 事务期间读路径：mod.rs 的 ActiveGuard 把 id 登记进 PluginsState.active，plugin_list 标 installing / enabled=false，scheme::serve_gated 返回 503；安装失败在释放锁前调用 finalize_failed_install 复用本表恢复或隔离，staging 是否删除完全由决策结果决定。
+// staging 所有权：目录名带 pid + 随机后缀，内部 owner.json 记 pid/createdAt，同级 .lock 由创建进程持有到进程结束；启动清理（cleanup_staging）只删「无事务引用 + owner 可读 + 进程已不存在 + 超过 15 分钟 + 锁未被持有」的 staging，其余保留。创建与解压都在跨进程锁内。
 const TX_FILE: &str = ".tx.json";
 const REPAIR_FILE: &str = ".repair.json";
 const LOCK_FILE: &str = ".lock";
@@ -399,48 +407,82 @@ fn stored_path(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(p)
 }
 
-// 目录身份：递归收集**全部文件**（含 manifest.json、含 integrity 未列出的文件），
-// 按相对路径排序后把「路径 + 长度 + sha256」喂给 SHA-256。符号链接 / 特殊文件直接报错。
+// 目录身份：递归收集**全部文件**（含 manifest.json、含 integrity 未列出的文件），按相对路径排序。
+// 逐文件用固定缓冲流式读取，文件数与总字节上限与安装包一致；超限直接报错 → 身份未知 → 决策表第 8 行。
 pub fn tree_sha256(dir: &Path) -> Result<String, String> {
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    collect_files(dir, dir, &mut files)?;
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    tree_sha256_limited(dir, manifest::MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES)
+}
+
+// 上限可注入，便于单测覆盖文件数 / 单文件 / 总量三条上限，不必真的写 64 MiB。
+fn tree_sha256_limited(dir: &Path, max_files: usize, max_file_bytes: u64, max_total_bytes: u64) -> Result<String, String> {
+    let mut files: Vec<String> = Vec::new();
+    collect_files(dir, dir, &mut files, max_files)?;
+    files.sort();
     let mut hasher = Sha256::new();
-    for (rel, bytes) in &files {
+    let mut total: u64 = 0;
+    let mut buf = [0u8; 64 * 1024];
+    for rel in &files {
+        let path = dir.join(rel);
+        let meta = fs::symlink_metadata(&path).map_err(|e| format!("无法读取包内文件 {rel}：{e}"))?;
+        if meta.len() > max_file_bytes { return Err(format!("包内文件过大，身份未知：{rel}")); }
+        total = total.saturating_add(meta.len());
+        if total > max_total_bytes { return Err("包内容量超限，身份未知".to_string()); }
+        let mut file = fs::File::open(&path).map_err(|e| format!("无法打开包内文件 {rel}：{e}"))?;
+        let mut fh = Sha256::new();
+        loop {
+            let got = file.read(&mut buf).map_err(|e| format!("无法读取包内文件 {rel}：{e}"))?;
+            if got == 0 { break; }
+            fh.update(&buf[..got]);
+        }
+        let digest = fh.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
         hasher.update(rel.as_bytes());
         hasher.update(b":");
-        hasher.update(bytes.len().to_string().as_bytes());
+        hasher.update(meta.len().to_string().as_bytes());
         hasher.update(b":");
-        hasher.update(sha256_hex(bytes).as_bytes());
+        hasher.update(digest.as_bytes());
         hasher.update(b";");
     }
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn collect_files(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
+fn collect_files(base: &Path, dir: &Path, out: &mut Vec<String>, max_files: usize) -> Result<(), String> {
     let entries = fs::read_dir(dir).map_err(|e| format!("无法读取插件目录：{e}"))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("无法读取插件目录：{e}"))?;
         let path = entry.path();
         let meta = fs::symlink_metadata(&path).map_err(|e| format!("无法读取插件文件：{e}"))?;
         if meta.file_type().is_symlink() { return Err("包内不允许符号链接".to_string()); }
-        if meta.is_dir() { collect_files(base, &path, out)?; continue; }
+        if meta.is_dir() { collect_files(base, &path, out, max_files)?; continue; }
         if !meta.is_file() { return Err("包内有非普通文件".to_string()); }
         let rel = path.strip_prefix(base).map_err(|e| format!("包内路径异常：{e}"))?
             .to_string_lossy().replace(char::from(92), "/");
-        let bytes = fs::read(&path).map_err(|e| format!("无法读取包内文件 {rel}：{e}"))?;
-        out.push((rel, bytes));
-        if out.len() > manifest::MAX_FILES { return Err("包内文件过多".to_string()); }
+        out.push(rel);
+        if out.len() > max_files { return Err("包内文件过多，身份未知".to_string()); }
     }
     Ok(())
 }
 
-fn identity(path: &Path) -> Result<Option<String>, String> {
-    if !path.exists() { return Ok(None); }
-    let meta = fs::symlink_metadata(path).map_err(|e| format!("无法读取目录：{e}"))?;
-    if !meta.is_dir() { return Err("事务路径不是目录".to_string()); }
-    Ok(Some(tree_sha256(path)?))
+// 身份三态：缺失 / 已确认 / 未知（超限、非普通文件、读取失败）。Unknown 绝不参与匹配。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Identity { Missing, Known(String), Unknown }
+
+fn identity(path: &Path) -> Identity {
+    if !path.exists() { return Identity::Missing; }
+    match fs::symlink_metadata(path) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Identity::Unknown,
+        Err(_) => return Identity::Unknown,
+    }
+    match tree_sha256(path) {
+        Ok(v) => Identity::Known(v),
+        Err(e) => { eprintln!("插件目录身份未知：{e}"); Identity::Unknown }
+    }
 }
+
+fn id_is(i: &Identity, want: &str) -> bool {
+    !want.is_empty() && matches!(i, Identity::Known(s) if s == want)
+}
+fn id_missing(i: &Identity) -> bool { matches!(i, Identity::Missing) }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StateClass { Old, New, Unknown }
@@ -475,6 +517,8 @@ fn remove_staging(root: &Path, rec: &TxRecord) -> Result<(), String> {
     if !rec.staging_path.is_empty() {
         let st = stored_path(root, &rec.staging_path)?;
         if st.exists() { fs::remove_dir_all(&st).map_err(|e| format!("无法删除插件临时目录：{e}"))?; }
+        forget_staging_lock(&rec.staging_path);
+        let _ = fs::remove_file(staging_lock_path(root, &rec.staging_path));
     }
     Ok(())
 }
@@ -495,23 +539,26 @@ enum Recovery {
     Isolate,
 }
 
-fn decide(rec: &TxRecord, t: Option<&str>, b: Option<&str>, st: StateClass) -> Recovery {
+fn decide(rec: &TxRecord, t: &Identity, b: &Identity, st: StateClass) -> Recovery {
+    if matches!(t, Identity::Unknown) || matches!(b, Identity::Unknown) {
+        return Recovery::Isolate; // 8：身份未知，不删任何副本
+    }
     let new_id = rec.new_id();
     let has_old = !rec.old_id.is_empty();
-    let t_is_new = !new_id.is_empty() && t == Some(new_id);
-    let t_is_old = has_old && t == Some(rec.old_id.as_str());
-    let b_is_old = has_old && b == Some(rec.old_id.as_str());
+    let t_is_new = id_is(t, new_id);
+    let t_is_old = id_is(t, &rec.old_id);
+    let b_is_old = id_is(b, &rec.old_id);
     if st == StateClass::Old {
-        if !has_old && t.is_none() && b.is_none() { return Recovery::RestoreOld { from_backup: false }; } // 1
-        if has_old && t_is_old && b.is_none() { return Recovery::RestoreOld { from_backup: false }; } // 2
-        if has_old && t.is_none() && b_is_old { return Recovery::RestoreOld { from_backup: true }; } // 3
+        if !has_old && id_missing(t) && id_missing(b) { return Recovery::RestoreOld { from_backup: false }; } // 1
+        if has_old && t_is_old && id_missing(b) { return Recovery::RestoreOld { from_backup: false }; } // 2
+        if has_old && id_missing(t) && b_is_old { return Recovery::RestoreOld { from_backup: true }; } // 3
     }
     if t_is_new {
         if has_old && b_is_old {
             if st == StateClass::New { return Recovery::FinishNew; } // 4
             if st == StateClass::Old { return Recovery::RollbackNew { has_old: true }; } // 5
         }
-        if !has_old && b.is_none() {
+        if !has_old && id_missing(b) {
             if st == StateClass::New { return Recovery::FinishNew; } // 6
             if st == StateClass::Old { return Recovery::RollbackNew { has_old: false }; } // 7
         }
@@ -524,10 +571,10 @@ fn recover_one(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
     let backup = stored_path(root, &rec.backup_path)?;
     let staging = if rec.staging_path.is_empty() { None } else { Some(stored_path(root, &rec.staging_path)?) };
     let _ = staging;
-    let t = identity(&target)?;
-    let b = identity(&backup)?;
+    let t = identity(&target);
+    let b = identity(&backup);
     let st = state_class(root, id, rec);
-    match decide(rec, t.as_deref(), b.as_deref(), st) {
+    match decide(rec, &t, &b, st) {
         Recovery::Isolate => Err("文件系统状态无法确定事务结论，保留全部副本等待修复".to_string()),
         Recovery::RestoreOld { from_backup } => {
             if from_backup && !target.exists() {
@@ -589,14 +636,8 @@ pub fn recover_transactions(root: &Path) -> RecoveryOutcome {
             }
         }
     }
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(".staging-") && !active_staging.contains(&name) && entry.path().is_dir() {
-                let _ = fs::remove_dir_all(entry.path());
-            }
-        }
-    }
+    cleanup_staging(root, &active_staging);
+    cleanup_committed_leftovers(root);
     out
 }
 
@@ -688,6 +729,7 @@ impl InstallTx {
             .map_err(|e| format!("无法删除插件事务记录：{e}"))?;
         cleanup_after_commit(&self.root, &self.id, &self.rec)
     }
+    #[allow(dead_code)] // 保留显式回滚入口；安装失败统一走 finalize_failed_install 的决策表
     pub fn rollback(&mut self) -> Result<(), String> {
         // 显式回滚复用恢复决策：无法确定时保留记录并由调用方隔离
         recover_one(&self.root, &self.id, &self.rec)?;
@@ -707,7 +749,11 @@ pub fn begin_install(
     let plugin_root = plugin_dir(root, id);
     fs::create_dir_all(&plugin_root).map_err(|e| format!("无法创建插件目录：{e}"))?;
     let new_id = tree_sha256(staging)?;
-    let old_id = match identity(&target)? { Some(v) => v, None => String::new() };
+    let old_id = match identity(&target) {
+        Identity::Known(v) => v,
+        Identity::Missing => String::new(),
+        Identity::Unknown => return Err("现有插件目录身份未知，拒绝覆盖安装".to_string()),
+    };
     let stage_name = staging_name(staging);
     let rec = TxRecord {
         version: version.to_string(),
@@ -726,6 +772,181 @@ pub fn begin_install(
     };
     write_tx(root, id, &rec)?;
     Ok(InstallTx { root: root.to_path_buf(), id: id.to_string(), target, rec })
+}
+
+
+// ---------- staging 跨进程所有权 ----------
+// staging 目录名带 pid + 随机后缀，内部 owner.json 记 { pid, createdAt }；
+// 同级 .lock 由创建进程排他持有直到进程结束，其它进程启动清理时用它确认「所有者进程已不存在」。
+const STAGING_OWNER_FILE: &str = "owner.json";
+const STAGING_MAX_AGE_SECS: u64 = 15 * 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StagingOwner {
+    pub pid: u32,
+    pub created_at: u64,
+}
+
+static STAGING_LOCKS: OnceLock<std::sync::Mutex<Vec<(String, FileLock)>>> = OnceLock::new();
+
+fn staging_locks() -> &'static std::sync::Mutex<Vec<(String, FileLock)>> {
+    STAGING_LOCKS.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+pub fn lock_file(path: &Path) -> Result<FileLock, String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("无法创建插件目录：{e}"))?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true).read(true).write(true)
+        .open(path)
+        .map_err(|e| format!("无法打开 staging 所有权锁：{e}"))?;
+    fs2::FileExt::lock_exclusive(&file).map_err(|e| format!("无法取得 staging 所有权锁：{e}"))?;
+    Ok(FileLock { _file: file })
+}
+
+fn staging_lock_path(root: &Path, name: &str) -> PathBuf {
+    root.join(format!("{name}.lock"))
+}
+
+pub fn read_staging_owner(dir: &Path) -> Option<StagingOwner> {
+    let raw = fs::read_to_string(dir.join(STAGING_OWNER_FILE)).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+// 必须在跨进程事务锁内调用：创建 staging、写 owner.json、进程级持有 .lock。
+pub fn create_staging(root: &Path) -> Result<PathBuf, String> {
+    let mut suffix = [0u8; 8];
+    getrandom::fill(&mut suffix).map_err(|_| "系统熵源不可用".to_string())?;
+    let name = format!(".staging-{}-{}", std::process::id(), suffix.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let dir = root.join(&name);
+    fs::create_dir_all(&dir).map_err(|e| format!("无法创建临时目录：{e}"))?;
+    let lock = lock_file(&staging_lock_path(root, &name))?;
+    staging_locks().lock().map(|mut v| v.push((name, lock))).map_err(|_| "staging 所有权表被占用".to_string())?;
+    Ok(dir)
+}
+
+// 解压与逐文件校验完成后再写 owner.json：避免与包内同名文件冲突（create_new 会拒绝覆盖）。
+// 崩溃在写 owner.json 之前时，启动清理因「归属不明」而保留该 staging，不会误删在用副本。
+pub fn seal_staging(dir: &Path) -> Result<(), String> {
+    let owner = StagingOwner { pid: std::process::id(), created_at: now_unix() };
+    let body = serde_json::to_vec(&owner).map_err(|e| format!("staging 所有权序列化失败：{e}"))?;
+    write_atomic(&dir.join(STAGING_OWNER_FILE), &body)
+}
+
+fn forget_staging_lock(name: &str) {
+    if let Ok(mut v) = staging_locks().lock() { v.retain(|(n, _)| n != name); }
+}
+
+// staging 已被换名成 target 后，只释放所有权锁 / 删同级锁文件，不动目录。
+pub fn release_staging(root: &Path, staging: &Path) {
+    let name = staging.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    forget_staging_lock(&name);
+    let _ = fs::remove_file(staging_lock_path(root, &name));
+}
+
+// 本进程主动丢弃自己的 staging（inspect / check_update / 解压失败）：释放锁并删目录与同级锁文件。
+pub fn drop_staging(root: &Path, staging: &Path) {
+    release_staging(root, staging);
+    let _ = fs::remove_dir_all(staging);
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    // kill(pid, 0) 只检查进程是否存在，不发送信号
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn pid_alive(_pid: u32) -> bool {
+    // Windows 不提供轻量 pid 探测：交给同级 .lock 的排他锁判断
+    false
+}
+
+fn owner_still_active(root: &Path, name: &str, owner: &StagingOwner) -> bool {
+    if pid_alive(owner.pid) { return true; }
+    // 进程已不存在时再看锁：被其它进程持有（或无法确认）都保留
+    match fs::OpenOptions::new().create(true).read(true).write(true).open(staging_lock_path(root, name)) {
+        Ok(f) => fs2::FileExt::try_lock_exclusive(&f).is_err(),
+        Err(_) => true,
+    }
+}
+
+// 启动清理（持跨进程锁）：只删「事务记录明确引用且决策允许」（由 recover_one 负责）
+// 或「owner.json 可读 + 所有者进程已不存在 + 超过 15 分钟 + 锁未被持有」的 staging；
+// 其余一律保留。损坏的事务记录无法提供 staging 名称时也不会误删在用的副本。
+pub fn cleanup_staging(root: &Path, active: &[String]) {
+    let Ok(entries) = fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with(".staging-") || !entry.path().is_dir() { continue; }
+        if active.iter().any(|a| a == &name) { continue; }
+        let dir = entry.path();
+        let Some(owner) = read_staging_owner(&dir) else {
+            eprintln!("staging {name} 没有可确认的 owner.json，保留");
+            continue;
+        };
+        let age = now_unix().saturating_sub(owner.created_at);
+        if age <= STAGING_MAX_AGE_SECS || owner_still_active(root, &name, &owner) { continue; }
+        eprintln!("清理过期 staging {name}（pid {}，{} 秒）", owner.pid, age);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(staging_lock_path(root, &name));
+    }
+}
+
+// 已提交残留备份：commit 先删记录再清副本，崩溃可能留下 .old-* 而没有事务记录。
+// 仅当对应 target 目录存在且身份完整（tree_sha256 成功）时删除并记日志，否则保留。
+pub fn cleanup_committed_leftovers(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() { continue; }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if id.starts_with('.') || tx_path(root, &id).exists() { continue; }
+        let Ok(sub) = fs::read_dir(entry.path()) else { continue };
+        for item in sub.flatten() {
+            let name = item.file_name().to_string_lossy().to_string();
+            let Some(version) = name.strip_prefix(".old-") else { continue };
+            if !item.path().is_dir() { continue; }
+            let target = version_dir(root, &id, version);
+            if !target.exists() || !matches!(identity(&target), Identity::Known(_)) { continue; }
+            eprintln!("清理已提交残留备份 {id}/{name}（target 身份完整）");
+            let _ = fs::remove_dir_all(item.path());
+        }
+    }
+}
+
+// 安装失败在**释放锁之前**调用：复用决策表恢复；无法确定结论就隔离，staging 是否删除由决策决定。
+#[derive(Debug, Default)]
+pub struct FinalizeOutcome {
+    pub recovered: bool,
+    pub blocked: bool,
+    pub reason: Option<String>,
+}
+
+pub fn finalize_failed_install(root: &Path, id: &str) -> FinalizeOutcome {
+    let tp = tx_path(root, id);
+    if !tp.exists() {
+        return FinalizeOutcome::default(); // 还没写事务记录，没有可恢复的目录动作
+    }
+    let rec = match read_tx(&tp) {
+        Ok(r) => r,
+        Err(e) => {
+            let (_, persisted) = isolate_repair(root, id, &e, TxStage::Prepared);
+            return FinalizeOutcome { blocked: !persisted, reason: Some(e), ..Default::default() };
+        }
+    };
+    match recover_one(root, id, &rec) {
+        Ok(()) => {
+            let _ = fs::remove_file(&tp);
+            clear_repair(root, id);
+            FinalizeOutcome { recovered: true, ..Default::default() }
+        }
+        Err(e) => {
+            let (_, persisted) = isolate_repair(root, id, &e, rec.stage);
+            FinalizeOutcome { blocked: !persisted, reason: Some(e), ..Default::default() }
+        }
+    }
 }
 
 pub fn baseline_matches(existing: Option<&Entry>, version: Option<&str>, sha: Option<&str>) -> bool {
@@ -1225,4 +1446,144 @@ mod tests {
         assert_eq!(storage_load(&root, "hello")["count"], serde_json::json!(3));
         fs::remove_dir_all(&root).unwrap();
     }
+
+    // ---- 回修 5 · 1：失败收尾复用决策表，staging 由决策决定是否删除 ----
+    #[test]
+    fn finalize_failed_install_recovers_by_decision() {
+        let root = setup("finalize-ok");
+        let old_id = write_pkg(&plugin_dir(&root, "hello").join(".old-1.0.0"), "old", &[]);
+        write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &["app"]);
+        let new_id = tree_sha256(&version_dir(&root, "hello", "1.0.0")).unwrap();
+        fs::create_dir_all(root.join(".staging-x")).unwrap();
+        fs::write(root.join(".staging-x/keep.txt"), b"x").unwrap();
+        let old = entry("1.0.0", 'a', true);
+        seed_state(&root, Some(old.clone()));
+        put_tx(&root, &rec(&root, &old_id, &new_id, Some(old.clone()), Some(entry("1.0.0", 'b', true))));
+        let out = finalize_failed_install(&root, "hello");
+        assert_eq!(out.recovered, true);
+        assert_eq!(out.blocked, false);
+        assert_eq!(tree_sha256(&version_dir(&root, "hello", "1.0.0")).unwrap(), old_id);
+        assert!(!root.join(".staging-x").exists(), "第 5 行决策允许删 staging");
+        assert_eq!(load_state(&root).plugins.get("hello"), Some(&old));
+        assert!(!tx_path(&root, "hello").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn finalize_failed_install_isolates_without_deleting_copies() {
+        let root = setup("finalize-isolate");
+        let old_id = write_pkg(&plugin_dir(&root, "hello").join(".old-1.0.0"), "old", &[]);
+        write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &["app"]);
+        fs::write(version_dir(&root, "hello", "1.0.0").join("index.html"), b"tampered").unwrap();
+        fs::create_dir_all(root.join(".staging-x")).unwrap();
+        fs::write(root.join(".staging-x/keep.txt"), b"x").unwrap();
+        seed_state(&root, Some(entry("1.0.0", 'a', true)));
+        put_tx(&root, &rec(&root, &old_id, "new".into(), None, None));
+        let out = finalize_failed_install(&root, "hello");
+        assert_eq!(out.recovered, false);
+        assert!(out.reason.is_some());
+        assert!(root.join(".staging-x/keep.txt").exists(), "第 8 行不删 staging");
+        assert!(version_dir(&root, "hello", "1.0.0").exists());
+        assert!(plugin_dir(&root, "hello").join(".old-1.0.0").exists());
+        assert!(tx_path(&root, "hello").exists());
+        assert!(read_repair(&root, "hello").is_some());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- 回修 5 · 2：staging 所有权与 15 分钟启动清理 ----
+    fn manual_staging(root: &Path, name: &str, owner: Option<StagingOwner>) {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("keep.txt"), b"x").unwrap();
+        if let Some(o) = owner {
+            fs::write(dir.join(STAGING_OWNER_FILE), serde_json::to_vec(&o).unwrap()).unwrap();
+        }
+        fs::write(staging_lock_path(root, name), b"").unwrap();
+    }
+
+    #[test]
+    fn staging_owner_is_recorded_and_name_has_pid() {
+        let root = setup("staging-owner");
+        let dir = create_staging(&root).unwrap();
+        let name = dir.file_name().unwrap().to_string_lossy().to_string();
+        assert!(name.starts_with(&format!(".staging-{}-", std::process::id())));
+        assert!(read_staging_owner(&dir).is_none(), "解压完成前不写 owner.json，避免与包内文件冲突");
+        seal_staging(&dir).unwrap();
+        let owner = read_staging_owner(&dir).unwrap();
+        assert_eq!(owner.pid, std::process::id());
+        assert!(fs::metadata(staging_lock_path(&root, &name)).is_ok());
+        drop_staging(&root, &dir);
+        assert!(!dir.exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn cleanup_staging_respects_owner_pid_age_and_active_tx() {
+        let root = setup("staging-clean");
+        let old = now_unix().saturating_sub(STAGING_MAX_AGE_SECS + 60);
+        // 活 pid → 保留
+        manual_staging(&root, ".staging-live-a", Some(StagingOwner { pid: std::process::id(), created_at: old }));
+        // 死 pid + 超时 → 删除
+        manual_staging(&root, ".staging-dead-b", Some(StagingOwner { pid: 999999, created_at: old }));
+        // 死 pid 但未超时 → 保留
+        manual_staging(&root, ".staging-fresh-c", Some(StagingOwner { pid: 999999, created_at: now_unix() }));
+        // 无 owner.json → 保留
+        manual_staging(&root, ".staging-noowner-d", None);
+        // 被事务记录引用 → 保留
+        manual_staging(&root, ".staging-active-e", Some(StagingOwner { pid: 999999, created_at: old }));
+        cleanup_staging(&root, &[".staging-active-e".to_string()]);
+        assert!(root.join(".staging-live-a").exists(), "活进程不能删");
+        assert!(!root.join(".staging-dead-b").exists(), "死进程且超时才删");
+        assert!(root.join(".staging-fresh-c").exists(), "未超时保留");
+        assert!(root.join(".staging-noowner-d").exists(), "归属不明保留");
+        assert!(root.join(".staging-active-e").exists(), "事务引用保留");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- 回修 5 · 3：已提交残留备份 ----
+    #[test]
+    fn cleanup_committed_leftovers_only_when_target_identity_is_complete() {
+        let root = setup("leftover");
+        write_pkg(&version_dir(&root, "hello", "1.0.0"), "new", &[]);
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
+        fs::write(plugin_dir(&root, "hello").join(".old-1.0.0/keep.txt"), b"x").unwrap();
+        cleanup_committed_leftovers(&root);
+        assert!(!plugin_dir(&root, "hello").join(".old-1.0.0").exists(), "target 完整则清残留备份");
+        // target 缺失 / 身份未知时保留
+        fs::create_dir_all(plugin_dir(&root, "hello").join(".old-1.0.0")).unwrap();
+        fs::remove_dir_all(version_dir(&root, "hello", "1.0.0")).unwrap();
+        cleanup_committed_leftovers(&root);
+        assert!(plugin_dir(&root, "hello").join(".old-1.0.0").exists(), "target 缺失则保留");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- 回修 5 · 5：流式身份摘要 + 容量上限 → Unknown → 第 8 行 ----
+    #[test]
+    fn tree_identity_is_streamed_and_capped() {
+        let root = setup("tree-cap");
+        let dir = root.join("big");
+        write_pkg(&dir, "ok", &[]);
+        let before = tree_sha256(&dir).unwrap();
+        // 逐文件流式读取：同一内容重复计算稳定
+        assert_eq!(before, tree_sha256(&dir).unwrap());
+        // 单文件超限 → Err → identity=Unknown
+        let huge = dir.join("huge.bin");
+        let data = vec![0u8; (MAX_FILE_BYTES + 1) as usize];
+        fs::write(&huge, &data).unwrap();
+        assert!(tree_sha256(&dir).is_err());
+        assert_eq!(identity(&dir), Identity::Unknown);
+        fs::remove_file(&huge).unwrap();
+        // 总量 / 文件数上限通过可注入版本覆盖（真实上限是 64 MiB / 4000 文件，不必真写那么大）
+        fs::write(dir.join("a.bin"), b"1234567890").unwrap();
+        fs::write(dir.join("b.bin"), b"abcdefghij").unwrap();
+        assert!(tree_sha256_limited(&dir, manifest::MAX_FILES, MAX_FILE_BYTES, 16).is_err(), "总字节超限");
+        assert!(tree_sha256_limited(&dir, 2, MAX_FILE_BYTES, MAX_TOTAL_BYTES).is_err(), "文件数超限");
+        assert!(tree_sha256_limited(&dir, manifest::MAX_FILES, 8, MAX_TOTAL_BYTES).is_err(), "单文件超限");
+        assert!(tree_sha256(&dir).is_ok(), "真实上限内仍然可用");
+        // Unknown 身份在决策表里落到 Isolate
+        let r = rec(&root, "old".into(), "new".into(), None, None);
+        assert_eq!(decide(&r, &Identity::Unknown, &Identity::Missing, StateClass::Old), Recovery::Isolate);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
 }

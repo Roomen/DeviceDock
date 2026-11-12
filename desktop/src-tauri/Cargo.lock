@@ -974,6 +974,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "keyring",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "percent-encoding",

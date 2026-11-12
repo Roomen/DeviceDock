@@ -412,7 +412,7 @@
 		const enableInput = mk('input', 'form-check-input')
 		enableInput.type = 'checkbox'
 		enableInput.checked = !!p.enabled
-		enableInput.disabled = !!p.error || !p.supported || !!p.repair || !!s.busy[enableKey]
+		enableInput.disabled = !!p.error || !p.supported || !!p.repair || !!p.installing || !!s.busy[enableKey]
 		enableInput.id = 'mdn-plg-en-' + p.id
 		enableInput.addEventListener('change', function () {
 			const on = enableInput.checked
@@ -436,6 +436,7 @@
 		if (s.notes[p.id]) card.appendChild(mk('div', 'mdn-src-note', s.notes[p.id]))
 		if (p.error) card.appendChild(mk('div', 'mdn-src-err', p.error))
 		if (p.repair) card.appendChild(mk('div', 'mdn-src-err', '安装事务恢复失败：' + p.repair + '（见面板顶部的重试恢复 / 移除）'))
+		if (p.installing) card.appendChild(mk('div', 'mdn-src-note', '安装 / 卸载事务进行中，暂不提供启用视图'))
 		if (s.errors['check:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['check:' + p.id]))
 		if (s.errors['remove:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['remove:' + p.id]))
 		if (s.errors[enableKey]) card.appendChild(mk('div', 'mdn-src-err', s.errors[enableKey]))

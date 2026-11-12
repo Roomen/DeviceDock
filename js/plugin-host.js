@@ -64,10 +64,10 @@
 		for (let i = 0; i < plugins.length; i++) if (plugins[i].id === id) return plugins[i]
 		return null
 	}
-	// 只有「启用 + 当前系统支持 + manifest 没问题 + 不在待修复」的插件才出现在左栏与视图里。
-	// repair 是硬门槛：Rust 侧 scheme / set_enabled 也拦，这里不显示、不打开。
+	// 只有「启用 + 当前系统支持 + manifest 没问题 + 不在待修复 + 不在安装事务中」的插件才出现在左栏与视图里。
+	// repair / installing 是硬门槛：Rust 侧 scheme / set_enabled 也拦，这里不显示、不打开。
 	function visible() {
-		return plugins.filter(function (p) { return p.enabled && p.supported && !p.error && !p.repair })
+		return plugins.filter(function (p) { return p.enabled && p.supported && !p.error && !p.repair && !p.installing })
 	}
 	function blocked(p) { return !!(p && p.repair) }
 
@@ -556,7 +556,7 @@
 	// ---------- 视图切换 ----------
 	async function openPlugin(id) {
 		const plugin = byId(id)
-		if (!plugin || !plugin.enabled || !plugin.supported || plugin.error || blocked(plugin)) return
+		if (!plugin || !plugin.enabled || !plugin.supported || plugin.error || blocked(plugin) || plugin.installing) return
 		// 同版本重装 / 停用后立刻重新打开：等旧 iframe 的资源收尾完成再加载新包
 		const pending = pendingReleases.get(id)
 		if (pending) {
@@ -597,7 +597,7 @@
 		// 停用 / 卸载 / 不再支持：立刻销毁 iframe 与订阅
 		Array.from(views.keys()).forEach(function (id) {
 			const next = list.filter(function (p) { return p.id === id })[0]
-			if (!next || !next.enabled || !next.supported || next.error || blocked(next)) releases.push(destroyView(id))
+			if (!next || !next.enabled || !next.supported || next.error || blocked(next) || next.installing) releases.push(destroyView(id))
 		})
 		plugins = list
 		loadOrder()
