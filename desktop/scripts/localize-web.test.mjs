@@ -11,7 +11,7 @@ test('客户端启动依赖全部在包内，网页仍保留 CDN', () => {
 	assert.match(source, /https:\/\/cdn\.bootcdn\.net/)
 	assert.doesNotMatch(html, /LA_COLLECT/)
 	const resources = [...html.matchAll(/<(?:script|link)\b[^>]*(?:src|href)=["']([^"']+)/g)].map(m => m[1])
-	assert.ok(resources.filter(p => p.startsWith('vendor/')).length === 7)
+	assert.ok(resources.filter(p => p.startsWith('vendor/')).length === 9)
 	for (const path of resources) {
 		assert.doesNotMatch(path, /^https?:/)
 		const file = path.startsWith('vendor/') ? new URL(path.slice(7), vendor) : new URL('../../' + path, import.meta.url)

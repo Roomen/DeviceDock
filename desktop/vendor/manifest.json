@@ -33,5 +33,15 @@
     "url": "https://cdn.bootcdn.net/ajax/libs/jszip/3.10.1/jszip.min.js",
     "path": "jszip/jszip.min.js",
     "source": "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"
+  },
+  {
+    "url": "https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css",
+    "path": "uplot/uPlot.min.css",
+    "source": "https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css"
+  },
+  {
+    "url": "https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js",
+    "path": "uplot/uPlot.iife.min.js",
+    "source": "https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"
   }
 ]

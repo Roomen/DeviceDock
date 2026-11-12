@@ -6247,6 +6247,11 @@
 		const dataHex = bytesToHexArr(data)
 		// 按这一路的协议与解析状态渲染(双路两路协议可以不同)
 		const newmsg = inLiveLane(sid, function () {
+			//曲线面板只吃实时帧：在这路的上下文里同步取 metrics 数值点（曲线出错不影响日志）。
+			//历史重放走 renderLogBody，不经过这里，所以重渲不会把旧点重新灌回曲线
+			if (isReceive && window.SerialMetrics) {
+				try { window.SerialMetrics.ingest(sid, data) } catch (e) { /* 忽略 */ }
+			}
 			return renderLogBody(data, logType, { isReceive: isReceive, noParse: noParse, sendName: sendName })
 		})
 		const when = atTime || new Date()

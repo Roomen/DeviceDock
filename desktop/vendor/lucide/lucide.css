@@ -1,6 +1,7 @@
 /* lucide 图标字体样式（随客户端打包，ISC License，见同目录 LICENSE）。
 	由 lucide-static@1.62.0 的 font/lucide.css 裁剪而成：只保留仓库实际用到的图标名，
-	升级 lucide 或新增图标时重新生成。网页版使用 CDN 完整样式，不受此裁剪影响。 */
+	升级 lucide 或新增图标时重新生成：node desktop/scripts/lucide-subset.mjs <完整 lucide.css>。
+	网页版使用 CDN 完整样式，不受此裁剪影响。 */
 @font-face {
   font-family: "lucide";
   src: url('lucide.woff2') format('woff2');
@@ -12,7 +13,6 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-
 .icon-archive::before { content: "\e041"; }
 .icon-arrow-left-right::before { content: "\e24a"; }
 .icon-bluetooth::before { content: "\e05c"; }
@@ -50,6 +50,7 @@
 .icon-import::before { content: "\e22f"; }
 .icon-info::before { content: "\e0f9"; }
 .icon-layout-grid::before { content: "\e0ff"; }
+.icon-line-chart::before { content: "\e2a5"; }
 .icon-list-check::before { content: "\e5fa"; }
 .icon-lock::before { content: "\e10b"; }
 .icon-lock-open::before { content: "\e10c"; }
@@ -61,6 +62,7 @@
 .icon-panel-bottom::before { content: "\e42c"; }
 .icon-panel-right::before { content: "\e431"; }
 .icon-panel-right-close::before { content: "\e432"; }
+.icon-pause::before { content: "\e12e"; }
 .icon-pencil::before { content: "\e1f9"; }
 .icon-play::before { content: "\e13c"; }
 .icon-plug::before { content: "\e37f"; }

@@ -10150,3 +10150,201 @@ html[data-layout='modern'] .mdn-pop-params[hidden] {
 @media (max-width: 640px) {
 	.connection-filters { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
+
+/* ========== 曲线面板（工作台 curves） ==========
+   图表是这一屏唯一的「浓」处：中性栅格 + 通道色曲线，A 青 / B 琥珀 / 单路 accent，
+   颜色全部来自 CSS 变量（主题切换时 js/curves-panel.js 重取并重建图表）。 */
+html[data-layout='modern'] .wb-curves {
+	position: relative;
+	gap: var(--sp-2);
+	padding: var(--sp-2);
+	min-height: 0;
+}
+
+html[data-layout='modern'] .mdn-curve-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-2);
+	flex: 0 0 auto;
+}
+
+html[data-layout='modern'] .mdn-curve-fields {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+	height: var(--ctl-h-sm);
+	padding: 0 var(--sp-2);
+	border: 1px solid var(--border-color);
+	border-radius: var(--radius-sm);
+	background: var(--bg-surface);
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--fs-small);
+}
+
+html[data-layout='modern'] .mdn-curve-fields[aria-expanded='true'] {
+	color: var(--accent);
+	border-color: var(--accent);
+	background: var(--accent-light);
+}
+
+html[data-layout='modern'] .mdn-curve-cap {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+	color: var(--text-muted);
+	font-size: var(--fs-micro);
+}
+
+html[data-layout='modern'] .mdn-curve-cap input {
+	width: 5rem;
+	height: var(--ctl-h-sm);
+	padding: 0 var(--sp-1);
+	border: 1px solid var(--border-color);
+	border-radius: var(--radius-sm);
+	background: var(--bg-input);
+	color: var(--text-primary);
+	font-family: var(--font-mono);
+	font-size: var(--fs-small);
+}
+
+/* 字段选择浮层：分组列出每路的字段，勾选即上图 */
+html[data-layout='modern'] .mdn-curve-pop {
+	position: absolute;
+	top: calc(var(--ctl-h-sm) + var(--sp-3));
+	left: var(--sp-2);
+	z-index: 30;
+	width: min(360px, calc(100% - var(--sp-4)));
+	max-height: 60%;
+	overflow: auto;
+	padding: var(--sp-2);
+	border: 1px solid var(--border-color);
+	border-radius: var(--radius-lg);
+	background: var(--bg-surface);
+	box-shadow: var(--shadow-lg);
+}
+
+html[data-layout='modern'] .mdn-curve-pop[hidden] {
+	display: none;
+}
+
+html[data-layout='modern'] .mdn-curve-pop-head {
+	padding-bottom: var(--sp-1);
+	color: var(--text-muted);
+	font-size: var(--fs-micro);
+}
+
+html[data-layout='modern'] .mdn-curve-pop-group + .mdn-curve-pop-group {
+	margin-top: var(--sp-2);
+	padding-top: var(--sp-2);
+	border-top: 1px solid var(--border-light);
+}
+
+html[data-layout='modern'] .mdn-curve-pop-title {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--sp-2);
+	margin-bottom: var(--sp-1);
+}
+
+html[data-layout='modern'] .mdn-curve-pop-lane {
+	color: var(--text-primary);
+	font-size: var(--fs-small);
+	font-weight: 600;
+}
+
+html[data-layout='modern'] .mdn-curve-pop-proto,
+html[data-layout='modern'] .mdn-curve-pop-empty {
+	color: var(--text-muted);
+	font-size: var(--fs-micro);
+}
+
+html[data-layout='modern'] .mdn-curve-pop-group .ctl-chip {
+	display: inline-flex;
+	margin: 0 var(--sp-1) var(--sp-1) 0;
+}
+
+html[data-layout='modern'] .mdn-curve-pop-foot {
+	display: flex;
+	justify-content: flex-end;
+	padding-top: var(--sp-2);
+}
+
+/* 悬停读数：等宽数字，时间在前 */
+html[data-layout='modern'] .mdn-curve-readout {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--sp-1) var(--sp-3);
+	flex: 0 0 auto;
+	min-height: 1.5em;
+	color: var(--text-secondary);
+	font-size: var(--fs-micro);
+	font-variant-numeric: tabular-nums;
+}
+
+html[data-layout='modern'] .mdn-curve-readout-hint {
+	color: var(--text-muted);
+}
+
+html[data-layout='modern'] .mdn-curve-readout-time {
+	color: var(--text-muted);
+	font-family: var(--font-mono);
+}
+
+html[data-layout='modern'] .mdn-curve-readout-cell {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--sp-1);
+}
+
+html[data-layout='modern'] .mdn-curve-readout-label {
+	color: var(--text-muted);
+}
+
+html[data-layout='modern'] .mdn-curve-readout-value {
+	color: var(--text-primary);
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 图例色块就是通道条：2px 高，与日志行 / 气泡上那条一致 */
+html[data-layout='modern'] .mdn-curve-swatch {
+	display: inline-block;
+	width: 12px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--ch-s);
+}
+
+html[data-layout='modern'] .mdn-curve-plot {
+	position: relative;
+	flex: 1 1 0;
+	min-height: 160px;
+	overflow: hidden;
+	border: 1px solid var(--border-light);
+	border-radius: var(--radius-lg);
+	background: var(--bg-surface);
+}
+
+html[data-layout='modern'] .mdn-curve-plot .uplot {
+	display: block;
+}
+
+html[data-layout='modern'] .mdn-curve-empty {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	max-width: 80%;
+	color: var(--text-muted);
+	font-size: var(--fs-small);
+	text-align: center;
+	pointer-events: none;
+}
+
+html[data-layout='modern'] .mdn-curve-empty[hidden] {
+	display: none;
+}
