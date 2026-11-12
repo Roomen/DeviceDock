@@ -9,7 +9,7 @@ import { releaseChannel, updaterConfig } from './release-config.mjs'
 const desktop = join(dirname(fileURLToPath(import.meta.url)), '..')
 const repo = join(desktop, '..')
 const dist = join(desktop, 'dist')
-const ENTRIES = ['index.html', 'css', 'js', 'imgs']
+const ENTRIES = ['index.html', 'css', 'js', 'imgs', 'fonts']
 
 rmSync(dist, { recursive: true, force: true })
 mkdirSync(dist, { recursive: true })
