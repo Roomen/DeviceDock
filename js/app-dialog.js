@@ -2,7 +2,7 @@
 // 原生 prompt 直接返回 null、confirm 返回 false，调用静默失败，所以全平台统一走这里。
 // 都返回 Promise：alert -> undefined，confirm -> boolean，prompt -> string | null(取消)。
 // 同一时刻只开一个，后来的排队；Enter 确认、Esc 取消(点遮罩也算取消)，关闭后把焦点还给打开前的元素。
-// 它是最上层的模态：层级高于命令面板与登录遮罩(不支持串口的提示在未登录时也得看得见)，打开时先收起命令面板；
+// 它是最上层的模态：层级高于命令面板(不支持串口的提示也盖不住它)，打开时先收起命令面板；
 // 按键在 window 捕获阶段先到这里，Enter / Esc 只在焦点属于对话框时生效(焦点在外面就拉回来，不确认也不放给页面)，
 // 带 ⌘/Ctrl/Alt 的组合键不再传给页面快捷键；焦点移出对话框会被拉回。命令面板与原生菜单经 isOpen() 查询，打开期间不动后台控件。
 // 文本一律 textContent。opts: { title, okText, cancelText, danger(确认键红色), maxLength(prompt) }。

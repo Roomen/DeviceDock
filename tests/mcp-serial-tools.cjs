@@ -93,7 +93,6 @@ function harness(opts) {
 	const msgs = []
 	const granted = []
 	const state = {
-		authed: true,
 		running: true,
 		updatePreparing: false,
 		pinned: false,
@@ -147,7 +146,6 @@ function harness(opts) {
 		navigator: {},
 		APP_VERSION: '9.9.9',
 		addEventListener(t, f) { (winListeners[t] = winListeners[t] || []).push(f) },
-		__auth: { authed: () => state.authed },
 		Workbench: { refreshStatus() {}, updateBlockers: () => [] },
 	}
 	const serialApi = {

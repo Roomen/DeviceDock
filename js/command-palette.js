@@ -576,14 +576,6 @@
 		return (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')
 	}
 
-	function isLocked() {
-		const login = el('login-overlay')
-		if (!login) return false
-		//登录遮罩是 position:fixed，offsetParent 恒为 null，只能看计算样式
-		const cs = getComputedStyle(login)
-		return cs.display !== 'none' && cs.visibility !== 'hidden'
-	}
-
 	//页内对话框(js/app-dialog.js)开着时它是最上层模态，命令面板不能盖上去接管键盘
 	function dialogOpen() {
 		return !!(window.AppDialog && window.AppDialog.isOpen && window.AppDialog.isOpen())
@@ -594,7 +586,7 @@
 	}
 
 	function open() {
-		if (isLocked() || dialogOpen()) return
+		if (dialogOpen()) return
 		if (!overlay) buildDom()
 		commands = collectCommands()
 		overlay.hidden = false
@@ -612,7 +604,7 @@
 
 	document.addEventListener('keydown', function (e) {
 		if (isPaletteKey(e)) {
-			if (isLocked() || dialogOpen()) return
+			if (dialogOpen()) return
 			e.preventDefault()
 			if (isOpen()) close()
 			else open()

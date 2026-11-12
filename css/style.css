@@ -2373,132 +2373,6 @@ hr {
   border-color: var(--border-color);
 }
 
-/* ========== 🍎 Login Overlay ========== */
-#login-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 10000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(ellipse at 50% 40%, #d4d4d8 0%, #e8e8ed 50%, #f5f5f7 100%);
-  transition: background 0.5s ease;
-}
-
-[data-theme="dark"] #login-overlay {
-  background: radial-gradient(ellipse at 50% 40%, #2c2c2e 0%, #1c1c1e 50%, #000 100%);
-}
-
-.login-card {
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(40px) saturate(1.4);
-  -webkit-backdrop-filter: blur(40px) saturate(1.4);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 20px;
-  padding: 40px 36px 32px;
-  width: 360px;
-  max-width: 90vw;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.02);
-}
-
-[data-theme="dark"] .login-card {
-  background: rgba(44, 44, 46, 0.7);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
-}
-
-.login-logo {
-  text-align: center;
-  margin-bottom: 28px;
-}
-
-.login-logo img {
-  width: 48px;
-  height: auto;
-  opacity: 0.9;
-}
-
-.login-logo h2 {
-  color: var(--text-primary);
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-top: 10px;
-  letter-spacing: -0.3px;
-}
-
-.login-form .login-input {
-  width: 100%;
-  padding: 12px 14px;
-  margin-bottom: 12px;
-  border: 1.5px solid var(--border-color);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.6);
-  color: var(--text-primary);
-  font-size: 0.9rem;
-  font-family: var(--font-sans);
-  outline: none;
-  transition: all var(--transition-fast);
-}
-
-[data-theme="dark"] .login-form .login-input {
-  background: rgba(58, 58, 60, 0.6);
-}
-
-.login-form .login-input::placeholder {
-  color: var(--text-muted);
-}
-
-.login-form .login-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-light);
-  background: rgba(255, 255, 255, 0.8);
-}
-
-[data-theme="dark"] .login-form .login-input:focus {
-  background: rgba(58, 58, 60, 0.8);
-}
-
-.login-error {
-  color: var(--danger);
-  font-size: 0.8rem;
-  min-height: 22px;
-  margin-bottom: 6px;
-  padding-left: 2px;
-}
-
-.login-btn {
-  width: 100%;
-  padding: 12px 0;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  font-family: var(--font-sans);
-  margin-top: 6px;
-  letter-spacing: 0.5px;
-  transition: all var(--transition-fast);
-}
-
-.login-btn:hover {
-  background: var(--accent-hover);
-  box-shadow: 0 4px 16px rgba(0, 122, 255, 0.3);
-}
-
-.login-btn:active {
-  transform: translateY(0);
-}
-
-.login-btn:disabled {
-  opacity: 0.5;
-  transform: none;
-  box-shadow: none;
-}
-
 /* ========== Issue Tip ========== */
 .issue-tip {
   position: fixed;
@@ -9646,7 +9520,7 @@ html[data-layout='modern'] #serial-log-panes:has(.serial-log-mode:not([hidden]) 
 }
 
 /* ========== 页内对话框(js/app-dialog.js)：替代 window.alert / confirm / prompt ========== */
-/* 最上层模态：高于命令面板(9000)与登录遮罩(10000) */
+/* 最上层模态：高于命令面板(9000) */
 .app-dlg-mask {
 	position: fixed;
 	inset: 0;

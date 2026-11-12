@@ -1,6 +1,6 @@
 // 桌面客户端的本地 MCP 服务(默认关闭)：标准 MCP Streamable HTTP(rmcp)，只绑 127.0.0.1 固定端口 + Bearer 令牌。
 // 工具本身不含设备逻辑：全部经 js/mcp-bridge.js 在「确切的那个窗口」里复用页面既有的串口 / 功耗业务路径。
-// 生命周期：偏好(启用/端口/令牌)存应用数据目录；上次启用过也要等应用初始化且至少一个已登录的桌面窗口注册后才启动。
+// 生命周期：偏好(启用/端口/令牌)存应用数据目录；上次启用过也要等应用初始化且至少一个桌面窗口注册后才启动。
 mod auth;
 mod bridge;
 mod http;
@@ -29,7 +29,6 @@ const MAX_REPLY_BYTES: usize = 1024 * 1024;
 
 pub struct WindowReg {
     pub bridge_epoch: String,
-    pub authed: bool,
     pub mode: String,
     pub app_version: String,
 }
@@ -117,8 +116,6 @@ fn terminal_result(code: &str, committed: bool) -> Value {
         ("update_preparing", true) => "应用在操作开始后开始准备升级，结果未知",
         ("token_rotated", false) => "MCP 令牌已更换，旧请求未执行",
         ("token_rotated", true) => "MCP 令牌在操作开始后更换，结果未知",
-        ("window_locked", false) => "窗口已退出登录，操作未执行",
-        ("window_locked", true) => "窗口在操作开始后退出登录，结果未知",
         (_, false) => "请求已取消，操作未执行",
         (_, true) => "请求在操作开始后取消，结果未知",
     };
@@ -184,7 +181,7 @@ fn emit_cancels(app: &AppHandle, cancelled: Vec<(String, String)>, reason: &str)
 }
 
 impl McpState {
-    // 启动时读设置；上次是启用状态时只登记「等已登录窗口」，不立刻监听
+    // 启动时读设置；上次是启用状态时只登记「等窗口注册」，不立刻监听
     pub fn init(&self, app: &AppHandle) {
         let loaded = settings::load(app);
         let mut inner = lock(self);
@@ -211,12 +208,12 @@ impl McpState {
             "url": format!("http://127.0.0.1:{port}/mcp"),
             "hasToken": !inner.settings.token.is_empty(),
             "lastError": inner.last_error,
-            "waitingForLogin": inner.start_on_ready && inner.running.is_none(),
+            "waitingForWindow": inner.start_on_ready && inner.running.is_none(),
         })
     }
 
-    fn authed_window_count(&self) -> usize {
-        lock(self).windows.values().filter(|w| w.authed).count()
+    fn window_count(&self) -> usize {
+        lock(self).windows.len()
     }
 
     // 返回需要发 cancel 事件的 (label, id)
@@ -229,23 +226,17 @@ impl McpState {
         cancelled
     }
 
-    fn update_window(&self, label: &str, bridge_epoch: &str, authed: bool, mode: Option<String>) -> Vec<(String, String)> {
+    fn update_window(&self, label: &str, bridge_epoch: &str, mode: Option<String>) {
         let mut inner = lock(self);
-        let mut cancelled = Vec::new();
         match inner.windows.get_mut(label) {
             Some(w) if w.bridge_epoch == bridge_epoch => {
-                w.authed = authed;
                 if let Some(m) = mode {
                     w.mode = m;
-                }
-                if !authed {
-                    cancelled = inner.fail_pending_for(label, Some(bridge_epoch), "window_locked");
                 }
             }
             // 旧文档迟到的状态更新：忽略，不动新文档
             _ => {}
         }
-        cancelled
     }
 
     // 只认当前文档的注销；迟到的旧 pagehide 不能注销新文档
@@ -275,12 +266,11 @@ impl McpState {
             .iter()
             .map(|(label, w)| {
                 let lanes = if w.mode == "dual" { json!(["A", "B"]) } else { json!(["S"]) };
-                // 不返回窗口标题：标题里带设备名/别名，未登录的窗口不该把设备身份透给调用方
+                // 不返回窗口标题：标题里带设备名/别名，设备身份不该透给调用方
                 json!({
                     "window": label,
                     "mode": w.mode,
                     "lanes": lanes,
-                    "authed": w.authed,
                     "appVersion": w.app_version,
                 })
             })
@@ -303,9 +293,6 @@ impl McpState {
         let Some(reg) = inner.windows.get(label) else {
             return Err(BridgeError::new("unknown_window", format!("窗口 {label} 未注册(可能已关闭或尚未加载完成)")));
         };
-        if !reg.authed {
-            return Err(BridgeError::new("window_locked", format!("窗口 {label} 未登录，MCP 不代登录")));
-        }
         let bridge_epoch = reg.bridge_epoch.clone();
         if inner.pending.len() >= MAX_PENDING_TOTAL
             || inner.pending.values().filter(|p| p.label == label).count() >= MAX_PENDING_PER_WINDOW
@@ -331,7 +318,7 @@ impl McpState {
         Ok((id, rx))
     }
 
-    // 页面在真正执行前调用：必须仍存活、仍是同一个窗口/桥代次、已登录、未冻结，且只能 commit 一次。
+    // 页面在真正执行前调用：必须仍存活、仍是同一个窗口/桥代次、未冻结，且只能 commit 一次。
     // 身份不符(别的窗口 / 旧文档)一律拒绝且不动这条请求：只有请求的主人能推进它。
     pub(crate) fn commit(&self, label: &str, id: &str, bridge_epoch: &str) -> Result<(), BridgeError> {
         let mut inner = lock(self);
@@ -352,14 +339,14 @@ impl McpState {
         if committed {
             return Err(BridgeError::new("already_committed", "该请求已提交执行，不能重复提交"));
         }
-        let reg = inner.windows.get(label).map(|w| (w.bridge_epoch == bridge_epoch, w.authed)).unwrap_or((false, false));
-        if expired || !running || !reg.0 || !reg.1 {
+        let same_doc = inner.windows.get(label).map(|w| w.bridge_epoch == bridge_epoch).unwrap_or(false);
+        if expired || !running || !same_doc {
             let code = if expired {
                 "request_expired"
             } else if !running {
                 "service_stopped"
             } else {
-                "window_locked"
+                "window_reloaded"
             };
             finish_with_terminal(&mut inner, id, code, false);
             return Err(BridgeError::new(code, "请求所属窗口或服务已变化，未执行"));
@@ -523,8 +510,8 @@ pub async fn mcp_enable(app: AppHandle, state: State<'_, McpState>, port: Option
         inner.start_on_ready = true;
         settings::save(&app, &inner.settings)?;
     }
-    // 只有已登录的桌面窗口注册过才真正开始监听(登录遮罩未通过时保持等待)
-    if state.authed_window_count() > 0 {
+    // 至少有一个桌面窗口注册过才真正开始监听(页面还没就绪时保持等待)
+    if state.window_count() > 0 {
         if let Err(e) = start_service(&app, &state).await {
             emit_service(&app, &state);
             return Err(e);
@@ -591,7 +578,6 @@ pub async fn mcp_register(
     webview: tauri::Webview,
     state: State<'_, McpState>,
     bridge_epoch: String,
-    authed: bool,
     mode: String,
     app_version: String,
 ) -> Result<Value, String> {
@@ -604,10 +590,10 @@ pub async fn mcp_register(
     let label = webview.label().to_string();
     let cancelled = state.register_window(
         &label,
-        WindowReg { bridge_epoch, authed, mode, app_version },
+        WindowReg { bridge_epoch, mode, app_version },
     );
     emit_cancels(&app, cancelled, "window_reloaded");
-    if authed && state.authed_window_count() > 0 {
+    if state.window_count() > 0 {
         let should_start = {
             let inner = lock(&state);
             inner.settings.enabled && inner.running.is_none()
@@ -627,14 +613,12 @@ pub async fn mcp_register(
     Ok(state.status())
 }
 
-// 模式切换 / 登录态变化：只更新已注册窗口的记录，不重新登记(桥代次不变)
+// 模式切换：只更新已注册窗口的记录，不重新登记(桥代次不变)
 #[tauri::command]
 pub fn mcp_window_state(
-    app: AppHandle,
     webview: tauri::Webview,
     state: State<'_, McpState>,
     bridge_epoch: String,
-    authed: bool,
     mode: Option<String>,
 ) -> Result<(), String> {
     if let Some(m) = &mode {
@@ -642,8 +626,7 @@ pub fn mcp_window_state(
             return Err("窗口模式无效".to_string());
         }
     }
-    let cancelled = state.update_window(webview.label(), &bridge_epoch, authed, mode);
-    emit_cancels(&app, cancelled, "window_locked");
+    state.update_window(webview.label(), &bridge_epoch, mode);
     Ok(())
 }
 
@@ -700,11 +683,6 @@ impl McpState {
     pub fn pending_count_for_test(&self) -> usize {
         lock(self).pending.len()
     }
-    pub fn set_authed_for_test(&self, label: &str, authed: bool) {
-        if let Some(w) = lock(self).windows.get_mut(label) {
-            w.authed = authed;
-        }
-    }
     pub fn epoch_for_test(&self) -> u64 {
         lock(self).epoch
     }
@@ -723,7 +701,7 @@ mod tests {
         s.mark_running_for_test(38992);
         s.register_window_for_test(
             "main",
-            WindowReg { bridge_epoch: epoch.into(), authed: true, mode: "single".into(), app_version: "t".into() },
+            WindowReg { bridge_epoch: epoch.into(), mode: "single".into(), app_version: "t".into() },
         );
         s
     }
@@ -731,18 +709,14 @@ mod tests {
     fn other_window(s: &McpState) {
         s.register_window_for_test(
             "main-2",
-            WindowReg { bridge_epoch: "e2".into(), authed: true, mode: "single".into(), app_version: "t".into() },
+            WindowReg { bridge_epoch: "e2".into(), mode: "single".into(), app_version: "t".into() },
         );
     }
 
     #[tokio::test]
-    async fn begin_requires_registered_authed_window() {
+    async fn begin_requires_registered_window() {
         let s = state_with("e1");
         assert!(s.begin("nope", "serial_state", READ_TIMEOUT).is_err());
-        s.set_authed_for_test("main", false);
-        let err = s.begin("main", "serial_state", READ_TIMEOUT).unwrap_err();
-        assert_eq!(err.code, "window_locked");
-        s.set_authed_for_test("main", true);
         assert!(s.begin("main", "serial_state", READ_TIMEOUT).is_ok());
     }
 
@@ -773,7 +747,7 @@ mod tests {
         // 新文档注册：旧请求作废(终态回执)，随后旧回执不再影响任何东西
         s.register_window_for_test(
             "main",
-            WindowReg { bridge_epoch: "e9".into(), authed: true, mode: "single".into(), app_version: "t".into() },
+            WindowReg { bridge_epoch: "e9".into(), mode: "single".into(), app_version: "t".into() },
         );
         assert_eq!(s.pending_count_for_test(), 0);
         assert!(!s.complete("main", &id, "e1", true, json!({})));
@@ -786,7 +760,7 @@ mod tests {
         let s = state_with("e1");
         s.register_window_for_test(
             "main",
-            WindowReg { bridge_epoch: "e2".into(), authed: true, mode: "single".into(), app_version: "t".into() },
+            WindowReg { bridge_epoch: "e2".into(), mode: "single".into(), app_version: "t".into() },
         );
         let (id, _rx) = s.begin("main", "serial_state", TOOL_TIMEOUT).unwrap();
         s.unregister_window("main", "e1");
@@ -855,7 +829,7 @@ mod tests {
         let (_a, mut ra) = s.begin("main", "serial_write", TOOL_TIMEOUT).unwrap();
         s.register_window_for_test(
             "main",
-            WindowReg { bridge_epoch: "e9".into(), authed: true, mode: "single".into(), app_version: "t".into() },
+            WindowReg { bridge_epoch: "e9".into(), mode: "single".into(), app_version: "t".into() },
         );
         let (_, va) = ra.try_recv().unwrap();
         assert_eq!(va["code"], json!("window_reloaded"));

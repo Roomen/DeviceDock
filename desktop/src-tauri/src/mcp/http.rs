@@ -103,7 +103,7 @@ pub mod support {
         state.mark_running_for_test(port);
         state.register_window_for_test(
             "main",
-            WindowReg { bridge_epoch: "e1".into(), authed: true, mode: "single".into(), app_version: "test".into() },
+            WindowReg { bridge_epoch: "e1".into(), mode: "single".into(), app_version: "test".into() },
         );
         let bridge = Arc::new(MockBridge::new(state.clone(), commit, script));
         let shutdown = CancellationToken::new();

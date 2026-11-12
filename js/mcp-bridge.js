@@ -1,7 +1,7 @@
 // 页面侧 MCP 桥：把 Rust 投递过来的工具调用转成既有业务路径上的操作。
 // 只有桌面客户端提供了平台服务(AppPlatform.service('mcp'))时才加载，网页版 / 移动端什么都不做。
 // 关键约定：
-// 1. 每个变更类调用先排进「该资源的串行队列」，在队列内部再 await commit(存活/未冻结/已登录)，之后才动设备；
+// 1. 每个变更类调用先排进「该资源的串行队列」，在队列内部再 await commit(存活/未冻结)，之后才动设备；
 //    提交点由 Rust 记下，超时后按「未执行 / 结果未知」如实回报。
 // 2. 串口读走 js/mcp-ring.js 的有界环，按「文档 + 路 + 连接代次 + 字节游标」取数，不读日志 DOM。
 ;(function (root) {
@@ -34,7 +34,6 @@
 	function hub() { return root.SerialHub || null }
 	function api() { return root.serialApi || null }
 	function mode() { return hub() ? hub().mode : 'single' }
-	function authed() { return !!(root.__auth && root.__auth.authed && root.__auth.authed()) }
 	function visibleLanes() { return mode() === 'dual' ? ['A', 'B'] : ['S'] }
 	function isVisibleLane(sid) { return visibleLanes().indexOf(sid) !== -1 }
 	function blockers() {
@@ -61,8 +60,8 @@
 	function ensureSub(sid) {
 		if (subs[sid] || !api() || !api().onReceiveFrom) return
 		subs[sid] = api().onReceiveFrom(sid, function (data) {
-			// 登录态丢失 / 服务停了：立刻停止缓冲，别在后台留设备数据
-			if (!authed() || !enabled) {
+			// 服务停了：立刻停止缓冲，别在后台留设备数据
+			if (!enabled) {
 				dropAll()
 				return
 			}
@@ -82,7 +81,7 @@
 		Object.keys(rings).forEach(function (sid) { rings[sid].reset() })
 	}
 	function syncSubs() {
-		const want = enabled && authed() ? visibleLanes() : []
+		const want = enabled ? visibleLanes() : []
 		Object.keys(subs).forEach(function (sid) { if (want.indexOf(sid) === -1) dropSub(sid) })
 		want.forEach(function (sid) { laneRing(sid); ensureSub(sid) })
 	}
@@ -123,12 +122,10 @@
 				if (!active.has(id)) return deny('aborted', '请求已取消，未执行')
 				if (!live(id)) return deny('expired_before_commit', '请求已超时，未执行')
 				if (!enabled) return deny('service_not_running', '本地 MCP 服务未运行，未执行')
-				if (!authed()) return deny('window_locked', '窗口未登录，未执行')
 				if (api() && api().updatePreparing) return deny('update_preparing', '正在准备应用更新，未执行')
 				const c = await svc.commit({ id: id, bridgeEpoch: bridgeEpoch })
 				if (!c || !c.ok) return deny((c && c.code) || 'aborted', '请求已取消或状态已变化，未执行')
 				if (!active.has(id)) return deny('aborted', '请求已取消，未执行')
-				if (!authed()) return deny('window_locked', '窗口未登录，未执行')
 				if (api() && api().updatePreparing) return deny('update_preparing', '正在准备应用更新，未执行')
 				return null
 			},
@@ -137,7 +134,6 @@
 				if (!active.has(id)) return deny('aborted', '请求已取消，后续步骤未执行', 'partial')
 				if (!live(id)) return deny('expired_before_commit', '请求已超时，后续步骤未执行', 'partial')
 				if (!enabled) return deny('service_not_running', '本地 MCP 服务已停止，后续步骤未执行', 'partial')
-				if (!authed()) return deny('window_locked', '窗口未登录，后续步骤未执行', 'partial')
 				if (api() && api().updatePreparing) return deny('update_preparing', '正在准备应用更新，后续步骤未执行', 'partial')
 				return null
 			},
@@ -480,7 +476,6 @@
 		for (;;) {
 			if (!active.has(id)) return fail('aborted', '请求已取消')
 			if (!live(id)) return fail('expired_before_commit', '请求已超时')
-			if (!authed()) return fail('window_locked', '窗口未登录')
 			// 等待期间重连 / 换模式 / 换设备：环已换代次，旧游标的数据不能当成这一路的新数据返回
 			if (ring.generation !== generation) {
 				const stats = ring.stats()
@@ -566,7 +561,6 @@
 		let out
 		try {
 			if (!enabled) out = fail('service_not_running', '本地 MCP 服务未运行')
-			else if (!authed()) out = fail('window_locked', '窗口未登录，MCP 不代登录')
 			else if (!HANDLERS[msg.tool]) out = fail('unknown_tool', '不支持的工具：' + msg.tool)
 			else out = await HANDLERS[msg.tool](id, msg.params || {})
 		} catch (e) {
@@ -584,12 +578,8 @@
 			lastMode = mode()
 			dropAll()
 		}
-		if (!authed()) {
-			active.clear()
-			dropAll()
-		}
 		syncSubs()
-		try { svc.windowState({ bridgeEpoch: bridgeEpoch, authed: authed(), mode: mode() }).catch(noop) } catch (e) {}
+		try { svc.windowState({ bridgeEpoch: bridgeEpoch, mode: mode() }).catch(noop) } catch (e) {}
 	}
 
 	async function register() {
@@ -597,7 +587,6 @@
 		try {
 			const status = await svc.register({
 				bridgeEpoch: bridgeEpoch,
-				authed: authed(),
 				mode: mode(),
 				appVersion: String(root.APP_VERSION || ''),
 			})
@@ -629,7 +618,7 @@
 			const sid = e && e.detail && e.detail.sid
 			if (!sid) return
 			dropSub(sid)
-			if (enabled && authed() && isVisibleLane(sid)) {
+			if (enabled && isVisibleLane(sid)) {
 				laneRing(sid)
 				ensureSub(sid)
 			}

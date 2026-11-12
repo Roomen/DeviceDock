@@ -662,7 +662,7 @@ impl McpServer {
 
 #[tool_handler(
     name = "devicedock",
-    instructions = "Local desktop DeviceDock app. Call windows_list first, then pass the exact window label to every other tool. Mutations are serialized per window/lane and are refused while a protocol transaction pins the lane, while the app prepares an update, or when the window is not logged in."
+    instructions = "Local desktop DeviceDock app. Call windows_list first, then pass the exact window label to every other tool. Mutations are serialized per window/lane and are refused while a protocol transaction pins the lane or while the app prepares an update."
 )]
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {
@@ -690,7 +690,7 @@ mod tests {
         state.mark_running_for_test(38992);
         state.register_window_for_test(
             "main",
-            WindowReg { bridge_epoch: "e1".into(), authed: true, mode: "dual".into(), app_version: "t".into() },
+            WindowReg { bridge_epoch: "e1".into(), mode: "dual".into(), app_version: "t".into() },
         );
         let script = Arc::new(move |_tool: &str, p: &Value| {
             rec.lock().unwrap().push(p.clone());

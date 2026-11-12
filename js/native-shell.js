@@ -31,7 +31,7 @@
 		const classic = root.NativeClassic.create({ invoke: T.core.invoke, Channel: T.core.Channel,
 			createStreamPort: root.SerialAdapter.createStreamPort, toBytes: root.NativeBleBridge.toBytes,
 			isPinned: () => !!(root.serialApi && root.serialApi.isPinned()),
-			blocked: () => updatePreparing || !!(root.__auth && !root.__auth.authed()),
+			blocked: () => updatePreparing,
 		})
 		P.provide('classic', classic)
 		root.addEventListener('pagehide', () => { classic.release().catch(() => {}) })
@@ -41,7 +41,7 @@
 		const computerBle = root.NativeBle.create({ invoke: T.core.invoke, Channel: T.core.Channel,
 			createStreamPort: root.SerialAdapter.createStreamPort, toBytes: root.NativeBleBridge.toBytes,
 			boundPorts: () => root.SerialHub ? ['S', 'A', 'B'].map(sid => root.SerialHub.getPort(sid)) : [],
-			blocked: () => updatePreparing || !!(root.__auth && !root.__auth.authed()),
+			blocked: () => updatePreparing,
 		})
 		P.provide('computer-ble', computerBle)
 		root.addEventListener('pagehide', () => { computerBle.release().catch(() => {}) })
@@ -55,7 +55,7 @@
 			invoke: T.core.invoke,
 			Channel: T.core.Channel,
 			ready: function () { return P.service('native-serial-ready').wait() },
-			blocked: function () { return updatePreparing || !!(root.__auth && !root.__auth.authed()) },
+			blocked: function () { return updatePreparing },
 		})
 		P.provide('ble', ble)
 		root.addEventListener('pagehide', function () { ble.release().catch(function () {}) })

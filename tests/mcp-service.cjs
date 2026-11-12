@@ -55,7 +55,7 @@ function makeHarness(opts) {
 	const dialogCalls = []
 	let panelBody = null
 	let closePanel = null
-	const status = Object.assign({ supported: true, enabled: false, running: false, port: 38992, url: 'http://127.0.0.1:38992/mcp', hasToken: true, lastError: null, waitingForLogin: false }, opts.status || {})
+	const status = Object.assign({ supported: true, enabled: false, running: false, port: 38992, url: 'http://127.0.0.1:38992/mcp', hasToken: true, lastError: null, waitingForWindow: false }, opts.status || {})
 	const svcListeners = {}
 	const svc = opts.service === null ? null : {
 		status: () => Promise.resolve(Object.assign({}, status)),
@@ -277,7 +277,7 @@ test('重新生成令牌：面板内两步确认，不嵌套确认框', async ()
 })
 
 test('已启用但未运行：主键是停用，另有启动键', async () => {
-	const h = makeHarness({ status: { enabled: true, running: false, waitingForLogin: true } })
+	const h = makeHarness({ status: { enabled: true, running: false, waitingForWindow: true } })
 	await flush()
 	h.menuItem().click()
 	await flush()
@@ -286,7 +286,7 @@ test('已启用但未运行：主键是停用，另有启动键', async () => {
 	assert.ok(start, '未运行时应有启动键')
 	assert.equal(start.hidden, false)
 	const status = h.find((n) => n.className.indexOf('mdn-mcp-status') !== -1)
-	assert.equal(status.textContent, '已启用，等登录后自动启动')
+	assert.equal(status.textContent, '已启用，等窗口就绪后自动启动')
 })
 
 test('绑定失败如实显示，不假装运行', async () => {

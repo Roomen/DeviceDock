@@ -47,26 +47,9 @@
             document.documentElement.style.setProperty('--top-height', '0px');
         }
     </script>
-    <script>
-        !function (p) { "use strict"; !function (t) { var s = window, e = document, i = p, c = "".concat("https:" === e.location.protocol ? "https://" : "http://", "sdk.51.la/js-sdk-pro.min.js"), n = e.createElement("script"), r = e.getElementsByTagName("script")[0]; n.type = "text/javascript", n.setAttribute("charset", "UTF-8"), n.async = !0, n.src = c, n.id = "LA_COLLECT", i.d = n; var o = function () { s.LA.ids.push(i) }; s.LA ? s.LA.ids && o() : (s.LA = p, s.LA.ids = [], o()), r.parentNode.insertBefore(n, r) }() }({ id: "JuSxXIvOMGPBMkpo", ck: "JuSxXIvOMGPBMkpo" });
-    </script>
 </head>
 
 <body>
-    <div id="login-overlay" class="login-overlay">
-        <div class="login-card">
-            <div class="login-logo">
-                <img src="imgs/logo.svg" width="48" height="38" alt="DeviceDock">
-                <h2>DeviceDock</h2>
-            </div>
-            <div class="login-form">
-                <input type="email" id="login-email" class="login-input" placeholder="邮箱" autocomplete="email">
-                <input type="password" id="login-password" class="login-input" placeholder="密码" autocomplete="current-password">
-                <p id="login-error" class="login-error"></p>
-                <button id="login-submit" class="login-btn">登 录</button>
-            </div>
-        </div>
-    </div>
     <div id="issue-tip" class="issue-tip" data-feature="shell.browser" hidden>
         <i class="bi bi-info-circle issue-tip-icon"></i>
         <div class="issue-tip-body">
@@ -141,14 +124,10 @@
                     <i class="bi bi-github"></i>
                     <span class="rail-label">GitHub</span>
                 </a>
-                <a href="https://serial.logan825.org/download/" target="_blank" rel="noopener" class="rail-item" id="rail-download" data-feature="shell.browser" title="下载客户端">
+                <a href="https://github.com/Roomen/DeviceDock/releases" target="_blank" rel="noopener" class="rail-item" id="rail-download" data-feature="shell.browser" title="下载客户端">
                     <i class="bi bi-download"></i>
                     <span class="rail-label">客户端</span>
                 </a>
-                <script>
-                    // 预览站(serial-dev)下载预览版客户端，其余(正式站、本地)下载正式版
-                    if (/^serial-dev\./.test(location.hostname)) document.getElementById('rail-download').href = 'https://serial-dev.logan825.org/download/'
-                </script>
                 <div class="rail-version" id="app-version" title="应用版本"></div>
             </div>
         </nav>
@@ -1011,7 +990,7 @@
     </div>
     <script src="js/version.js"></script>
     <script src="js/release-config.js"></script>
-    <script src="js/auth.js"></script>
+    <script src="js/app-boot.js"></script>
     <script src="js/update-check.js"></script>
     <script src="js/ansi_up.min.js"></script>
     <script>

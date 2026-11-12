@@ -287,7 +287,7 @@ pub fn run() {
 			if !portable::startup_gate(app.handle()) {
 				std::process::exit(0);
 			}
-			// 上次启用过本地 MCP 服务时只登记「等已登录窗口」，真正监听要等页面注册
+			// 上次启用过本地 MCP 服务时只登记「等窗口注册」，真正监听要等页面注册
 			app.state::<mcp::McpState>().init(app.handle());
 			let m = menu::build(app.handle())?;
 			app.set_menu(m)?;

@@ -187,7 +187,7 @@
 		cliHead.appendChild(s.copyCliBtn)
 		body.appendChild(cliHead)
 		body.appendChild(s.cli)
-		body.appendChild(mk('div', 'mdn-mcp-hint', '只监听 127.0.0.1，需要 Bearer 令牌；每个工具都必须显式指定窗口。服务开启后才会把工具暴露给 agent，窗口未登录时不执行任何操作。端口只能在服务停止时修改，绑定失败会如实报错，不会自动换端口。'))
+		body.appendChild(mk('div', 'mdn-mcp-hint', '只监听 127.0.0.1，需要 Bearer 令牌；每个工具都必须显式指定窗口。服务开启后才会把工具暴露给 agent。端口只能在服务停止时修改，绑定失败会如实报错，不会自动换端口。'))
 
 		s.toggleBtn.addEventListener('click', function () { toggleService(s) })
 		s.startBtn.addEventListener('click', function () { toggleService(s, true) })
@@ -277,7 +277,7 @@
 		if (running) text = '运行中'
 		else if (st.starting) text = '正在启动…'
 		else if (st.enabled && st.lastError) text = '启动失败：' + st.lastError
-		else if (st.enabled && st.waitingForLogin) text = '已启用，等登录后自动启动'
+		else if (st.enabled && st.waitingForWindow) text = '已启用，等窗口就绪后自动启动'
 		else if (st.enabled) text = '已启用，未运行'
 		else text = '未启用（默认关闭）'
 		s.statusLine.textContent = text

@@ -1,6 +1,6 @@
 // Run: node tests/mcp-bridge.cjs — synthetic data only, no serial port, no hardware.
 // 覆盖 js/mcp-bridge.js：只有桌面服务存在才挂载、先装监听再登记、提交点(commit)在真正执行之前、
-// 提交被拒/取消/端口变化时不执行、按路的串行队列、读游标的代次与命名空间、功耗仪 guard 由共享队列调用、
+// 提交被拒/取消/端口变化时不执行、按路的串行队列、读游标的代次与命名空间、
 // 迟到/重复/错代次的事件被忽略。
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -27,7 +27,6 @@ function makeHarness(opts) {
 	const unregistered = []
 	const writes = []
 	const state = {
-		authed: opts.authed !== false,
 		running: opts.running !== false,
 		preparing: false,
 		mode: 'single',
@@ -54,7 +53,6 @@ function makeHarness(opts) {
 		navigator: {},
 		APP_VERSION: '9.9.9',
 		addEventListener(t, f) { (winListeners[t] = winListeners[t] || []).push(f) },
-		__auth: { authed: () => state.authed },
 	}
 	const serialApi = {
 		updatePreparing: false,
@@ -202,12 +200,11 @@ test('没有桌面 MCP 服务时不注册监听、不登记', async () => {
 	assert.equal(h.svcListeners['mcp-request'], undefined)
 })
 
-test('先装请求/取消/服务监听，再登记；登记带 authed/mode/appVersion', async () => {
+test('先装请求/取消/服务监听，再登记；登记带 mode/appVersion', async () => {
 	const h = makeHarness()
 	await h.boot()
 	assert.deepEqual(h.order.slice(0, 3), ['listen:mcp-request', 'listen:mcp-cancel', 'listen:mcp-service'])
 	assert.equal(h.order[3], 'register')
-	assert.equal(h.order.registration.authed, true)
 	assert.equal(h.order.registration.mode, 'single')
 	assert.equal(h.order.registration.appVersion, '9.9.9')
 	assert.ok(typeof h.order.registration.bridgeEpoch === 'string' && h.order.registration.bridgeEpoch.length > 4)
@@ -258,16 +255,6 @@ test('commit 期间被取消：不写入，回 aborted', async () => {
 	assert.equal(r.result.code, 'aborted')
 	assert.equal(h.writes.length, 0)
 	assert.equal(cancelledId, msg.id)
-})
-
-test('未登录：window_locked，不提交也不写入', async () => {
-	const h = makeHarness({ authed: false })
-	await h.boot()
-	h.lane('S').open = true
-	const r = await h.call('serial_write', { window: 'main', lane: 'S', data: '00' })
-	assert.equal(r.result.code, 'window_locked')
-	assert.equal(h.commits.length, 0)
-	assert.equal(h.writes.length, 0)
 })
 
 test('双路下 S 路不可见：lane_not_visible', async () => {
