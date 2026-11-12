@@ -111,7 +111,7 @@
 		entry.type = 'button'
 		entry.id = 'serial-mcp-service'
 		entry.dataset.feature = 'service.mcp'
-		entry.appendChild(mk('i', 'bi bi-hdd-network'))
+		entry.appendChild(mk('i', 'icon icon-server'))
 		entry.appendChild(mk('span', 'rail-label', 'MCP'))
 		const dot = mk('span', 'rail-status-dot')
 		dot.setAttribute('aria-hidden', 'true')

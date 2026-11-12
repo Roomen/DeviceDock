@@ -1,0 +1,89 @@
+/* lucide 图标字体样式（随客户端打包，ISC License，见同目录 LICENSE）。
+	由 lucide-static@1.62.0 的 font/lucide.css 裁剪而成：只保留仓库实际用到的图标名，
+	升级 lucide 或新增图标时重新生成。网页版使用 CDN 完整样式，不受此裁剪影响。 */
+@font-face {
+  font-family: "lucide";
+  src: url('lucide.woff2') format('woff2');
+}
+
+[class^="icon-"], [class*=" icon-"] {
+  font-family: 'lucide' !important;font-size: inherit;
+  font-style:normal;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.icon-archive::before { content: "\e041"; }
+.icon-arrow-left-right::before { content: "\e24a"; }
+.icon-bluetooth::before { content: "\e05c"; }
+.icon-bookmark-plus::before { content: "\e23d"; }
+.icon-braces::before { content: "\e36a"; }
+.icon-check::before { content: "\e06c"; }
+.icon-chevron-down::before { content: "\e06d"; }
+.icon-chevron-left::before { content: "\e06e"; }
+.icon-chevron-right::before { content: "\e06f"; }
+.icon-chevrons-down::before { content: "\e071"; }
+.icon-circle-arrow-down::before { content: "\e078"; }
+.icon-circle-arrow-right::before { content: "\e07a"; }
+.icon-circle-stop::before { content: "\e083"; }
+.icon-circle-x::before { content: "\e084"; }
+.icon-clipboard-plus::before { content: "\e5bf"; }
+.icon-cloud-upload::before { content: "\e091"; }
+.icon-command::before { content: "\e09a"; }
+.icon-contrast::before { content: "\e09d"; }
+.icon-copy::before { content: "\e09e"; }
+.icon-cpu::before { content: "\e0a9"; }
+.icon-database::before { content: "\e0ad"; }
+.icon-download::before { content: "\e0b2"; }
+.icon-ellipsis::before { content: "\e0b6"; }
+.icon-file::before { content: "\e0c0"; }
+.icon-file-archive::before { content: "\e30d"; }
+.icon-file-code::before { content: "\e0c3"; }
+.icon-folder-plus::before { content: "\e0d9"; }
+.icon-folder-symlink::before { content: "\e33b"; }
+.icon-gauge::before { content: "\e1bf"; }
+.icon-globe::before { content: "\e0e8"; }
+.icon-grip-vertical::before { content: "\e0eb"; }
+.icon-hard-drive::before { content: "\e0ed"; }
+.icon-hash::before { content: "\e0ef"; }
+.icon-history::before { content: "\e1f5"; }
+.icon-import::before { content: "\e22f"; }
+.icon-info::before { content: "\e0f9"; }
+.icon-layout-grid::before { content: "\e0ff"; }
+.icon-list-check::before { content: "\e5fa"; }
+.icon-lock::before { content: "\e10b"; }
+.icon-lock-open::before { content: "\e10c"; }
+.icon-message-circle-more::before { content: "\e565"; }
+.icon-minus::before { content: "\e11c"; }
+.icon-moon-star::before { content: "\e410"; }
+.icon-notebook-text::before { content: "\e598"; }
+.icon-package::before { content: "\e129"; }
+.icon-panel-bottom::before { content: "\e42c"; }
+.icon-panel-right::before { content: "\e431"; }
+.icon-panel-right-close::before { content: "\e432"; }
+.icon-pencil::before { content: "\e1f9"; }
+.icon-play::before { content: "\e13c"; }
+.icon-plug::before { content: "\e37f"; }
+.icon-plus::before { content: "\e13d"; }
+.icon-power::before { content: "\e140"; }
+.icon-refresh-cw::before { content: "\e145"; }
+.icon-repeat::before { content: "\e146"; }
+.icon-rotate-ccw::before { content: "\e148"; }
+.icon-rotate-cw::before { content: "\e149"; }
+.icon-search::before { content: "\e151"; }
+.icon-send::before { content: "\e152"; }
+.icon-server::before { content: "\e153"; }
+.icon-settings::before { content: "\e154"; }
+.icon-share::before { content: "\e155"; }
+.icon-shield-check::before { content: "\e1ff"; }
+.icon-shuffle::before { content: "\e15e"; }
+.icon-sliders::before { content: "\e162"; }
+.icon-sliders-horizontal::before { content: "\e29a"; }
+.icon-sun::before { content: "\e178"; }
+.icon-terminal::before { content: "\e181"; }
+.icon-trash-2::before { content: "\e18e"; }
+.icon-upload::before { content: "\e19e"; }
+.icon-usb::before { content: "\e356"; }
+.icon-workflow::before { content: "\e425"; }
+.icon-x::before { content: "\e1b2"; }
+.icon-zap::before { content: "\e1b4"; }

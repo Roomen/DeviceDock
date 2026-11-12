@@ -23,8 +23,8 @@
 
 	function setCollapsed(card, chevron, collapsed) {
 		card.classList.toggle('is-collapsed', collapsed)
-		chevron.classList.toggle('bi-chevron-down', !collapsed)
-		chevron.classList.toggle('bi-chevron-right', collapsed)
+		chevron.classList.toggle('icon-chevron-down', !collapsed)
+		chevron.classList.toggle('icon-chevron-right', collapsed)
 	}
 
 	function init() {
@@ -41,7 +41,7 @@
 			if (!header || header.querySelector('.collapsible-chevron')) return
 
 			const chevron = document.createElement('i')
-			chevron.className = 'bi bi-chevron-down collapsible-chevron'
+			chevron.className = 'icon icon-chevron-down collapsible-chevron'
 			header.insertBefore(chevron, header.firstChild)
 			header.classList.add('collapsible-header')
 

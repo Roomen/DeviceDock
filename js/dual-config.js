@@ -276,7 +276,7 @@
 		return n
 	}
 	function icon(name) {
-		const i = mk('i', 'bi ' + name)
+		const i = mk('i', 'icon ' + name)
 		i.setAttribute('aria-hidden', 'true')
 		return i
 	}
@@ -313,7 +313,7 @@
 		apply.title = '套用「' + p.name + '」' + (on ? '（当前配置与它一致）' : '')
 		if (on) apply.setAttribute('aria-current', 'true')
 		const head = mk('span', 'dual-preset-name')
-		if (on) head.appendChild(icon('bi-check2'))
+		if (on) head.appendChild(icon('icon-check'))
 		head.appendChild(document.createTextNode(p.name))
 		const sum = mk('span', 'dual-preset-sum')
 		presetLanes(p).forEach(function (sid) { sum.appendChild(mk('span', 'dual-preset-lane', laneLine(sid, p[sid]))) })
@@ -324,14 +324,14 @@
 		ren.dataset.act = 'rename'
 		ren.title = '重命名'
 		ren.setAttribute('aria-label', '重命名预设 ' + p.name)
-		ren.appendChild(icon('bi-pencil'))
+		ren.appendChild(icon('icon-pencil'))
 		const del = mk('button', 'dual-preset-act')
 		del.type = 'button'
 		del.dataset.idx = String(i)
 		del.dataset.act = 'delete'
 		del.title = '删除'
 		del.setAttribute('aria-label', '删除预设 ' + p.name)
-		del.appendChild(icon('bi-trash'))
+		del.appendChild(icon('icon-trash-2'))
 		row.append(apply, ren, del)
 		return row
 	}

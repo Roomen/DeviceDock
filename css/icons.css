@@ -1,0 +1,22 @@
+/* lucide 图标字体基础规则：16px 基准，颜色一律随 currentColor（语义色只用于状态）。
+	线宽观感来自 lucide 字体本身（24 网格 2px 描边在 16px 下收缩，约 1.3px，接近 1.5 档）。 */
+.icon {
+	display: inline-block;
+	width: 16px;
+	height: 16px;
+	font-size: 16px;
+	line-height: 1;
+	vertical-align: -0.125em;
+}
+
+.icon-sm {
+	width: 14px;
+	height: 14px;
+	font-size: 14px;
+}
+
+.icon-lg {
+	width: 20px;
+	height: 20px;
+	font-size: 20px;
+}

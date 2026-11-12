@@ -422,7 +422,7 @@
 		const btn = h('button', 'mdn-fw-fold-btn')
 		btn.type = 'button'
 		btn.setAttribute('aria-expanded', 'false')
-		const caret = h('i', 'bi bi-chevron-right mdn-fw-fold-caret')
+		const caret = h('i', 'icon icon-chevron-right mdn-fw-fold-caret')
 		caret.setAttribute('aria-hidden', 'true')
 		const last = h('span', 'mdn-fw-fold-last')
 		btn.append(caret, h('span', 'mdn-fw-fold-title', title), last)

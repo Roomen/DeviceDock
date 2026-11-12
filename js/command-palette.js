@@ -437,7 +437,7 @@
 		overlay.innerHTML =
 			'<div id="serial-cmdk-panel" role="dialog" aria-modal="true" aria-label="命令面板">' +
 			'<div id="serial-cmdk-inputbar">' +
-			'<i class="bi bi-search"></i>' +
+			'<i class="icon icon-search"></i>' +
 			'<input id="serial-cmdk-input" type="text" autocomplete="off" spellcheck="false" placeholder="搜索命令…（支持拼音/英文别名）">' +
 			'<span class="serial-cmdk-kbd">Esc</span>' +
 			'</div>' +

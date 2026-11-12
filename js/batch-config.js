@@ -386,7 +386,7 @@
 				const delBtn = document.createElement('button')
 				delBtn.className = 'btn btn-sm btn-outline-danger sk-batch-item-del'
 				delBtn.title = '删除'
-				delBtn.innerHTML = '<i class="bi bi-trash"></i>'
+				delBtn.innerHTML = '<i class="icon icon-trash-2"></i>'
 				delBtn.addEventListener('click', function () {
 					list.splice(idx, 1)
 					renderList()
@@ -437,7 +437,7 @@
 			const delBtn = document.createElement('button')
 			delBtn.className = 'btn btn-sm btn-outline-danger sk-batch-item-del'
 			delBtn.title = '删除'
-			delBtn.innerHTML = '<i class="bi bi-trash"></i>'
+			delBtn.innerHTML = '<i class="icon icon-trash-2"></i>'
 			delBtn.addEventListener('click', function () {
 				list.splice(idx, 1)
 				renderList()
