@@ -1,19 +1,12 @@
 /.vscode
-/.gitea_token
 
 # host-side cross-test build artifacts (do not commit binaries)
 tools/sk-cross-test/sk_c_mirror
 tools/sk-cross-test/*.o
 
-# wrangler files
-.wrangler
-.dev.vars*
-!.dev.vars.example
+# 本地环境变量
 .env*
 !.env.example
-
-# herdr 多 agent 协作的简报/报告产物，不入库
-/.herdr-task
 
 # 冒烟测试输出
 tools/smoke-out
