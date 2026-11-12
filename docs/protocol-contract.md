@@ -19,13 +19,15 @@
 - `type` 只接受 `uint8`、`uint16le`、`uint32le`、`int8`、`int16le`、`int32le`、`float32le`、`float64le`、`bcd`、`ascii`、`enum`、`bool`；`enum` 归一化成 `[{ value, label }]`。
 - `tx` 是给宿主测试工具（随机读写、批量配置）用的过渡执行器，必须同时提供 `queryById`、`readTag`、`writeRaw`、`readItem`、`bytesEqual`、`hasTag`、`reset`、`cancel`；v1 只有内置 SEK 提供，P3 的通用流程引擎改吃 `buildRead` / `buildWrite` / `matchResponse` / `metrics`。
 - `activate` 必须同步完成注册（不要注册到 `setTimeout` / `fetch` 回调里）；宿主在 `activate` 返回后核对 id，晚注册的 id 会被当成「多出」而整包卸载。
-- `activate` 抛错、超过 15 s、或没有导出 `activate`，整包按失败处理，已注册的协议会被卸载。
+- `activate` 抛错、超过 15 s、或没有导出 `activate`，整包按失败处理，什么都不会注册。
+- 注册先进暂存区：`activate` 返回、`provides` 核对通过后才一次性发布；注册窗口在 `activate` 返回 / 抛错 / 超时后立即关闭，包再用定时器调 `registerProtocol` 会被拒绝。
+- 同一来源里两个包声明同一个协议 id 会被拒绝（`协议 id 已被另一个协议包占用`），后发布的包不会覆盖前一个，失败回滚也只删本次注册。
 
 ## 多协议仓库
 
 - 仓库根目录（或 `/tree/<ref>/<子目录>` 指定的目录）放 `catalog.json`：`{ schemaVersion:1, name, packages:[{ manifest:"<相对路径>/manifest.json", sha256:"<manifest 文件摘要>" }] }`。
 - 读目录与清单**不执行代码**：宿主只下载 `catalog.json` 与各 `manifest.json`，校验摘要后就能列出仓库里全部协议（来自 `provides`）。
-- 启用某个包时：校验清单摘要 → 下载 `entry` 并按 `integrity` 校验 → Blob URL `import()` → 调用 `activate`。
+- 启用某个包时：校验清单摘要 → 下载 `entry` 并按 `integrity` 校验 → Blob URL `import()` → 调用 `activate`；入口与其它包内路径一律**相对该包的 manifest 解析**（GitHub 上 manifest 常在自己的子目录里，按仓库根拼会 404）。
 - 实际注册的 id 集合必须与 `provides` **严格相等**，多一个少一个都拒绝并卸载整包，错误信息列出多出 / 缺少的 id。
 - 一个包可以声明多个协议；一个仓库可以有多个包（示例见 `examples/protocol-repo/`）。
 
@@ -33,7 +35,7 @@
 
 - 外部协议在注册表里的 id 是 `<来源键>/<协议 id>`；来源键由 URL 推出：GitHub 是 `github.com/<owner>/<repo>`（小写），直连是 origin + 目录路径。
 - `#serial-protocol-select` 用 `<optgroup>`：「内置」组放 `sek` / `cjt188` / `sk-ultrasonic`，每个来源一组（组名取目录 `name`）；每路连接栏的协议键照抄同样的分组，不要在模块里自己插 `<option>`。
-- 存下的协议指向未启用 / 已删除的外部协议时回退 `sek`（`window.normalizeProtocolSelection`），已启用但还在加载的 id 由注册表登记为 pending，启动时不会误判为未知。
+- 存下的协议指向未启用 / 已删除的外部协议时回退 `sek`（`window.normalizeProtocolSelection`），单路 S 在双路期间单独保存的选择也要一起归一化；已启用但还在加载的 id 由注册表登记为 pending，启动时不会误判为未知。
 
 ## 来源 URL
 
@@ -47,7 +49,9 @@
 - 添加来源、刷新、列出包都**不执行代码**；只有用户逐包点「信任此版本」并打开「启用」才会加载入口字节。
 - 信任键 = 来源 + 包 id + 版本 + 入口摘要（`js/protocol-contract.js` 的 `trustKey`）；换版本、换来源、换字节都不继承旧决定。
 - 来源列表、信任、启用状态存 localStorage（`protocolSourcesV1` / `protocolTrustV1` / `protocolEnabledV1`）；已校验的字节按 sha256 存 IndexedDB `devicedock-protocols`（`files` 表，最多 32 份 / 16 MiB，按最近写入淘汰）。
+- 从缓存启用前也按摘要复核内容：缓存键不能证明内容正确，不符就丢弃缓存并拒绝执行（离线时同样不能执行未校验字节）。
 - 刷新来源时，已启用包的版本或入口摘要变了就自动停用并在面板里提示「需要重新信任」，不要静默换成新版本。
+- 删除来源、刷新来源、停用包、撤销信任都会作废正在进行的启用（代次检查），慢下载 / 慢 `activate` 不能在来源没了之后落地。
 - 读写 localStorage / IndexedDB 全部 try/catch：缓存写失败不影响本次启用，存储不可用时只是不持久化。
 - 离线启动只用缓存启用；缓存缺失时如实报「本机没有该版本的缓存」，不要偷偷联网下载。
 

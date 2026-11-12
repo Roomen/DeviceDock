@@ -42,6 +42,21 @@ assert.equal(meta.source, 'github.com/o/r')
 assert.equal(meta.packageId, 'demo.protocols')
 assert.equal(meta.version, '1.0.0')
 
+// 同一来源里两个包声明同一个协议 id：后一个不能覆盖前一个（失败回滚也不会删掉前一个）
+P.registerExternal('github.com/o/r', 'demo.dup', { id: 'demo.dup', name: 'Dup A', parseFrame: function () {} }, {
+	packageId: 'pkg.a', version: '1.0.0', digest: 'b'.repeat(64),
+})
+assert.throws(() => P.registerExternal('github.com/o/r', 'demo.dup', { id: 'demo.dup', name: 'Dup B', parseFrame: function () {} }, {
+	packageId: 'pkg.b', version: '1.0.0', digest: 'c'.repeat(64),
+}), /已被另一个协议包占用/)
+assert.equal(P.get('github.com/o/r/demo.dup').name, 'Dup A')
+// 同一个包重新注册（升级 / 重载）允许覆盖自己的注册
+P.registerExternal('github.com/o/r', 'demo.dup', { id: 'demo.dup', name: 'Dup A2', parseFrame: function () {} }, {
+	packageId: 'pkg.a', version: '1.0.1', digest: 'd'.repeat(64),
+})
+assert.equal(P.get('github.com/o/r/demo.dup').name, 'Dup A2')
+P.unregister('github.com/o/r/demo.dup')
+
 // 晚补充字段目录（SEK 的 js/sek-test-profile.js 就是这么接进来的）
 assert.equal(P.get('sek').fields.length, 0)
 P.extend('sek', { fields: [{ key: 'rssi', name: '信号', type: 'int16le' }], queries: [{ key: 'q1', name: '查询' }] })

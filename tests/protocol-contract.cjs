@@ -40,6 +40,14 @@ for (const bad of ['', '/abs.js', '../a.js', 'a/../b.js', 'a/./b.js', 'a\\b.js',
 }
 assert.equal(C.resolveUrl('https://raw.example.com/o/r/abc/', 'packages/x.js'), 'https://raw.example.com/o/r/abc/packages/x.js')
 assert.throws(() => C.resolveUrl('https://raw.example.com/o/r/abc/', '../x.js'), /不合法/)
+// 入口相对 manifest 解析：manifest 在子目录里时不能退回仓库根
+const rawSha = 'd'.repeat(40)
+assert.equal(
+	C.entryUrl('https://raw.githubusercontent.com/o/r/' + rawSha + '/packages/demo/manifest.json', 'index.js'),
+	'https://raw.githubusercontent.com/o/r/' + rawSha + '/packages/demo/index.js'
+)
+assert.equal(C.entryUrl('https://example.com/protos/demo/manifest.json', 'dist/index.js'), 'https://example.com/protos/demo/dist/index.js')
+assert.throws(() => C.entryUrl('https://example.com/protos/demo/manifest.json', '../index.js'), /不合法/)
 
 // ---- SemVer ----
 assert.equal(C.normalizeVersion('1.2.3'), '1.2.3')

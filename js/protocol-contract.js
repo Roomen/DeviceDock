@@ -93,6 +93,10 @@
 		if (cut < 0) fail('基准地址不合法：' + base)
 		return base.slice(0, cut + 1) + rel
 	}
+	// 包入口一律相对 manifest 文件解析（GitHub 上 manifest 常在子目录里，相对仓库根会 404）
+	function entryUrl(manifestUrl, entry) {
+		return resolveUrl(manifestUrl, entry)
+	}
 	function dirOf(url) {
 		const s = String(url || '').replace(/[?#].*$/, '')
 		const cut = s.lastIndexOf('/')
@@ -431,6 +435,7 @@
 		isSafePath: isSafePath,
 		safePath: safePath,
 		resolveUrl: resolveUrl,
+		entryUrl: entryUrl,
 		dirOf: dirOf,
 		normalizeVersion: normalizeVersion,
 		compareVersions: compareVersions,

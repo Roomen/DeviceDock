@@ -49,6 +49,13 @@
 	}
 	function registerExternal(sourceKey, protocolId, impl, meta) {
 		const id = Contract.namespaceId(sourceKey, protocolId)
+		// 同一来源里两个包声明同一个协议 id 时不能互相覆盖：否则两个包都显示已启用，
+		// 其中一个失败回滚还会把另一个的注册删掉。
+		const existing = entries[id]
+		const packageId = String((meta && meta.packageId) || '')
+		if (existing && existing.meta && !existing.meta.builtin && existing.meta.packageId !== packageId) {
+			throw new Error('协议 id 已被另一个协议包占用：' + id)
+		}
 		return register(id, impl, Object.assign({}, meta, { builtin: false, source: sourceKey }))
 	}
 	// 内置协议模块晚于注册点补充字段目录 / 测试执行器时用（例如 SEK 的 js/sek-test-profile.js）

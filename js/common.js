@@ -1362,6 +1362,14 @@
 			})
 			if (changed) persistLaneProtocols()
 		}
+		// 双路时单路 S 的协议单独存在 singleProtocolId / toolOptions.skProtocol 里，
+		// 顶栏与 A/B 都看不到它；外部包停用后它也要一起归一化，否则回到单路会恢复已卸载的 id
+		if (singleProtocolId && !known(singleProtocolId)) {
+			singleProtocolId = 'sek'
+			toolOptions.skProtocol = 'sek'
+			changed = true
+			try { localStorage.setItem('toolOptions', JSON.stringify(toolOptions)) } catch (e) {}
+		}
 		if (!changed) return
 		var sel = document.getElementById('serial-protocol-select')
 		if (sel && sel.value !== window._activeProtocol) sel.value = window._activeProtocol

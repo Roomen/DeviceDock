@@ -35,6 +35,16 @@
 	}
 	const listeners = []
 
+	// 启用操作的代次：删除来源 / 刷新 / 停用 / 撤销信任都会作废在飞的启用，
+	// 免得慢下载或慢 activate 在来源已经没了之后还注册协议、写回启用记录。
+	let opSeq = 0
+	const opTokens = Object.create(null)
+	function opKey(kind, sourceKey, packageId) {
+		return kind + '\u0000' + sourceKey + '\u0000' + (packageId || '')
+	}
+	function bumpOp(kind, sourceKey, packageId) { opTokens[opKey(kind, sourceKey, packageId)] = ++opSeq }
+	function readOp(kind, sourceKey, packageId) { return opTokens[opKey(kind, sourceKey, packageId)] || 0 }
+
 	function message(e) { return String((e && e.message) || e || '未知错误') }
 	function notify() {
 		listeners.slice().forEach(function (fn) {
@@ -235,6 +245,11 @@
 			await evictCache()
 		} catch (e) { /* 缓存失败不影响本次启用，下次重新下载 */ }
 	}
+	async function cacheDelete(digestHexValue) {
+		try {
+			await withStore('readwrite', function (store) { return store.delete(digestHexValue) })
+		} catch (e) { /* 删除失败下次仍会复核 */ }
+	}
 	async function evictCache() {
 		try {
 			const req = await withStore('readonly', function (store) { return store.getAll() })
@@ -425,18 +440,22 @@
 	}
 
 	// ---------- 启用 ----------
-	function entryUrlFor(source, pkg) {
-		const desc = Contract.resolveSourceUrl(source.input)
-		if (desc.kind === 'github') return Contract.githubRawBase(desc, source.sha) + pkg.entry
-		return Contract.resolveUrl(pkg.manifestUrl, pkg.entry)
+	function entryUrlFor(pkg) {
+		// 一律相对 manifest 解析：GitHub 上清单常在自己的子目录里（仓库根 + entry 会 404）
+		return Contract.entryUrl(pkg.manifestUrl, pkg.entry)
 	}
-	async function entryBytes(source, pkg, cacheOnly) {
+	async function entryBytes(pkg, cacheOnly) {
 		const want = hexOf(pkg.entryDigest)
 		const cached = await cacheGet(want)
-		if (cached) return cached
+		if (cached) {
+			// 缓存键只是键：内容被换过时按摘要复核，不符就丢弃，离线也不能执行未校验字节
+			const cachedHex = await Contract.digestHex(cached)
+			if (cachedHex === want) return cached
+			await cacheDelete(want)
+			if (cacheOnly) throw new Error('本机缓存的协议包摘要不符，已丢弃缓存；请刷新来源后重新启用')
+		}
 		if (cacheOnly) throw new Error('本机没有该版本的缓存，请刷新来源后重新启用')
-		const url = entryUrlFor(source, pkg)
-		const bytes = await fetchBytes(url, MAX_ENTRY_BYTES)
+		const bytes = await fetchBytes(entryUrlFor(pkg), MAX_ENTRY_BYTES)
 		const actual = await Contract.digestHex(bytes)
 		if (actual !== want) throw new Error('入口文件摘要不符（可能被篡改）：' + pkg.entry)
 		await cachePut(actual, bytes)
@@ -449,25 +468,30 @@
 		})
 	}
 	async function activate(source, pkg, bytes) {
-		const registered = []
+		// 注册只进暂存区：activate 返回、provides 核对通过后由 enable 一次性发布。
+		// 窗口在成功返回 / 抛错 / 超时后立即关闭，包再用定时器调 registerProtocol 会被拒绝，
+		// 未声明的协议不会因为「晚注册」混进注册表。
+		const staged = []
+		let open = true
 		const blobUrl = root.URL.createObjectURL(new root.Blob([bytes], { type: 'text/javascript' }))
+		const meta = {
+			source: source.key,
+			sourceName: source.name || source.key,
+			packageId: pkg.id,
+			version: pkg.version,
+			digest: hexOf(pkg.entryDigest),
+		}
 		const host = {
 			apiVersion: Contract.API_VERSION,
 			registerProtocol: function (def) {
+				if (!open) throw new Error('协议包的注册窗口已关闭（activate 已返回或已失败）')
 				if (!def || typeof def !== 'object') throw new Error('registerProtocol 需要协议对象')
 				const plain = String(def.id || '')
 				if (!plain) throw new Error('协议对象缺少 id')
-				if (registered.some(function (r) { return r.id === plain })) throw new Error('协议 id 重复注册：' + plain)
+				if (staged.some(function (r) { return r.id === plain })) throw new Error('协议 id 重复注册：' + plain)
 				const fullId = Contract.namespaceId(source.key, plain)
 				if (!P.allowsProtocol(fullId)) throw new Error('当前平台不支持外部协议')
-				Protocols.registerExternal(source.key, plain, def, {
-					source: source.key,
-					sourceName: source.name || source.key,
-					packageId: pkg.id,
-					version: pkg.version,
-					digest: hexOf(pkg.entryDigest),
-				})
-				registered.push({ id: plain, fullId: fullId })
+				staged.push({ id: plain, fullId: fullId, def: Contract.normalizeProtocolDef(def), meta: meta })
 				return fullId
 			},
 			source: { key: source.key, name: source.name, input: source.input, sha: source.sha },
@@ -489,19 +513,27 @@
 					setTimeout(function () { reject(new Error('协议包 activate 超时')) }, ACTIVATE_TIMEOUT)
 				}),
 			])
-			return registered.map(function (r) { return r.id })
-		} catch (e) {
-			registered.forEach(function (r) { Protocols.unregister(r.fullId) })
-			throw e
 		} finally {
+			open = false
 			setTimeout(function () { try { root.URL.revokeObjectURL(blobUrl) } catch (e) { /* 忽略 */ } }, 0)
 		}
+		return staged
 	}
 	function describeMismatch(check) {
 		const parts = []
 		if (check.extra.length) parts.push('多出 ' + check.extra.join('、'))
 		if (check.missing.length) parts.push('缺少 ' + check.missing.join('、'))
 		return parts.length ? '：' + parts.join('；') : ''
+	}
+	function enableTag(sourceKey, packageId) {
+		return 'enable:' + sourceKey + '\u0000' + packageId
+	}
+	function failEnable(sourceKey, packageId) {
+		unregisterPackage(sourceKey, packageId)
+		state.bootErrors = state.bootErrors.filter(function (e) { return !(e.source === sourceKey && e.id === packageId) })
+		saveEnabled()
+		if (typeof root.normalizeProtocolSelection === 'function') root.normalizeProtocolSelection()
+		notify()
 	}
 	async function enable(sourceKey, packageId, opts) {
 		opts = opts || {}
@@ -513,31 +545,67 @@
 		if (pkg.platformOk === false) throw new Error('该协议包不支持当前平台')
 		if (P.mobile) throw new Error('移动端只提供内置 SEK 协议，不支持外部协议')
 		if (!isTrusted(sourceKey, pkg)) throw new Error('需要先勾选「信任此版本」')
-		// 同一包旧版本 / 旧 id 先清掉，避免 provides 变化后留下孤儿协议；
-		// 先把「已停用」落盘，activate 失败时不会留下内存与存储不一致的启用记录
-		unregisterPackage(sourceKey, packageId)
-		state.enabled = state.enabled.filter(function (r) { return !(r.source === sourceKey && r.id === packageId) })
-		saveEnabled()
-		const bytes = await entryBytes(source, pkg, !!opts.cacheOnly)
-		const registered = await activate(source, pkg, bytes)
-		const check = Contract.checkProvides({ provides: pkg.provides }, registered)
-		if (!check.ok) {
-			registered.forEach(function (plain) { Protocols.unregister(Contract.namespaceId(sourceKey, plain)) })
+		const tag = enableTag(sourceKey, packageId)
+		if (state.busy[tag]) throw new Error('这个协议包正在启用')
+		const sourceToken = readOp('source', sourceKey)
+		const pkgToken = readOp('pkg', sourceKey, packageId)
+		function ensureValid() {
+			if (readOp('source', sourceKey) !== sourceToken || readOp('pkg', sourceKey, packageId) !== pkgToken) {
+				throw new Error('启用已取消（来源或版本已变化）')
+			}
+			const src = findSource(sourceKey)
+			if (!src) throw new Error('来源已删除，启用已取消')
+			if (!findPackage(src, packageId)) throw new Error('协议包已不在来源里，请刷新来源')
+		}
+		state.busy[tag] = '启用中'
+		try {
+			// 同一包旧版本 / 旧 id 先清掉，避免 provides 变化后留下孤儿协议；
+			// 先把「已停用」落盘，失败时不会留下内存与存储不一致的启用记录
+			unregisterPackage(sourceKey, packageId)
+			state.enabled = state.enabled.filter(function (r) { return !(r.source === sourceKey && r.id === packageId) })
+			saveEnabled()
+			const bytes = await entryBytes(pkg, !!opts.cacheOnly)
+			ensureValid()
+			const staged = await activate(source, pkg, bytes)
+			ensureValid()
+			const check = Contract.checkProvides({ provides: pkg.provides }, staged.map(function (s) { return s.id }))
+			if (!check.ok) {
+				failEnable(sourceKey, packageId)
+				throw new Error('协议包注册的 id 与 provides 不一致' + describeMismatch(check))
+			}
+			// 暂存区通过核对后才发布；跨包同 id 冲突由 registerExternal 拒绝，
+			// 发布到一半失败只回滚本次注册，不碰别的包。
+			const published = []
+			try {
+				staged.forEach(function (s) {
+					Protocols.registerExternal(sourceKey, s.id, s.def, s.meta)
+					published.push(s.fullId)
+				})
+			} catch (e) {
+				published.forEach(function (id) { Protocols.unregister(id) })
+				failEnable(sourceKey, packageId)
+				throw e
+			}
+			state.enabled.push({ source: sourceKey, id: packageId, version: pkg.version, hash: hexOf(pkg.entryDigest) })
 			state.bootErrors = state.bootErrors.filter(function (e) { return !(e.source === sourceKey && e.id === packageId) })
+			source.notice = ''
+			saveSources()
 			saveEnabled()
 			notify()
-			throw new Error('协议包注册的 id 与 provides 不一致' + describeMismatch(check))
+			return staged.map(function (s) { return s.id })
+		} catch (e) {
+			// 失败 / 取消后没有活着的注册：归一化各路选择，运行态不能停在已不存在的 id
+			if (typeof root.normalizeProtocolSelection === 'function') root.normalizeProtocolSelection()
+			notify()
+			throw e
+		} finally {
+			delete state.busy[tag]
+			notify()
 		}
-		state.enabled.push({ source: sourceKey, id: packageId, version: pkg.version, hash: hexOf(pkg.entryDigest) })
-		state.bootErrors = state.bootErrors.filter(function (e) { return !(e.source === sourceKey && e.id === packageId) })
-		source.notice = ''
-		saveSources()
-		saveEnabled()
-		notify()
-		return registered
 	}
 	function disable(sourceKey, packageId, silent) {
 		const rec = findEnabled(sourceKey, packageId)
+		bumpOp('pkg', sourceKey, packageId)
 		unregisterPackage(sourceKey, packageId)
 		if (!rec) return false
 		state.enabled = state.enabled.filter(function (r) { return !(r.source === sourceKey && r.id === packageId) })
@@ -573,6 +641,7 @@
 	function remove(key) {
 		const source = findSource(key)
 		if (!source) return Promise.resolve(false)
+		bumpOp('source', key)
 		state.enabled.filter(function (r) { return r.source === key }).forEach(function (r) { disable(key, r.id, true) })
 		state.trust = state.trust.filter(function (g) { return g.source !== key })
 		state.sources = state.sources.filter(function (s) { return s.key !== key })
@@ -587,6 +656,8 @@
 		const source = findSource(key)
 		if (!source) throw new Error('来源不存在')
 		if (state.busy[key]) throw new Error('这个来源正在刷新')
+		// 刷新会让目录 / 版本变化：在飞的启用全部作废，不能让旧版本在刷新后落地
+		bumpOp('source', key)
 		source.error = ''
 		source.notice = ''
 		state.busy[key] = '刷新中'
