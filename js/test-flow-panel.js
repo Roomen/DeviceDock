@@ -84,6 +84,7 @@
 	let randomPlan = null // 随机模式生成的计划（{ seed, steps }）
 	let running = false
 	let flowTxToken = null
+	let runAllGen = 0
 	let stopFlag = false
 
 	// ---------- 状态持久化 ----------
@@ -638,7 +639,7 @@
 			try {
 				let defaults = null
 				try { defaults = T.normalizeDefaults(flow.defaults) } catch (e) { defaults = T.normalizeDefaults({}) }
-				const nextDefaults = { timeoutMs: defaults.timeoutMs, retries: defaults.retries, onFailure: defaults.onFailure, restoreOriginals: defaults.restoreOriginals }
+				let nextDefaults = { timeoutMs: defaults.timeoutMs, retries: defaults.retries, onFailure: defaults.onFailure, restoreOriginals: defaults.restoreOriginals }
 				let nextMode = 'batch'
 				let nextBatchSteps = null
 				let nextBatchVerify = true
@@ -665,6 +666,7 @@
 					nextBatchVerify = imp.verify
 					nextGapMs = imp.gapMs
 					nextDefaults = imp.defaults
+					nextCounter = imp.counter
 				}
 				draft.defaults = nextDefaults
 				draft.batch.gapMs = nextGapMs
@@ -852,6 +854,7 @@
 		}
 
 		running = true
+		runAllGen++
 		stopFlag = false
 		if (el.log) el.log.textContent = ''
 		el.results.textContent = ''
@@ -922,18 +925,40 @@
 		}
 	}
 
-	function stopAll() {
+	async function stopAll() {
 		if (pump.writeUnclosed) {
-			// 故障终态的手动释放：先作废旧执行代次（停止标记 + 撤掉等待者），
-			// 再按归属与令牌释放钉扎——其它事务的钉扎不受影响
+			// 故障终态的手动释放：先作废旧执行代次（停止标记 + 撤掉等待者），再按归属与令牌解锁——
+			// closeLane 的 laneBlockReason 会拒绝钉扎中的关闭，所以解锁在前；端口关闭仍有确认，
+			// 失败时如实提示（钉扎已解，用户可重试关闭或手动断开）
 			stopFlag = true
 			cancelWaiters('已停止')
-			try {
-				window.serialApi.forceReleaseTransaction('flow', flowTxToken)
-			} catch (e) { /* */ }
-			pump.writeUnclosed = false
+			runAllGen++
+			const sid = window.serialApi.getActiveSendSid()
+			// 先沿现有关闭路径关闭并确认释放（closeLane 自带 3s 释放上限）；
+			// 本事务的钉扎会让关闭被拒（lane_blocked / lane_busy），这时按归属与令牌释放后再试一次
+			let closed = false
+			let res = null
+			try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
+			closed = !!(res && res.ok)
+			if (!closed && res && (res.code === 'lane_blocked' || res.code === 'lane_busy')) {
+				try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
+				flowTxToken = null
+				try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
+				closed = !!(res && res.ok)
+			}
+			if (!closed) {
+				// 端口没确认释放：保持故障占用（任务与标记都不清），只如实提示
+				setStatus('端口未确认释放，保持占用；请重试关闭或手动断开该路', 'err')
+				return
+			}
+			// 端口已确认释放：这些任务都属于已作废的执行代次，直接清掉，再解锁（若还没解）
+			pump.writeTask = null
 			pump.unclosedTask = null
-			flowTxToken = null
+			pump.writeUnclosed = false
+			if (flowTxToken) {
+				try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
+				flowTxToken = null
+			}
 			setStatus('事务占用已手动释放', 'ok')
 			running = false
 			el.start.disabled = !isProtoSupported()

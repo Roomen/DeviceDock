@@ -4896,12 +4896,14 @@
 		if (window.serialApi && window.serialApi.updatePreparing) throw new Error('正在安装应用更新，暂不能发送')
 		opts = opts || {}
 		// 发送入口的事务归属检查（按目标物理路比较）：该路被别的事务（测试流程 / 固件升级）独占时
-		// 拒绝普通发送，本事务的发送带令牌放行；其它物理路（如 A 路事务期间的 B 路）不受影响
-		if (pinSid === sid && (!opts || opts.token !== pinToken)) {
+		// 拒绝普通发送，本事务的发送带令牌放行；其它物理路（如 A 路事务期间的 B 路）不受影响。
+		// 目标路先解析成物理路号（null → 主发路，单路 UI A → S），再与钉扎路号比较
+		const targetSid = physicalSid(sid)
+		if (pinSid === targetSid && (!opts || opts.token !== pinToken)) {
 			const msg = '另一事务（' + (pinOwner || '其他事务') + '）正在进行，暂不能发送'
 			if (opts.throwOnError) throw new Error(msg)
 			addLogErr(msg, sid)
-			if (sid === 'S') showToast(msg, 2500)
+			if (targetSid === 'S') showToast(msg, 2500)
 			return
 		}
 		sid = sid || SerialHub.activeSendPhys()
@@ -4973,7 +4975,7 @@
 
 	// 终端键盘直写：不走 HEX 开关、不加 CRLF、不记 TX 行（设备自己 echo）
 	async function writeTermBytes(sid, bytes) {
-		sid = sid || SerialHub.activeSendPhys()
+		sid = physicalSid(sid || SerialHub.activeSendPhys())
 		// 终端写入走同一归属检查：被钉扎路（测试流程 / 固件升级）不接受终端插入字节
 		if (pinSid === sid && pinOwner) {
 			addLogErr('另一事务（' + (pinOwner || '其他事务') + '）正在进行，暂不能从终端发送', sid)
@@ -5028,6 +5030,13 @@
 			if (!SerialHub.isOpen(sid) || SerialHub.getPort(sid) !== port) return
 			recoverDeadReadLoop(sid, '串口写入失败，正在尝试重新打开').catch(function () {})
 		}, WRITE_DEAD_CONFIRM_MS)
+	}
+
+	// 事务与发送统一使用物理路号：null → 主发路的物理路；单路 UI 的 A → S（双路 A 是真实路）
+	function physicalSid(sid) {
+		if (sid == null) return SerialHub.activeSendPhys()
+		if (SerialHub.mode === 'single' && sid === 'A') return 'S'
+		return sid
 	}
 
 	// 接收流异常先尝试重建；重复异常限制重建频率，不把设备空闲判为断线。
@@ -5633,7 +5642,7 @@
 		// 否则无 owner 的旧式调用就能混进带归属的事务里交错收发
 		pinSession(sid, owner, token) {
 			if (this.updatePreparing) throw new Error('正在安装应用更新，暂不能开始事务')
-			sid = sid || SerialHub.activeSendSid()
+			sid = physicalSid(sid || SerialHub.activeSendSid())
 			if (sid !== 'A' && sid !== 'B' && sid !== 'S') {
 				addLogErr('pinSession: 无效的会话 id: ' + sid)
 				return null

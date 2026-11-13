@@ -61,16 +61,20 @@ function harness() {
 		getPortIdentityKey: async () => null, localStorage: { setItem: () => {} }, persistLaneOptions: () => {},
 		recoverDeadReadLoop: async sid => { recovered.push(sid) }, rxWatch: () => ({}), reopenAttemptBySid: {}, readData: async () => {},
 		laneMoving: false, platformHasSid: () => true, lanePortOwner: () => null, portConflictMsg: () => 'synthetic conflict',
-		pinSid: null, pinOwner: '', pinToken: null, showToast: () => {}
+		pinSid: null, pinOwner: '', pinToken: null, pinDepth: 0, pinTokenSeq: 0, showToast: () => {}
 	})
 	vm.runInContext(
 		section('\tfunction portHeldByOther(', '\tfunction randAliasId(') +
 		section('\tasync function releasePort(sid) {', '\t//页面销毁时释放串口句柄') +
 		section('\tasync function closeSerial(sid)', '\tfunction chipElFor(sid)') +
 		section('\tasync function writeData(data,', '\t// 接收流异常先尝试重建') +
+		// 事务钉扎（serialApi 对象上的方法）：转成独立函数注入，测试按真实入口调用
+		'function pinSession(sid, owner, token) ' + section('\t\tpinSession(sid, owner, token) {', '\t\tunpinSession(token) {').slice(section('\t\tpinSession(sid, owner, token) {', '\t\tunpinSession(token) {').indexOf('{')).trim().replace(/,$/, '') + '\n' +
+		'function unpinSession(token) ' + section('\t\tunpinSession(token) {', '\t\t// 手动释放事务占用').slice(section('\t\tunpinSession(token) {', '\t\t// 手动释放事务占用').indexOf('{')).trim().replace(/,$/, '') + '\n' +
+		'function forceReleaseTransaction(owner, token) ' + section('\t\tforceReleaseTransaction(owner, token) {', '\t\tisPinned() {').slice(section('\t\tforceReleaseTransaction(owner, token) {', '\t\tisPinned() {').indexOf('{')).trim().replace(/,$/, '') + '\n' +
 		section('\tfunction laneBlockReason(sid, port) {', '\tserialToggle.addEventListener') +
 		section('\tfunction flushSerialPack(', '\t// 发送前先把本口') +
-		'\nglobalThis.api = { releasePort, closeSerial, openSerial, writeData, writeTermBytes, handleToggleClick, openLane, closeLane }', context)
+		'\nglobalThis.api = { releasePort, closeSerial, openSerial, writeData, writeTermBytes, handleToggleClick, openLane, closeLane, pinSession, unpinSession, forceReleaseTransaction }', context)
 	async function advance(ms) {
 		const end = now + ms
 		await settle()
@@ -217,6 +221,34 @@ async function testTransactionSendGuard() {
 	assert.equal(h.sessions.S.writer, null, '被钉扎路不获取 writer')
 }
 
+async function testPhysicalSidNullSend() {
+	// 回修 7 · 1：发送与钉扎统一物理路号——sid=null 解析到主发路（物理 S），被事务拒绝
+	const h = harness()
+	h.hub.mode = 'single'
+	const token = h.api.pinSession('A', 'flow')
+	assert.ok(token, '单路 UI A 钉扎成功（解析为物理 S）')
+	h.sessions.S.port = { writable: { getWriter: () => ({ write: async () => {}, releaseLock: () => {} }) }, close: async () => {} }
+	const nullSend = await h.api.writeData(Uint8Array.of(0x41))
+	assert.equal(nullSend, undefined, '默认目标路（物理 S）被事务拒绝（2d12755 会照发）')
+	assert.equal(h.api.forceReleaseTransaction('flow', token), true, '按归属与令牌释放')
+	const okSend = await h.api.writeData(Uint8Array.of(0x41), 'S')
+	assert.ok(okSend, '释放后可正常发送')
+}
+
+async function testPhysicalSidTerminal() {
+	// 回修 7 · 2：单路下用 UI 路号 A 钉扎后，终端写（物理 S）被拒
+	const h = harness()
+	h.hub.mode = 'single'
+	const token = h.api.pinSession('A', 'flow')
+	assert.ok(token, '单路 UI A 钉扎成功（解析为物理 S）')
+	h.sessions.S.port = { writable: { getWriter: () => ({ write: async () => {}, releaseLock: () => {} }) }, close: async () => {} }
+	await h.api.writeTermBytes('S', Uint8Array.of(1))
+	assert.equal(h.sessions.S.txBytes, 0, '被钉扎路（物理 S）终端写入被拒（2d12755 会照写）')
+	assert.equal(h.api.forceReleaseTransaction('flow', token), true, '按归属与令牌释放')
+	await h.api.writeTermBytes('S', Uint8Array.of(1))
+	assert.equal(h.sessions.S.txBytes, 1, '释放后终端写正常')
+}
+
 async function testWriteNetworkErrorRecovers() {
 	// 写入遇到 NetworkError(设备拔出)要触发读循环死亡同款恢复；其它错误不触发
 	for (const [name, expect] of [['NetworkError', 1], ['AbortError', 0]]) {
@@ -350,6 +382,8 @@ async function testOpenLaneCancelledIsAborted() {
 	await testHangingReader()
 	await testPendingWrite()
 	await testLateSuccessfulWrite()
+	await testPhysicalSidTerminal()
+	await testPhysicalSidNullSend()
 	await testTransactionSendGuard()
 	await testWriteNetworkErrorRecovers()
 	await testRealWritableStream()
