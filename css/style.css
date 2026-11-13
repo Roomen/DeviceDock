@@ -8175,6 +8175,11 @@ html[data-layout='modern'] #activity-rail .rail-item[data-view='view-fw-pack'] .
 	content: '固件';
 }
 
+/* 配置是 data-view 的视图入口(不再是下拉)，短标签同样要有一条：漏了这条，选中时只剩图标 */
+html[data-layout='modern'] #activity-rail .rail-item[data-view='view-settings'] .rail-label::after {
+	content: '配置';
+}
+
 html[data-layout='modern'] #activity-rail .rail-version {
 	padding: 6px 0;
 	font-size: var(--fs-micro);
