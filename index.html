@@ -100,6 +100,7 @@
                         <li><button class="dropdown-item" type="button" id="serial-export"><i class="icon icon-folder-symlink"></i> 导出配置</button></li>
                         <li><hr class="dropdown-divider"></li>
                         <li><button class="dropdown-item" type="button" id="serial-protocol-sources" data-feature="panel.protocol-sources"><i class="icon icon-plug"></i> 协议来源…</button></li>
+                        <li data-feature="plugins"><button class="dropdown-item" type="button" id="serial-plugins-manage" data-feature="plugins"><i class="icon icon-layout-grid"></i> 插件…</button></li>
                         <li><hr class="dropdown-divider"></li>
                         <li><button class="dropdown-item text-danger" type="button" id="serial-reset"><i class="icon icon-rotate-ccw"></i> 重置所有参数…</button></li>
                     </ul>
@@ -1023,12 +1024,15 @@
             var items = rail.querySelectorAll('.rail-item[data-view]')
             var KEY = 'serial-debug-active-view'
             var current = null
+            function allItems() {
+                return rail.querySelectorAll('.rail-item[data-view]')
+            }
             function activate(id) {
                 if (!document.getElementById(id)) return
                 document.querySelectorAll('.app-view').forEach(function (v) {
                     v.classList.toggle('active', v.id === id)
                 })
-                items.forEach(function (it) {
+                allItems().forEach(function (it) {
                     it.classList.toggle('active', it.dataset.view === id)
                 })
                 localStorage.setItem(KEY, id)
@@ -1036,7 +1040,7 @@
             }
             // 视图入口带 data-feature 时，平台画像没开这项功能就回到通信调试(存下的视图可能来自别的平台)
             function allowed(id) {
-                var it = Array.from(items).find(function (item) { return item.dataset.view === id })
+                var it = Array.from(allItems()).find(function (item) { return item.dataset.view === id })
                 if (!it || !document.getElementById(id)) return false
                 var f = it.dataset.feature
                 if (!f || !window.AppPlatform) return true
@@ -1051,6 +1055,7 @@
                 it.addEventListener('click', function () { switchTo(it.dataset.view) })
             })
             var saved = localStorage.getItem(KEY)
+            window.AppViews = { activate: activate, switchTo: switchTo, initialSaved: saved || '' }
             if (saved) switchTo(saved)
         })()
     </script>
@@ -1109,6 +1114,10 @@
     <script src="js/ble-panel.js"></script>
     <script src="js/mcp-bridge.js"></script>
     <script src="js/mcp-service.js"></script>
+    <script src="js/plugin-rpc.js"></script>
+    <script src="js/plugin-api.js"></script>
+    <script src="js/plugin-host.js"></script>
+    <script src="js/plugins-panel.js"></script>
 
 </body>
 

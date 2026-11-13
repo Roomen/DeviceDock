@@ -77,6 +77,36 @@
 		listen: function (name, cb) { return T.event.listen(name, function (e) { cb(e.payload || {}) }) },
 	})
 
+	// 客户端插件宿主(仅桌面客户端)：安装/校验/卸载与 GitHub 令牌钥匙串走 Rust，UI 沙箱与 RPC 在 js/plugin-host.js
+	if (!P.has || P.has('plugins')) P.provide('plugins', {
+		list: function () { return T.core.invoke('plugin_list') },
+		status: function () { return T.core.invoke('plugin_status') },
+		inspect: function (repo, tag) { return T.core.invoke('plugin_inspect', { repo: repo, tag: tag == null ? null : tag }) },
+		install: function (repo, tag, expectedSha256, expectedCurrentVersion, expectedCurrentSha256) {
+			// 摘要必填；确认时的已安装版本 / 摘要也要回传，Rust 提交前再核对一次
+			return T.core.invoke('plugin_install', {
+				repo: repo,
+				tag: tag == null ? null : tag,
+				expectedSha256: expectedSha256,
+				expectedCurrentVersion: expectedCurrentVersion == null ? null : expectedCurrentVersion,
+				expectedCurrentSha256: expectedCurrentSha256 == null ? null : expectedCurrentSha256,
+			})
+		},
+		checkUpdate: function (id) { return T.core.invoke('plugin_check_update', { id: id }) },
+		setEnabled: function (id, enabled) { return T.core.invoke('plugin_set_enabled', { id: id, enabled: !!enabled }) },
+		uninstall: function (id) { return T.core.invoke('plugin_uninstall', { id: id }) },
+		tokenStatus: function () { return T.core.invoke('plugin_token_status') },
+		tokenSet: function (token) { return T.core.invoke('plugin_token_set', { token: token }) },
+		tokenClear: function () { return T.core.invoke('plugin_token_clear') },
+		storageGet: function (id, key) { return T.core.invoke('plugin_storage_get', { id: id, key: key }) },
+		storageSet: function (id, key, value) { return T.core.invoke('plugin_storage_set', { id: id, key: key, value: value === undefined ? null : value }) },
+		storageRemove: function (id, key) { return T.core.invoke('plugin_storage_remove', { id: id, key: key }) },
+		repairList: function () { return T.core.invoke('plugin_repair_list') },
+		retryRecovery: function (id) { return T.core.invoke('plugin_retry_recovery', { id: id }) },
+		removeRepair: function (id) { return T.core.invoke('plugin_remove_repair', { id: id }) },
+		listen: function (name, cb) { return T.event.listen(name, function (e) { cb(e.payload || {}) }) },
+	})
+
 	// ---------- 提示条 ----------
 	let timer = 0
 	function notify(text, isError, action) {

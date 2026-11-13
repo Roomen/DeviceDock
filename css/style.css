@@ -10200,7 +10200,9 @@ html[data-layout='modern'] .mdn-pop-params[hidden] {
 @media (max-width: 640px) {
 	.connection-filters { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
-/* ========== 曲线面板（工作台 curves） ==========
+
+/* 
+=== 曲线面板（工作台 curves） ==========
    图表是这一屏唯一的「浓」处：中性栅格 + 通道色曲线，A 青 / B 琥珀 / 单路 accent，
    颜色全部来自 CSS 变量（主题切换时 js/curves-panel.js 重取并重建图表）。 */
 html[data-layout='modern'] .wb-curves {
@@ -10426,10 +10428,37 @@ html[data-layout='modern'] .mdn-curve-legend-lane {
 
 html[data-layout='modern'] .mdn-curve-legend-label {
 	color: var(--text-secondary);
+=======
+/* 客户端插件宿主(仅桌面客户端)：左栏「插件」目录、沙箱 iframe 视图与插件管理面板 */
+html[data-layout='modern'] #activity-rail .rail-plugins {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	width: 100%;
+	margin-top: 4px;
+	padding-top: 6px;
+	border-top: 1px solid var(--mdn-rail-hi);
+}
+html[data-layout='modern'] #activity-rail .rail-plugins[hidden] {
+	display: none !important;
+}
+html[data-layout='modern'] #activity-rail .rail-section-label {
+	font-size: var(--fs-micro);
+	line-height: 1;
+	color: var(--mdn-rail-muted);
+	text-align: center;
+	padding: 2px 0;
+}
+html[data-layout='modern'] #activity-rail .rail-item.rail-plugin .rail-label {
+	font-size: var(--fs-micro);
+	line-height: 1.15;
+	max-width: 52px;
+
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
 
 /* 图例色块与曲线线型一一对应：实线 / 虚线 / 点线，颜色随通道（currentColor 由 JS 设成通道色） */
 html[data-layout='modern'] .mdn-curve-swatch--dash {
@@ -10467,3 +10496,149 @@ html[data-layout='modern'] .sk-flow-noread-warn[hidden] {
 html[data-layout='modern'] .sk-flow-item-static {
 	font-family: var(--font-mono);
 }
+html[data-layout='modern'] #activity-rail .rail-item.rail-plugin .rail-label::after {
+	content: none;
+}
+html[data-layout='modern'] #activity-rail .rail-plugin-img {
+	width: 20px;
+	height: 20px;
+	object-fit: contain;
+}
+html[data-layout='modern'] #activity-rail .rail-plugin.is-dragging {
+	opacity: 0.55;
+}
+html[data-layout='modern'] #activity-rail .rail-plugin.is-drop-before {
+	box-shadow: inset 0 2px 0 var(--mdn-rail-accent);
+}
+html[data-layout='modern'] #activity-rail .rail-plugin.is-drop-after {
+	box-shadow: inset 0 -2px 0 var(--mdn-rail-accent);
+}
+html[data-layout='modern'] .plugin-view {
+	flex: 1 1 auto;
+	min-height: 0;
+	position: relative;
+	background: var(--bg-body);
+}
+html[data-layout='modern'] .plugin-frame {
+	width: 100%;
+	height: 100%;
+	border: 0;
+	display: block;
+	background: var(--bg-body);
+}
+html[data-layout='modern'] .plugin-fallback {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 24px;
+	color: var(--text-secondary);
+	font-size: var(--fs-body);
+}
+html[data-layout='modern'] .plugin-fallback-title {
+	font-size: var(--fs-title);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+html[data-layout='modern'] .mdn-plg-token {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--radius);
+	background: var(--bg-surface);
+}
+html[data-layout='modern'] .mdn-plg-token-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+html[data-layout='modern'] .mdn-plg-token-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: var(--fs-body);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+html[data-layout='modern'] .mdn-plg-token-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+html[data-layout='modern'] .mdn-plg-token-row .form-control {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+html[data-layout='modern'] .mdn-plg-confirm {
+	border-color: var(--accent);
+}
+html[data-layout='modern'] .mdn-plg-caps {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 4px;
+}
+html[data-layout='modern'] .mdn-plg-caps-title {
+	font-size: var(--fs-small);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+html[data-layout='modern'] .mdn-plg-cap-item {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex-wrap: wrap;
+	font-size: var(--fs-small);
+	color: var(--text-secondary);
+}
+html[data-layout='modern'] .mdn-plg-cap-added {
+	padding: 1px 6px;
+	border-radius: var(--radius-xs);
+	background: var(--warning-bg);
+	color: var(--warning);
+	font-size: var(--fs-micro);
+	font-weight: 600;
+}
+html[data-layout='modern'] .mdn-plg-notes {
+	padding: 8px 10px;
+	border-radius: var(--radius-sm);
+	background: var(--bg-code);
+	color: var(--text-secondary);
+	font-size: var(--fs-small);
+	white-space: pre-wrap;
+	max-height: 120px;
+	overflow: auto;
+}
+@media (max-width: 768px) {
+	html[data-layout='modern'] #activity-rail .rail-plugins {
+		display: contents;
+	}
+	html[data-layout='modern'] #activity-rail .rail-section-label {
+		display: none;
+	}
+}
+
+
+/* 插件管理面板：安装事务修复与待释放资源（宿主级，插件卸载后仍显示） */
+html[data-layout='modern'] .mdn-plg-issues {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+html[data-layout='modern'] .mdn-plg-issues[hidden] {
+	display: none !important;
+}
+html[data-layout='modern'] .mdn-plg-issue {
+	border-color: var(--warning);
+}
+html[data-layout='modern'] .mdn-plg-issue .mdn-src-head-actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+

@@ -206,6 +206,12 @@ assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () 
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, fields: [{ key: 'a', name: 'A', type: 'uint8', enum: [] }] }), /enum/)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, session: { prepare: 'no' } }), /session.prepare 必须是函数/)
 assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, session: { idleMs: 0 } }), /session.idleMs 必须是正数/)
+// 注册层拒绝 async 协议函数：隔离会话按同步契约调用，await 后的代码会在状态恢复后继续跑
+assert.equal(C.isAsyncFunction(function () {}), false)
+assert.equal(C.isAsyncFunction(async function () {}), true)
+assert.equal(C.isAsyncFunction({ then: function () {} }), false)
+assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: async function () {} }), /不能是 async/)
+assert.throws(() => C.normalizeProtocolDef({ name: 'x', parseFrame: function () {}, logView: async function () {} }), /不能是 async/)
 const withHooks = C.normalizeProtocolDef({
 	name: 'x', parseFrame: function () {},
 	buildRead: function () {}, buildWrite: function () {}, buildQuery: function () {},
@@ -214,7 +220,7 @@ const withHooks = C.normalizeProtocolDef({
 })
 assert.ok(withHooks.buildRead && withHooks.buildWrite && withHooks.buildQuery && withHooks.matchResponse && withHooks.readField)
 assert.deepEqual(Object.keys(withHooks.session).sort(), ['idleMs', 'keepalive', 'keepaliveTimeoutMs', 'prepare'])
-assert.equal(withHooks.tx, undefined, 'tx 已从契约移除')
+assert.equal(withHooks.tx, undefined, 'tx 已从契约移除（P3），async 检查按 P4 保留')
 
 // ---- 摘要（浏览器与 node 共用 crypto.subtle） ----
 ;(async function () {

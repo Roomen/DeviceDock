@@ -18,6 +18,8 @@
 - `def` 是规范化协议对象：现有字段 `name`、`parseFrame`、`formatFrame`、`logView`、`findFrame`、`byteMap`、`buildDownFrame`、`presets` 全部保留（`name` 与 `parseFrame` 必填，其余可空），另外可选：`fields`（字段目录，完整定义见下节）、`queries`（整包查询用例 `[{ key, name, queryId?, expectTag?, … }]`，协议自己认它的附加属性）、`metrics(frame)`（`[{ key, value }]` 数值点，供曲线面板）、`buildRead(field)` / `buildWrite(field, value)` / `buildQuery(query)` / `matchResponse(frame, request)` / `readField(frame, field)`（测试流程引擎用，见下节）、`session`（可选会话钩子 `{ prepare?, keepalive?, idleMs?, keepaliveTimeoutMs? }`）、`mountPanel(el, api)`（自定义面板，返回 dispose）。
 - `type` 只接受 `uint8`、`uint16le`、`uint32le`、`int8`、`int16le`、`int32le`、`float32le`、`float64le`、`bcd`、`ascii`、`enum`、`bool`；`enum` 归一化成 `[{ value, label }]`。
 - `tx`（v1 过渡期暴露的协议自带测试执行器）已随 P3 的通用流程引擎移除：宿主工具只吃 `fields` / `queries` / `buildRead` / `buildWrite` / `buildQuery` / `matchResponse` / `readField` / `session`，注册表不再规范化 `tx`，协议包里带 `tx` 会被当成普通附加属性忽略。
+- **协议函数必须是同步函数**：`parseFrame` / `formatFrame` / `logView` / `findFrame` / `byteMap` / `buildDownFrame` / `metrics` / `buildRead` / `buildWrite` / `matchResponse` / `mountPanel` 一律不接受 `async` 实现，注册层（`normalizeProtocolDef` 里的 `isAsyncFunction`）会直接拒绝整包。宿主在按路隔离的会话快照里同步调用这些函数，`await` 之后的代码会在全局状态已恢复时继续跑，会串路或污染实时基准。
+- **明令禁止普通函数返回 Promise / thenable，或在 Promise 的后续回调里访问全局状态**（例如先读 `window._activeProtocol`、再 `await`、之后继续解析）。注册层只能识别 `async function`，调用后的 thenable 检查只能报错、**无法取消已经安排的回调**；这类实现会在宿主 `inLane` 恢复全局状态之后继续跑，造成双路串台或基准水量污染。宿主不提供任何取消 / 隔离保证，协议作者必须让全部逻辑同步完成；本轮不再追加机制，这条是契约义务而不是检测能力。
 
 ## fields 字段目录
 

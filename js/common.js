@@ -284,6 +284,9 @@
 		// 这里答的是"现在能不能用": 关闭后仍记着的口是空闲的, Web Serial 允许重新 open。
 		busyOwnerOfPort(port, exceptSid) {
 			if (!port) return null
+			// 插件声明的占用(仅桌面客户端)：声明过的口不再给任何会话用，提示里带插件名
+			const claimed = window.serialPortClaims && window.serialPortClaims.ownerOf ? window.serialPortClaims.ownerOf(port) : null
+			if (claimed) return claimed
 			const all = this.allPhys()
 			for (let i = 0; i < all.length; i++) {
 				const sid = all[i]
@@ -300,6 +303,8 @@
 		// 两边都没有强身份(网页版 Web Serial 只有 VID/PID)才退回按 VID/PID 判。同步身份就够：
 		// 原生 getInfo 直接带路径与序列号，网页版本来就没有
 		findRebindSession(port, isLost) {
+			// 插件声明占用的口不参与热插拔认领，免得重插后被会话悄悄抢走
+			if (window.serialPortClaims && window.serialPortClaims.ownerOf && window.serialPortClaims.ownerOf(port)) return null
 			const sids = this.mode === 'single' ? ['S'] : ['A', 'B']
 			const free = sids.filter((sid) => !this.isOpen(sid) && !this.isOpening(sid) && !this.isReleaseFailed(sid) && !this._sess(sid).releaseTask)
 			const usbId = function (p) {
@@ -4291,6 +4296,7 @@
 	}
 
 	function portConflictMsg(taken) {
+		if (typeof taken === 'string' && taken.indexOf('plugin:') === 0) return '该口已被插件「' + taken.slice(7) + '」占用'
 		if (taken === 'S') return '该口已被单路串口占用'
 		if (taken === 'A' || taken === 'B') return '该口已被' + sidName(taken) + '占用'
 		return '该口已被其它会话占用'
@@ -4954,6 +4960,7 @@
 			}
 			SerialHub._sess(sid).txBytes += data.length
 			const shown = opts.logData ? Uint8Array.from(opts.logData) : data
+			if (window.serialByteTap) window.serialByteTap.emit('tx', sid, shown)
 			addLog(shown, false, sendTime, sid, false, sendName)
 			return { startedAt: sendTime.getTime(), completedAt: completedAt.getTime(), durationMs, bytes: data.length }
 		} catch (error) {
@@ -5431,6 +5438,8 @@
 	function dataReceived(data, sid, meta) {
 		sid = sid || SerialHub.activeSendPhys()
 		noteSerialRx(sid)
+		// 插件宿主的原始字节旁路(仅桌面客户端)：没人订阅时直接返回
+		if (window.serialByteTap) window.serialByteTap.emit('rx', sid, data)
 		SerialHub._sess(sid).rxBytes += data.length
 		// 先组装并记录本次 RX，再通知可能同步发出 TX 的订阅者，避免发送前 flush 拆掉上一块半帧。
 		try {
@@ -7596,6 +7605,26 @@
 		removeLaneB: removeLaneB,
 		protocolOf: protocolIdForSid,
 		protocolName: protocolName,
+		// 插件宿主调用协议函数：换入该路协议 + 该路实时 skSession 的快照（拷贝，不回写）/ 隔离 ansi 状态。
+		// 快照让解析能读到这一路已有的基准水量，但 fn 里的改动只落在用完即丢的 st 上；双路 A/B 不串。
+		// 协议函数若返回 thenable，隔离上下文退出后异步代码还会跑，必须明确拒绝。
+		callInIsolatedLane: function (sid, fn) {
+			const live = sid === 'A' || sid === 'B' ? laneLiveState(sid).sess : (skSess() ? skSess().snapshot() : null)
+			const copy = live ? {
+				deviceUid: live.deviceUid, baseCode: live.baseCode, baseLiters: live.baseLiters,
+				baseLabel: live.baseLabel, baseSource: live.baseSource,
+			} : null
+			const st = { sess: copy, ansi: new AnsiUp() }
+			return inLane(sid, st, function () {
+				const value = fn()
+				if (value && typeof value.then === 'function') {
+					const err = new Error('插件协议函数不支持异步返回（隔离上下文已退出）')
+					err.code = 'unsupported_async'
+					throw err
+				}
+				return value
+			})
+		},
 		setProtocol: setLaneProtocol,
 		transportOf: laneTransport,
 		summary: function (sid) {
@@ -7655,6 +7684,109 @@
 				refreshPortDisplayNames()
 				return ok
 			})
+		},
+	}
+
+	// ===== 插件宿主挂钩(仅桌面客户端，见 js/plugin-host.js) =====
+	// 页面里只留三个很薄的钩子，插件业务全部在 js/plugin-*.js 里；网页版没有插件宿主，这些对象没人用。
+	// 1) 原始字节旁路：订阅者由插件宿主加进来，没人订阅时接收 / 发送热路径不做任何事
+	const byteTaps = []
+	window.serialByteTap = {
+		emit: function (direction, sid, data) {
+			if (!byteTaps.length || !data || !data.length) return
+			for (let i = 0; i < byteTaps.length; i++) {
+				try { byteTaps[i](direction, sid, data) } catch (e) { /* 订阅者出错不影响收发 */ }
+			}
+		},
+		add: function (fn) {
+			if (typeof fn === 'function' && byteTaps.indexOf(fn) === -1) byteTaps.push(fn)
+		},
+		remove: function (fn) {
+			const i = byteTaps.indexOf(fn)
+			if (i !== -1) byteTaps.splice(i, 1)
+		},
+	}
+	// 2) 插件串口归属声明：独占(默认)或共享占用某个口。宿主的选口、冲突提示与热插拔认领都经
+	// SerialHub.busyOwnerOfPort 认这个声明，插件不用自己猜哪个口被谁占着。
+	const pluginClaims = new Map()
+	let claimSeq = 0
+	function claimKeysOf(port) {
+		// 身份键按需要现算（插件可能声明一个从未被会话解析过的口），不能只查缓存
+		const ident = _portIdentityCache.has(port) ? _portIdentityCache.get(port) : syncPortIdentity(port)
+		return ident && ident.keys ? ident.keys.slice() : []
+	}
+	window.serialPortClaims = {
+		// port 是 SerialAdapter 给的端口对象；name 是插件显示名，用于冲突提示
+		claim: function (port, pluginId, name, mode) {
+			if (!port) throw new Error('没有可声明的端口')
+			const existing = window.serialPortClaims.list().filter(function (c) { return c.port === port })
+			for (let i = 0; i < existing.length; i++) {
+				if (existing[i].pluginId === pluginId) return existing[i].id
+				if (existing[i].mode === 'exclusive' || mode !== 'shared') throw new Error('该口已被插件「' + existing[i].name + '」占用')
+			}
+			const id = 'claim-' + (++claimSeq)
+			pluginClaims.set(id, { id: id, port: port, keys: claimKeysOf(port), pluginId: pluginId, name: String(name || pluginId), mode: mode === 'shared' ? 'shared' : 'exclusive' })
+			return id
+		},
+		release: function (claimId) {
+			return pluginClaims.delete(claimId)
+		},
+		releasePlugin: function (pluginId) {
+			let removed = 0
+			pluginClaims.forEach(function (c, id) {
+				if (c.pluginId === pluginId) { pluginClaims.delete(id); removed++ }
+			})
+			return removed
+		},
+		list: function () {
+			const out = []
+			pluginClaims.forEach(function (c) {
+				out.push({ id: c.id, pluginId: c.pluginId, name: c.name, mode: c.mode, port: c.port, keys: c.keys.slice() })
+			})
+			return out
+		},
+		// 冲突提示用：同一个端口对象或同一套身份键都算被占用，返回 'plugin:<名字>'
+		ownerOf: function (port) {
+			if (!port || !pluginClaims.size) return null
+			let keys = null
+			let found = null
+			pluginClaims.forEach(function (c) {
+				if (found) return
+				if (c.port === port) { found = c; return }
+				if (!keys) keys = claimKeysOf(port)
+				if (keys.length && c.keys.some(function (k) { return keys.indexOf(k) !== -1 })) found = c
+			})
+			return found ? 'plugin:' + found.name : null
+		},
+	}
+	// 3) 日志：插件写系统行(带来源标记)、读最近 N 行、导出全部
+	window.serialLogApi = {
+		append: function (text, source) {
+			const body = String(text == null ? '' : text).slice(0, 2000)
+			addLogErr(source ? '[' + String(source).slice(0, 32) + '] ' + body : body)
+		},
+		recent: function (n) {
+			const container = SerialHub.getLogContainer()
+			const limit = Math.max(1, Math.min(500, Number(n) || 50))
+			if (!container) return []
+			const rows = container.children
+			const start = Math.max(0, rows.length - limit)
+			const out = []
+			for (let i = start; i < rows.length; i++) {
+				const row = rows[i]
+				if (!row.classList || !row.classList.contains('log-row')) continue
+				const body = row.querySelector('.log-body')
+				out.push({
+					at: Number(row.getAttribute('data-ts') || 0),
+					dir: row.getAttribute('data-dir') || '',
+					sid: row.getAttribute('data-sid') || '',
+					text: body ? body.textContent : '',
+				})
+			}
+			return out
+		},
+		exportText: function () {
+			return getLogsText()
 		},
 	}
 

@@ -38,6 +38,13 @@
 		return s.length > max ? s.slice(0, max) : s
 	}
 	function isFunction(v) { return typeof v === 'function' }
+	// 协议函数按同步契约在宿主按路隔离的会话里调用：async 实现在 await 之后仍会访问
+	// 已经恢复的全局状态，注册层就拦掉。
+	function isAsyncFunction(v) {
+		if (!isFunction(v)) return false
+		const ctor = v.constructor
+		return (ctor && ctor.name === 'AsyncFunction') || Object.prototype.toString.call(v) === '[object AsyncFunction]'
+	}
 
 	// ---------- SemVer / 摘要 ----------
 	function normalizeVersion(value) {
@@ -425,11 +432,13 @@
 		const name = str(def.name, 80)
 		if (!name) fail('协议缺少名称')
 		if (!isFunction(def.parseFrame)) fail('协议缺少 parseFrame')
+		if (isAsyncFunction(def.parseFrame)) fail('协议 parseFrame 不能是 async 函数（宿主按同步契约调用）')
 		const out = { name: name, parseFrame: def.parseFrame }
 		;['formatFrame', 'logView', 'findFrame', 'byteMap', 'buildDownFrame', 'metrics', 'buildRead', 'buildWrite', 'buildQuery', 'matchResponse', 'readField', 'mountPanel'].forEach(function (k) {
 			const v = def[k]
 			if (v == null) { out[k] = null; return }
 			if (!isFunction(v)) fail('协议 ' + name + ' 的 ' + k + ' 必须是函数')
+			if (isAsyncFunction(v)) fail('协议 ' + name + ' 的 ' + k + ' 不能是 async 函数（宿主按同步契约调用）')
 			out[k] = v
 		})
 		out.presets = Array.isArray(def.presets) ? def.presets.slice() : []
@@ -446,6 +455,7 @@
 		PLATFORM_TAGS: PLATFORM_TAGS,
 		FIELD_TYPES: FIELD_TYPES,
 		ContractError: ContractError,
+		isAsyncFunction: isAsyncFunction,
 		isSafePath: isSafePath,
 		safePath: safePath,
 		resolveUrl: resolveUrl,

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Hello 插件示例</title>
+	<style>
+		:root {
+			--bg-body: #f6f7f9;
+			--bg-surface: #ffffff;
+			--bg-code: #eef1f6;
+			--text-primary: #111827;
+			--text-secondary: #4b5565;
+			--text-muted: #6b7487;
+			--border-color: #dde2ec;
+			--accent: #1f5fbf;
+			--accent-light: rgba(31, 95, 191, 0.12);
+			--success: #15803d;
+			--warning: #b45309;
+			--fs-micro: 11px;
+			--fs-small: 12px;
+			--fs-body: 13px;
+			--fs-body-lg: 14px;
+			--fs-title: 16px;
+			--fs-figure: 20px;
+			--radius-sm: 4px;
+			--radius: 6px;
+			--radius-lg: 8px;
+			--font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+		}
+		* { box-sizing: border-box; }
+		body {
+			margin: 0;
+			padding: 16px;
+			background: var(--bg-body);
+			color: var(--text-primary);
+			font-family: var(--font-sans);
+			font-size: var(--fs-body);
+			line-height: 1.5;
+		}
+		.plg-head {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			padding-bottom: 12px;
+			margin-bottom: 16px;
+			border-bottom: 1px solid var(--border-color);
+		}
+		.plg-title {
+			font-size: var(--fs-title);
+			font-weight: 600;
+			margin: 0;
+		}
+		.plg-badges {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+		.plg-badge {
+			padding: 2px 8px;
+			border-radius: var(--radius-sm);
+			background: var(--accent-light);
+			color: var(--accent);
+			font-size: var(--fs-small);
+			font-family: var(--font-mono);
+		}
+		.plg-grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+			gap: 12px;
+		}
+		.plg-card {
+			display: flex;
+			flex-direction: column;
+			gap: 10px;
+			padding: 12px;
+			background: var(--bg-surface);
+			border: 1px solid var(--border-color);
+			border-radius: var(--radius-lg);
+		}
+		.plg-card-head {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 8px;
+		}
+		.plg-card-title {
+			font-size: var(--fs-body-lg);
+			font-weight: 600;
+			margin: 0;
+		}
+		.plg-actions {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			flex-wrap: wrap;
+		}
+		.plg-btn {
+			height: 28px;
+			padding: 0 10px;
+			border: 1px solid var(--border-color);
+			border-radius: var(--radius);
+			background: var(--bg-surface);
+			color: var(--text-primary);
+			font-size: var(--fs-small);
+		}
+		.plg-btn--primary {
+			background: var(--accent);
+			border-color: var(--accent);
+			color: #ffffff;
+		}
+		.plg-figure {
+			font-size: var(--fs-figure);
+			font-weight: 600;
+			font-family: var(--font-mono);
+			color: var(--accent);
+		}
+		.plg-list {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			margin: 0;
+			padding: 0;
+			list-style: none;
+		}
+		.plg-item {
+			padding: 6px 8px;
+			border-radius: var(--radius-sm);
+			background: var(--bg-code);
+			font-size: var(--fs-small);
+			font-family: var(--font-mono);
+		}
+		.plg-muted {
+			color: var(--text-secondary);
+			font-size: var(--fs-small);
+		}
+	</style>
+</head>
+<body>
+	<header class="plg-head">
+		<div>
+			<h1 class="plg-title">Hello 插件示例</h1>
+			<div class="plg-muted" id="host-summary">正在连接 DeviceDock 宿主…</div>
+		</div>
+		<div class="plg-badges">
+			<span class="plg-badge" id="theme-badge">theme: light</span>
+			<span class="plg-badge" id="version-badge">v1.0.0</span>
+		</div>
+	</header>
+
+	<main class="plg-grid">
+		<section class="plg-card">
+			<div class="plg-card-head">
+				<h2 class="plg-card-title">设备与连接 (device.read)</h2>
+				<button type="button" class="plg-btn" id="btn-refresh-devices">刷新</button>
+			</div>
+			<div class="plg-muted" id="lanes-summary">各路状态加载中…</div>
+			<ul class="plg-list" id="ports-list">
+				<li class="plg-item">尚未读取串口列表</li>
+			</ul>
+		</section>
+
+		<section class="plg-card">
+			<div class="plg-card-head">
+				<h2 class="plg-card-title">串口 RX 计数 (serial.io)</h2>
+				<button type="button" class="plg-btn" id="btn-reset-rx">清零</button>
+			</div>
+			<div class="plg-figure" id="rx-total">0 B</div>
+			<div class="plg-muted" id="rx-lanes">S: 0 B · A: 0 B · B: 0 B</div>
+			<div class="plg-item" id="rx-last">最近接收：无</div>
+		</section>
+
+		<section class="plg-card">
+			<div class="plg-card-head">
+				<h2 class="plg-card-title">后台任务与日志 (app / log)</h2>
+			</div>
+			<div class="plg-muted" id="busy-status">当前未持有 busy 源（应用可正常更新）</div>
+			<div class="plg-actions">
+				<button type="button" class="plg-btn plg-btn--primary" id="btn-toggle-busy">申请 busy 源</button>
+				<button type="button" class="plg-btn" id="btn-write-log">写入宿主日志</button>
+			</div>
+		</section>
+	</main>
+
+	<script src="sdk/devicedock-plugin.js"></script>
+	<script src="app.js"></script>
+</body>
+</html>

@@ -24,6 +24,7 @@
 		'transport.bt-classic',
 		'shell.browser', // 网页外壳入口(GitHub / 反馈链接等，由运行时推出：只在浏览器里开，客户端里没有意义)
 		'service.mcp', // 本地 MCP 服务(桌面客户端才有)：移动端与网页版没有入口、也没有监听
+		'plugins', // 客户端插件宿主(桌面客户端才有)：网页版与移动端没有入口、也不加载插件
 	]
 
 	const OS_LIST = ['web', 'windows', 'macos', 'linux', 'android', 'ios']
@@ -91,6 +92,7 @@
 			else if (f === 'lane.dual') enabled[f] = prof.lanes > 1
 			else if ((f === 'view.ble' || f === 'view.classic')) enabled[f] = runtime === 'tauri' && ['windows', 'macos'].indexOf(os) !== -1
 			else if (f === 'shell.browser') enabled[f] = runtime !== 'tauri'
+			else if (f === 'plugins') enabled[f] = runtime === 'tauri' && profileId === 'desktop'
 			else enabled[f] = prof.features === '*' || prof.features.indexOf(f) !== -1
 		})
 		return {

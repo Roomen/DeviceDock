@@ -8,9 +8,13 @@
 	function blockers(env) {
 		const reasons = env.Workbench && env.Workbench.updateBlockers ? env.Workbench.updateBlockers().slice() : []
 		if (env.serialApi && env.serialApi.isPinned()) reasons.push('协议事务')
-		for (const [name, label] of [['ble', 'BLE 桥操作'], ['classic', '经典蓝牙操作'], ['computer-ble', 'BLE 操作'], ['connection-source', '连接选择']]) {
+		for (const [name, label] of [['ble', 'BLE 桥操作'], ['classic', '经典蓝牙操作'], ['computer-ble', 'BLE 操作'], ['connection-source', '连接选择'], ['plugin-host', '插件后台任务']]) {
 			const transport = env.AppPlatform && env.AppPlatform.service(name)
-			if (transport && transport.isBusyForUpdate && transport.isBusyForUpdate()) reasons.push(label)
+			if (transport && transport.isBusyForUpdate && transport.isBusyForUpdate()) {
+				const labels = transport.busyLabels && transport.busyLabels()
+				if (Array.isArray(labels) && labels.length) labels.forEach(function (l) { reasons.push(l) })
+				else reasons.push(label)
+			}
 		}
 		if (!env.serialApi || !env.serialApi.prepareForAppUpdate) reasons.push('页面尚未就绪')
 		return Array.from(new Set(reasons))
@@ -76,6 +80,9 @@
 				let ready = false
 				let session = {}
 				try {
+					// 插件释放失败先自动重试一次再判 busy：瞬时失败不该让整个更新无法开始
+					const pluginHost = env.AppPlatform && env.AppPlatform.service('plugin-host')
+					if (pluginHost && pluginHost.retryAll) await pluginHost.retryAll()
 					const reasons = blockers(env)
 					if (reasons.length) {
 						emit({ state: 'blocked', reasons: reasons })
@@ -87,6 +94,8 @@
 						if (classic) await classic.release()
 						const computerBle = env.AppPlatform && env.AppPlatform.service('computer-ble')
 						if (computerBle) await computerBle.release()
+						const pluginHost = env.AppPlatform && env.AppPlatform.service('plugin-host')
+						if (pluginHost && pluginHost.release) await pluginHost.release()
 						await env.serialApi.prepareForAppUpdate()
 						// 安装准备过程中如果后端已超时或取消，不能交付迟到的确认。
 						ready = frozen && operation === data.operationId
