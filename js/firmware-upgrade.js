@@ -14,6 +14,31 @@
 	const PCPMessageCode = window.PCPMessageCode
 	const FirmwareParser = window.FirmwareParser
 	const serialApi = window.serialApi
+	// 收发走哪条连接：有固件页的画像(桌面)用固件页自己的连接 serialApi.firmwareLink(与通信页各路互不影响，不钉扎主发路)；
+	// 没有固件页的画像(移动端，固件面板停靠在通信页)仍走主发那一路，用事务钉扎锁住它
+	const fwLink = serialApi.firmwareLink && serialApi.firmwareLink.enabled() ? serialApi.firmwareLink : null
+	function linkOpen() {
+		return fwLink ? fwLink.isOpen() : serialApi.isOpen()
+	}
+	// 占用连接：固件连接记占用者(升级期间不换口、不改参数、不准备应用更新)，主发路走事务钉扎；失败抛错
+	function beginLink() {
+		if (fwLink) return fwLink.begin('固件升级')
+		window.serialApi.suppressParse = true
+		try {
+			return serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
+		} catch (e) {
+			window.serialApi.suppressParse = false
+			throw e
+		}
+	}
+	function endLink(token) {
+		if (fwLink) {
+			fwLink.end(token)
+			return
+		}
+		serialApi.unpinSession(token)
+		window.serialApi.suppressParse = false
+	}
 	// 自动升级(原始固件 → 按设备版本在内存里生成差分包或压缩包再升级，不输出中间产物)：js/firmware-core.js 与 js/firmware-library.js
 	const Core = window.FirmwareCore
 	const library = window.FirmwareLibrary || null
@@ -246,7 +271,7 @@
 			el.info.textContent = manualInfoText(name, fw.firmwareData.length, fw.version)
 			log('已载入固件(不解析包头), ' + fw.firmwareData.length + ' 字节', 'success')
 			emit({ type: 'parsed', ok: true, raw: true, version: fw.version, size: fw.firmwareData.length })
-			el.start.disabled = !serialApi.isOpen()
+			el.start.disabled = !linkOpen()
 			return
 		}
 		const bytes = new Uint8Array(fwFileBuffer)
@@ -257,7 +282,7 @@
 			log('原始固件, 内嵌版本 ' + kind.version + '；开始升级时按设备版本自动差分或压缩', 'success')
 			saveToLibrary(fw.fileName, bytes)
 			emit({ type: 'parsed', ok: true, raw: false, auto: true, version: kind.version, pkgType: '原始固件（自动差分 / 压缩）', size: bytes.length })
-			el.start.disabled = !serialApi.isOpen()
+			el.start.disabled = !linkOpen()
 			return
 		}
 		const r = FirmwareParser.parse(fwFileBuffer)
@@ -273,7 +298,7 @@
 		el.info.textContent = FirmwareParser.diagnose(r)
 		log('固件解析成功, 版本: ' + r.version, 'success')
 		emit({ type: 'parsed', ok: true, raw: false, version: r.version, pkgType: r.pkgTypeName, size: r.firmwareData.length })
-		el.start.disabled = !serialApi.isOpen()
+		el.start.disabled = !linkOpen()
 	})
 
 	el.diagnose.addEventListener('click', () => {
@@ -293,15 +318,13 @@
 	})
 
 	el.query.addEventListener('click', async () => {
-		if (!serialApi.isOpen()) {
-			log('请先打开串口', 'error')
+		if (!linkOpen()) {
+			log(fwLink ? '请先连接固件页的设备' : '请先打开串口', 'error')
 			return
 		}
-		window.serialApi.suppressParse = true
 		try {
-			fwTxToken = serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
+			fwTxToken = beginLink()
 		} catch (e) {
-			window.serialApi.suppressParse = false
 			log('无法开始查询：' + (e.message || e), 'error')
 			emit({ type: 'device-version', ok: false, source: 'query', error: e.message || String(e) })
 			return
@@ -322,9 +345,8 @@
 			log('查询版本超时: ' + e.message, 'error')
 			emit({ type: 'device-version', ok: false, source: 'query', error: '超时' })
 		} finally {
-			serialApi.unpinSession(fwTxToken)
+			endLink(fwTxToken)
 			fwTxToken = null
-			window.serialApi.suppressParse = false
 		}
 	})
 
@@ -361,8 +383,8 @@
 			log(parseInfoEnabled() ? '请先解析固件' : '请先载入固件', 'error')
 			return
 		}
-		if (!serialApi.isOpen()) {
-			log('请先打开串口', 'error')
+		if (!linkOpen()) {
+			log(fwLink ? '请先连接固件页的设备' : '请先打开串口', 'error')
 			return
 		}
 		const ver = effectiveVersion()
@@ -375,13 +397,11 @@
 			return
 		}
 		stopFlag = false
-		window.serialApi.suppressParse = true
-		// 升级事务钉扎主发口(owner=firmware): 期间切主发口被拦, 下发与 RX 等待稳定在同一设备；
-		// 测试流程等其它事务持有时这里被拒——先拿锁再发布启动状态，抢锁失败不走启动清理
+		// 先占住连接再发布启动状态，抢不到不走启动清理。固件连接：期间不换口、不改参数、不准备应用更新；
+		// 主发路(移动端)：事务钉扎(owner=firmware)，期间切主发口被拦，测试流程等其它事务持有时这里被拒
 		try {
-			fwTxToken = serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')
+			fwTxToken = beginLink()
 		} catch (e) {
-			window.serialApi.suppressParse = false
 			log('无法开始升级：' + (e.message || e), 'error')
 			return
 		}
@@ -400,9 +420,8 @@
 			diffRunner.dispose()
 			running = false
 			cancelFirmwareWaiters(new StopError('升级已结束'))
-			serialApi.unpinSession(fwTxToken)
+			endLink(fwTxToken)
 			fwTxToken = null
-			window.serialApi.suppressParse = false
 			el.start.disabled = false
 			el.stop.disabled = true
 			el.query.disabled = false
@@ -444,7 +463,7 @@
 		prepStop = { promise: p, fire: fire, reason: null }
 		// 准备阶段不收发串口，断线不会让任何等待自己结束：盯着连接状态，断了就走同一条取消路径
 		prepWatch = setInterval(function () {
-			if (!serialApi.isOpen()) cancelPrepare(new StopError('串口已断开', true))
+			if (!linkOpen()) cancelPrepare(new StopError('串口已断开', true))
 		}, 200)
 	}
 	// 在途差分由 buildAutoPackage 的 finally 结束 Worker(等待被这里打断后立即走到)
@@ -475,15 +494,20 @@
 	function firmwareTurnaroundMs() {
 		const sid = serialApi.getMode() === 'single' ? 'S' : serialApi.getActiveSendSid()
 		try {
-			const transport = window.serialLanes && window.serialLanes.transportOf(sid)
+			const transport = fwLink ? fwLink.transport() : (window.serialLanes && window.serialLanes.transportOf(sid))
 			if (transport === 'ble') return 0
 		} catch (_) { /* 未能确认 BLE 时保留原有串口周转时间 */ }
 		return 200
 	}
 	async function writeFirmware(bytes) {
-		// getActiveSendSid 是 UI 路号：单路返回 A；writeRawTo 要的是真正的物理 S/A/B。
-		const sid = serialApi.getMode() === 'single' ? 'S' : serialApi.getActiveSendSid()
-		const timing = await serialApi.writeRawTo(sid, bytes, { token: fwTxToken })
+		let timing
+		if (fwLink) {
+			timing = await fwLink.write(bytes)
+		} else {
+			// getActiveSendSid 是 UI 路号：单路返回 A；writeRawTo 要的是真正的物理 S/A/B。
+			const sid = serialApi.getMode() === 'single' ? 'S' : serialApi.getActiveSendSid()
+			timing = await serialApi.writeRawTo(sid, bytes, { token: fwTxToken })
+		}
 		// 只读诊断，不改原始 TX 行的「开始写」时间；完成表示后端写入兑现，并非设备处理完成。
 		if (timing) emit(Object.assign({ type: 'write', code: bytes[3] }, timing))
 		return timing
@@ -546,7 +570,7 @@
 		if (req.chunkIndex >= transferInbox.totalChunks) return dropFirmwareFrame('分片索引越界')
 		return true
 	}
-	serialApi.onReceive((data) => {
+	const onFirmwareRx = (data) => {
 		if (!data || !data.length) return
 		// 未升级也未查询时，不让普通串口流量进入固件帧解析器。
 		if (!running && !waiters.length) { recvBuffer = []; recvOffset = 0; return }
@@ -586,7 +610,9 @@
 		if (recvOffset) { recvBuffer.splice(0, recvOffset); recvOffset = 0 }
 		// PCP 最大帧为 8 + 65535 字节，保留尚未收全的最大帧。
 		if (recvBuffer.length > 65543) recvBuffer.splice(0, recvBuffer.length - 65543)
-	})
+	}
+	if (fwLink) fwLink.onReceive(onFirmwareRx)
+	else serialApi.onReceive(onFirmwareRx)
 
 	// 发送数据并等待指定消息码的响应(可同时等待多个消息码), 带超时
 	function sendAndWait(reqBytes, expectCodes, timeout) {
@@ -870,7 +896,7 @@
 				// 只对确认的 BLE 链路省去周转等待，普通串口 / SPP / 未知传输保持原来的 200ms。
 				const turnaround = firmwareTurnaroundMs()
 				if (turnaround) await sleep(turnaround)
-				if (stopFlag || !serialApi.isOpen()) return
+				if (stopFlag || !linkOpen()) return
 				const timing = await writeFirmware(resp)
 				const isResend = sentChunks.has(idx)
 				log('发送: ' + bytesToHex(resp.slice(0, 50)) + '... (分片' + idx + ', ' + chunk.length + '字节)' + (isResend ? ' [重发]' : '') + (timing ? ' [后端写完成 ' + timing.durationMs + 'ms]' : ''), 'info')
@@ -923,7 +949,7 @@
 		emit({ type: 'phase', name: 'execute' })
 		try {
 			await sleep(500)
-			if (stopFlag || !serialApi.isOpen()) return
+			if (stopFlag || !linkOpen()) return
 			await writeFirmware(PCP.buildExecuteUpgradeRequest())
 			log('已发送升级命令, 设备开始升级...', 'success')
 			setProgress(100)
@@ -963,7 +989,7 @@
 
 	// 串口打开状态变化时同步按钮
 	const syncStartBtn = () => {
-		el.start.disabled = !(fw && serialApi.isOpen())
+		el.start.disabled = !(fw && linkOpen())
 	}
 
 	// 供固件打包工具调用的外部接口
@@ -988,11 +1014,16 @@
 		})
 	}
 	refreshLibrarySummary()
+	// 固件连接的系统消息(打开失败、断线、自动重连等)记进升级日志
+	if (fwLink) document.addEventListener('serial-fw-log', function (e) {
+		const msg = e && e.detail && e.detail.msg
+		if (msg) log(msg, 'warn')
+	})
 
 	// 监听 serialApi 状态: 简单轮询 open 状态变化
-	let lastOpen = serialApi.isOpen()
+	let lastOpen = linkOpen()
 	setInterval(() => {
-		const open = serialApi.isOpen()
+		const open = linkOpen()
 		if (open !== lastOpen) {
 			lastOpen = open
 			syncStartBtn()

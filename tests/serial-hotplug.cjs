@@ -56,7 +56,10 @@ function harness(mode) {
 		SerialAdapter: { addEventListener(type, fn) { listeners[type] = fn } },
 		localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
 		pinSid: null,
-		readGenBySid: { S: 0, A: 0, B: 0 },
+		readGenBySid: { S: 0, A: 0, B: 0, F: 0 },
+		// 桌面画像：有固件连接 F
+		platformHasSid() { return true },
+		notifyFirmwareConn() {},
 		rxWatch() { return { lastRxAt: 0, backoff: 0 } },
 		WeakSet, Map, Promise,
 	}

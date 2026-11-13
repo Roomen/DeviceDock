@@ -106,12 +106,38 @@ function makeHarness(device, opts) {
 			})
 		},
 	}
+	// 桌面画像：固件页自己的连接(serialApi.firmwareLink)。走它时不能再碰主发路的钉扎、writeRawTo 与通用订阅
+	const fwBusy = { owner: '', begins: 0 }
+	if (opts.firmwareLink) {
+		const generic = ctx.serialApi
+		generic.onReceive = () => { throw new Error('固件连接模式不应订阅主发路') }
+		generic.pinSession = () => { throw new Error('固件连接模式不应钉扎主发路') }
+		const commWrite = generic.writeRawTo
+		generic.writeRawTo = () => { throw new Error('固件连接模式不应写主发路') }
+		generic.isOpen = () => false
+		generic.firmwareLink = {
+			enabled: () => true,
+			isOpen: () => link.open,
+			write: (bytes) => commWrite('S', bytes),
+			onReceive(fn) { receive = fn },
+			transport: () => (Object.hasOwn(opts, 'linkTransport') ? opts.linkTransport : 'serial'),
+			begin(owner) {
+				if (fwBusy.owner) throw new Error('固件连接正被「' + fwBusy.owner + '」使用')
+				fwBusy.owner = owner
+				fwBusy.begins++
+				return 'fw-link-token'
+			},
+			end(token) { if (token === 'fw-link-token') fwBusy.owner = '' },
+			isBusy: () => !!fwBusy.owner,
+		}
+	}
+	ctx.document.addEventListener = function () {}
 	device.send = (bytes) => setTimeout(() => receive(bytes), 0)
 	device.PCP = ctx.PCP
 	vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/firmware-upgrade.js'), 'utf8'), ctx)
 	els['fw-chunk-size'].value = '500'
 	return {
-		ctx, els, events, logs, waits, pins, hostCodes, link, library: ctx.FirmwareLibrary,
+		ctx, els, events, logs, waits, pins, hostCodes, link, fwBusy, library: ctx.FirmwareLibrary,
 		async waitFor(pred, ms) {
 			for (let i = 0; i < (ms || 2000); i++) { if (pred()) return true; await new Promise((r) => setTimeout(r, 1)) }
 			return false
@@ -505,6 +531,55 @@ function makeDevice(current, opts) {
 		const end2 = await h.upgrade()
 		assert.equal(end2.ok, true, end2.error)
 		assert.deepEqual(dev.packages.map((p) => [p.pkgType, p.status]), [[2, 0]], '第二轮用的是取到的 BLANK')
+	}
+
+	// ---- 桌面：升级走固件页自己的连接，不钉扎、不写、不订阅通信页主发路；升级期间占用固件连接，结束释放 ----
+	for (const linkTransport of ['serial', 'ble']) {
+		const dev = makeDevice(V1)
+		const h = makeHarness(dev, { firmwareLink: true, linkTransport })
+		dev.parser = h.ctx.FirmwareParser
+		h.load(V2, 'V2.0.0.bin')
+		let busyDuring = false
+		const end = await h.upgrade(async () => {
+			busyDuring = await h.waitFor(() => h.fwBusy.owner === '固件升级')
+		})
+		assert.equal(end.ok, true, end.error)
+		assert.equal(busyDuring, true, '升级期间固件连接被占用')
+		assert.equal(h.fwBusy.owner, '', '结束后释放占用')
+		assert.equal(h.pins.depth, 0, '没有钉扎主发路')
+		assert.equal(h.ctx.serialApi.suppressParse, false, '通信页解析不受影响')
+		const chunks = h.events.filter(e => e.type === 'chunk').length
+		assert.equal(h.waits.filter(ms => ms === 200).length, linkTransport === 'ble' ? 0 : chunks, '周转等待按固件连接的传输选择')
+	}
+	// 固件连接已被占用(另一次查询 / 升级)时不开始，也不发布启动状态
+	{
+		const dev = makeDevice(V1)
+		const h = makeHarness(dev, { firmwareLink: true })
+		dev.parser = h.ctx.FirmwareParser
+		h.load(V2, 'V2.0.0.bin')
+		h.fwBusy.owner = '别的任务'
+		h.els['fw-start'].click()
+		await new Promise((r) => setTimeout(r, 5))
+		assert.ok(!h.events.some((e) => e.type === 'start'))
+		assert.ok(h.logs.some((l) => /无法开始升级/.test(l)))
+	}
+	// 固件连接断开：准备阶段按断线收尾
+	{
+		const made = []
+		class HangWorker { constructor() { made.push(this) } postMessage() {} terminate() {} }
+		const dev = makeDevice(V1)
+		const h = makeHarness(dev, { firmwareLink: true, Worker: HangWorker })
+		dev.parser = h.ctx.FirmwareParser
+		h.load(V1, 'V1.0.0.bin')
+		h.load(V2, 'V2.0.0.bin')
+		await new Promise((r) => setTimeout(r, 5))
+		const end = await h.upgrade(async () => {
+			assert.ok(await h.waitFor(() => made.length > 0))
+			h.link.open = false
+		})
+		assert.equal(end.ok, false)
+		assert.match(end.error, /串口已断开/)
+		assert.equal(h.fwBusy.owner, '')
 	}
 
 	console.log('firmware-auto-upgrade: ok')

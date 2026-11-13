@@ -22,7 +22,7 @@ const ctx = {
 	PCP: { PROTOCOL_VERSION: 1, parseMessage(frame) { parses++; return { messageCode: frame[2], checksumValid: true, version: 1 } } },
 }
 vm.createContext(ctx)
-vm.runInContext(`let recvBuffer = [], recvOffset = 0, running = false, stopFlag = false, splices = 0, fwTxToken = null
+vm.runInContext(`let recvBuffer = [], recvOffset = 0, running = false, stopFlag = false, splices = 0, fwTxToken = null, fwLink = null
 const arraySplice = Array.prototype.splice
 Array.prototype.splice = function (...args) { splices++; return arraySplice.apply(this, args) }
 ` + source.slice(start, end), ctx)
