@@ -139,7 +139,7 @@
 
 	// ---------- 串口 io：写原始字节 + 按当前协议等应答 ----------
 	// 只在主发路（事务钉扎）上跑：send 前由 runAll 钉扎，RX 也只订阅主发语义（onReceive 跟随钉扎口）
-	const pump = { buf: [], waiters: [], writeTask: null, writeUnclosed: false, unclosedTask: null, faultSid: null, late: 0 }
+	const pump = { buf: [], waiters: [], writeTask: null, writeUnclosed: false, unclosedTask: null, faultSid: null, releasing: null, late: 0 }
 	let unsubscribeRx = null
 
 	function parseOpts() {
@@ -927,51 +927,64 @@
 
 	async function stopAll() {
 		if (pump.writeUnclosed) {
-			// 故障终态的手动释放：先作废旧执行代次（停止标记 + 撤掉等待者），再按归属与令牌解锁——
-			// closeLane 的 laneBlockReason 会拒绝钉扎中的关闭，所以解锁在前；端口关闭仍有确认，
-			// 失败时如实提示（钉扎已解，用户可重试关闭或手动断开）
-			stopFlag = true
-			cancelWaiters('已停止')
-			// 故障路固定：用进入故障终态时记下的物理路，不读当前主发路（用户可能已经切走）
-			const sid = pump.faultSid || window.serialApi.getActiveSendSid()
-			// 先沿现有关闭路径关闭并确认释放（closeLane 自带 3s 释放上限）；
-			// 本事务的钉扎会让关闭被拒，这时按归属与令牌释放后再试一次
-			let closed = false
-			let res = null
-			try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
-			closed = !!(res && res.ok)
-			// 本事务的钉扎会让关闭被拒（transaction_pinned / lane_blocked / lane_busy）：
-			// 按归属与令牌释放后重试一次；owner / token 校验由 forceReleaseTransaction 自己把关
-			if (!closed && res && (res.code === 'transaction_pinned' || res.code === 'lane_blocked' || res.code === 'lane_busy')) {
-				try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
-				flowTxToken = null
-				try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
-				closed = !!(res && res.ok)
-			}
-			if (!closed) {
-				// 端口没确认释放：重新取回该路占用（提示必须与实际一致），任务与标记都不清
-				try { flowTxToken = window.serialApi.pinSession(sid, 'flow') } catch (e) { flowTxToken = null }
-				setStatus('端口未确认释放，保持占用；请重试关闭或手动断开该路', 'err')
-				return
-			}
-			// 端口已确认释放：这些任务都属于已作废的执行代次，直接清掉，再解锁（若还没解）
-			pump.writeTask = null
-			pump.unclosedTask = null
-			pump.writeUnclosed = false
-			pump.faultSid = null
-			if (flowTxToken) {
-				try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
-				flowTxToken = null
-			}
-			setStatus('事务占用已手动释放', 'ok')
-			running = false
-			el.start.disabled = !isProtoSupported()
+			// 故障释放串行化：重复点击直接复用同一份进行中的 Promise，不会重复进入
+			if (pump.releasing) return pump.releasing
+			// 释放期间停止键禁用（finally 恢复），避免连点推进第二次关闭
 			el.stop.disabled = true
-			return
+			pump.releasing = releaseFaultyHold()
+			try {
+				return await pump.releasing
+			} finally {
+				pump.releasing = null
+				if (pump.writeUnclosed) el.stop.disabled = false
+			}
 		}
 		stopFlag = true
 		setStatus('正在停止…', 'warn')
 		cancelWaiters('已停止')
+	}
+
+	// 故障终态的手动释放：先作废旧执行代次（停止标记 + 撤掉等待者）→ 关端口确认释放；
+	// 本事务的钉扎会让关闭被拒，按归属与令牌释放后再试一次；失败则取回占用并如实提示
+	async function releaseFaultyHold() {
+		stopFlag = true
+		cancelWaiters('已停止')
+		// 故障路固定：用进入故障终态时记下的物理路，不读当前主发路（用户可能已经切走）
+		const sid = pump.faultSid || window.serialApi.getActiveSendSid()
+		let closed = false
+		let res = null
+		try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
+		closed = !!(res && res.ok)
+		// transaction_pinned / lane_blocked / lane_busy：按归属与令牌释放后重试一次；
+		// owner / token 校验由 forceReleaseTransaction 自己把关
+		if (!closed && res && (res.code === 'transaction_pinned' || res.code === 'lane_blocked' || res.code === 'lane_busy')) {
+			try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
+			flowTxToken = null
+			try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
+			closed = !!(res && res.ok)
+		}
+		if (!closed) {
+			// 端口没确认释放：重新取回该路占用；取不到就保留原令牌（不清空，下次还能按它释放）
+			try {
+				const next = window.serialApi.pinSession(sid, 'flow')
+				if (next) flowTxToken = next
+			} catch (e) { /* 保持原令牌 */ }
+			setStatus('端口未确认释放，保持占用；请重试关闭或手动断开该路', 'err')
+			return
+		}
+		// 端口已确认释放：这些任务都属于已作废的执行代次，直接清掉，再解锁（若还没解）
+		pump.writeTask = null
+		pump.unclosedTask = null
+		pump.writeUnclosed = false
+		pump.faultSid = null
+		if (flowTxToken) {
+			try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
+			flowTxToken = null
+		}
+		setStatus('事务占用已手动释放', 'ok')
+		running = false
+		el.start.disabled = !isProtoSupported()
+		el.stop.disabled = true
 	}
 
 	// 可回读 = 协议能给这个字段构造读请求（有查询码、能读到原值、写后能校验与恢复）

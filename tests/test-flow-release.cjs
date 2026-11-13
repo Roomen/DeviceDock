@@ -11,6 +11,7 @@ const commonFile = fs.readFileSync(path.join(__dirname, '../js/common.js'), 'utf
 const head = panelFile.search(/\t(async )?function stopAll\(\) \{/)
 assert.ok(head > 0, 'stopAll 锚点存在')
 const panelSrc = panelFile.slice(head, panelFile.indexOf('\tfunction canReadBack(proto, field) {'))
+assert.ok(/releaseFaultyHold|function stopAll/.test(panelSrc), '切出的释放源码非空')
 assert.ok(/function stopAll/.test(panelSrc), '切出的 stopAll 源码非空')
 
 // common.js 真实切片：钉扎（含严格令牌）、手动释放、关闭门控 laneBlockReason
@@ -32,6 +33,7 @@ function makeWorld(opts) {
 		buf: [], waiters: [], late: 0, writeUnclosed: true,
 		writeTask: o.writeTask || null,
 		unclosedTask: o.unclosedTask || null,
+		releasing: null,
 	}
 	const el = { start: { disabled: true }, stop: { disabled: false }, status: { textContent: '', className: '' }, log: null, results: null }
 	const calls = { cancelWaiters: [], close: [], status: [] }
@@ -71,6 +73,12 @@ function makeWorld(opts) {
 			const target = hub.uiSid(sid)
 			const block = ctx.laneBlockReason(target, null)
 			if (block) return Promise.resolve({ ok: false, code: block.code, message: block.message })
+			if (o.closeGate) {
+				// 关闭挂起：第一次交由测试控制兑现时机（之后按 closeResult 走）
+				const gate = o.closeGate
+				o.closeGate = null
+				return gate.then(function () { return ctx.closePort(target) }, function () { return { ok: false, code: 'close_failed', message: '串口未确认释放' } })
+			}
 			return Promise.resolve(ctx.closePort(target))
 		},
 	}
@@ -94,7 +102,7 @@ function makeWorld(opts) {
 	ctx.cancelWaiters = ctx.cancelWaiters
 	ctx.logLine = ctx.logLine
 	vm.createContext(ctx)
-	vm.runInContext(physSrc + '\n' + gateSrc + '\n' + pinSrc + '\n' + unpinSrc + '\n' + forceSrc + '\n' + panelSrc + '\nglobalThis.api = { stopAll, pinSession, forceReleaseTransaction, setToken: function (t) { flowTxToken = t }, get state() { return { running: running, flowTxToken: flowTxToken, writeTask: pump.writeTask, writeUnclosed: pump.writeUnclosed, unclosedTask: pump.unclosedTask, faultSid: pump.faultSid, pinSid: pinSid, pinOwner: pinOwner, pinToken: pinToken } }, get calls() { return calls } }', ctx)
+	vm.runInContext(physSrc + '\n' + gateSrc + '\n' + pinSrc + '\n' + unpinSrc + '\n' + forceSrc + '\n' + panelSrc + '\nglobalThis.api = { stopAll, pinSession, forceReleaseTransaction, setToken: function (t) { flowTxToken = t }, setStopDisabled: function (v) { el.stop.disabled = v }, get state() { return { running: running, flowTxToken: flowTxToken, writeTask: pump.writeTask, writeUnclosed: pump.writeUnclosed, unclosedTask: pump.unclosedTask, faultSid: pump.faultSid, pinSid: pinSid, pinOwner: pinOwner, pinToken: pinToken } }, get calls() { return calls } }', ctx)
 	// 与 runAll 一致：钉扎当前主发路（单路下 UI 的 A → 物理 S），面板持有这个令牌
 	const token = ctx.api.pinSession(hub.activePhys, 'flow')
 	assert.ok(token, '钉扎成功')
@@ -157,6 +165,49 @@ function makeWorld(opts) {
 		assert.ok(w.api.state.pinToken, '面板拿回了非空令牌')
 		assert.equal(w.pump.writeUnclosed, true, '故障占用保持')
 		assert.ok(w.el.status.textContent.indexOf('保持占用') !== -1, '提示与实际一致')
+	}
+
+	// 回修 10：关闭挂起期间连点两次停止 → 只发起一次关闭；首次失败后占用与令牌一致；再点能成功
+	{
+		const w = makeWorld({ writeTask: new Promise(function () {}) })
+		let resolveGate
+		const gate = new Promise(function (resolve) { resolveGate = resolve })
+		// 第一次关闭挂起，之后由 closePort 的替身返回失败
+		w.ctx.closePort = function () { return { ok: false, code: 'close_failed', message: '串口未确认释放' } }
+		w.ctx.serialLanes.close = function (sid) {
+			const target = w.hub.uiSid(sid)
+			const block = w.ctx.laneBlockReason(target, null)
+			if (block) return Promise.resolve({ ok: false, code: block.code, message: block.message })
+			if (w.ctx.__gateUsed) return Promise.resolve(w.ctx.closePort(target))
+			w.ctx.__gateUsed = true
+			w.calls.close.push(target)
+			return gate.then(function () { return w.ctx.closePort(target) }, function () { return w.ctx.closePort(target) })
+		}
+		const first = w.api.stopAll()
+		const second = w.api.stopAll()
+		await new Promise(function (r) { setTimeout(r, 10) }) // 让第一次关端口走到挂起
+		assert.equal(w.calls.close.length, 1, '关闭挂起期间只发起一次关闭（fbcf1c9 会发起两次）')
+		assert.equal(w.el.stop.disabled, true, '释放期间停止键禁用')
+		assert.ok(w.pump.releasing, '释放中共享同一份 Promise')
+		let sameRelease = 'pending'
+		second.then(function (v) { sameRelease = v })
+		resolveGate()
+		await first
+		assert.equal(sameRelease, await first, '第二次点击复用同一份释放（同一结果）')
+		await new Promise(function (r) { setTimeout(r, 10) })
+		assert.equal(w.calls.close.length, 1, '首次仍只有一次关闭')
+		assert.notEqual(w.api.state.pinSid, null, '首次失败后占用仍在（提示与状态一致）')
+		assert.equal(w.api.state.pinToken, w.api.state.flowTxToken, '面板持有的令牌就是真实的 pinToken（fbcf1c9 会清成 null）')
+		assert.ok(w.api.state.flowTxToken, '令牌非空')
+		// 再点一次：这次关闭成功，占用释放
+		delete w.ctx.__gateUsed
+		w.ctx.closePort = function (sid) { w.calls.close.push(sid); w.sessions[sid].open = false; return { ok: true, changed: true, open: false } }
+		// 端口仍被钉扎挡住：先把钉扎解除给关闭让路（真实路径里由 forceReleaseTransaction 完成）
+		w.ctx.pinSid = null
+		w.ctx.pinDepth = 0
+		await w.api.stopAll()
+		assert.equal(w.pump.writeUnclosed, false, '再次点击后成功释放')
+		assert.equal(w.api.state.running, false, '面板回到可用状态')
 	}
 
 	console.log('test-flow-release: ok')
