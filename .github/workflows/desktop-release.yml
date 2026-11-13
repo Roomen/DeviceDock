@@ -108,13 +108,27 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+          # 只有本作业真的跑 npm ci，才挂 npm 缓存；缓存的是安装包下载，不含构建产物。
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # Windows 便携包要编 helper，所以三个 workspace 一起进缓存。
+      # shared-key 与 ci 按 OS 对齐（同一平台的 registry 与依赖包只存一份），
+      # key 带 release 与 target：release profile 的产物与 ci 的 debug/test 互不覆盖，
+      # 交叉编译 target 也各自独立。发布的安装包、签名文件不在 workspace 内，不会进缓存。
+      # 只有正式版 tag 才写缓存，dev 分支构建与手动派发只读恢复。
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
-          key: ${{ matrix.target }}
+          workspaces: |
+            desktop/src-tauri
+            desktop/portable-update-common
+            desktop/portable-updater
+          shared-key: cargo-${{ runner.os }}
+          key: release-${{ matrix.target }}
+          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-main-v')) }}
       - name: Import Developer ID certificate into temporary keychain
         if: runner.os == 'macOS' && needs.prepare.outputs.apple == 'true'
         env:
