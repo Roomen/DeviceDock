@@ -104,7 +104,7 @@
 		if (s.current && s.open) return { tag: '已连接', kind: 'open', disabled: false }
 		if (s.current) return { tag: '当前设备', kind: 'current', disabled: false }
 		if (s.owner) {
-			const who = s.owner === 'S' ? '单路' : s.owner + ' 路'
+			const who = s.owner === 'S' ? '单路' : (s.owner === 'F' ? '固件页' : s.owner + ' 路')
 			return { tag: who + '占用', kind: 'busy', disabled: true }
 		}
 		return { tag: '', kind: 'idle', disabled: false }
@@ -183,6 +183,7 @@
 	}
 	function sidFor(key) {
 		if (key === 'B') return 'B'
+		if (key === 'F') return 'F'
 		return isDual() ? 'A' : 'S'
 	}
 
@@ -786,6 +787,172 @@
 		refreshConn()
 	}
 
+	// ========== 2b. 固件页的连接条 ==========
+	// 固件页自己的串口连接(物理 sid 'F')，与通信页 S / A / B 互不影响；只在有固件页的画像里建。
+	// 与通信页连接栏同在 #app-topbar 里，按当前视图(html[data-view])只显示其中一条；视觉与每路连接组同款(电源 · 设备 · 设置)，
+	// 设备下拉复用同一个串口列表(makePortList)，选用、连接、改名一律经 window.serialLanes 走 common.js 的同一套路径
+	const FW_FIELDS = [
+		{ key: 'baudRate', label: '波特率', icon: 'icon-gauge', list: [2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] },
+		{ key: 'dataBits', label: '数据位', icon: 'icon-hash', options: [['8', '8'], ['7', '7']] },
+		{ key: 'stopBits', label: '停止位', icon: 'icon-circle-stop', options: [['1', '1'], ['2', '2']] },
+		{ key: 'parity', label: '校验位', icon: 'icon-shield-check', options: [['none', '无'], ['even', '偶校验'], ['odd', '奇校验']] },
+		{ key: 'flowControl', label: '流控制', icon: 'icon-arrow-left-right', options: [['none', '无'], ['hardware', '硬件']] },
+	]
+	function makeFwConn() {
+		const wrap = mk('div', 'mdn-conn')
+		wrap.dataset.path = 'F'
+		wrap.dataset.sid = 'F'
+		const power = btn('mdn-conn-power')
+		power.appendChild(icon('icon-power'))
+		const b = btn('mdn-conn-btn')
+		b.setAttribute('aria-haspopup', 'dialog')
+		b.setAttribute('aria-expanded', 'false')
+		const dot = mk('span', 'mdn-dot')
+		const port = mk('span', 'mdn-conn-port')
+		b.append(dot, port)
+		const more = btn('mdn-conn-more')
+		more.setAttribute('aria-haspopup', 'dialog')
+		more.setAttribute('aria-expanded', 'false')
+		more.setAttribute('aria-label', '固件连接的串口参数')
+		more.title = '串口参数'
+		const moreParams = mk('span', 'mdn-conn-params')
+		more.append(icon('icon-sliders'), moreParams)
+		const pop = mk('div', 'mdn-pop')
+		pop.hidden = true
+		pop.setAttribute('role', 'dialog')
+		pop.setAttribute('aria-label', '固件连接的串口参数')
+		const head = mk('div', 'mdn-pop-title', '固件连接')
+		const par = mk('div', 'mdn-pop-sec mdn-pop-params')
+		const parCap = mk('div', 'mdn-pop-cap', '串口参数')
+		const card = mk('div', 'serial-settings-card mdn-fw-params')
+		const fields = {}
+		FW_FIELDS.forEach(function (f) {
+			const row = mk('div', 'serial-field')
+			const id = 'mdn-fw-param-' + f.key
+			const lab = mk('label', 'serial-field-label')
+			lab.htmlFor = id
+			lab.append(icon(f.icon), document.createTextNode(' ' + f.label))
+			let input
+			if (f.list) {
+				input = mk('input', 'form-control serial-field-input')
+				input.type = 'text'
+				input.inputMode = 'numeric'
+				input.autocomplete = 'off'
+				const dl = mk('datalist')
+				dl.id = id + '-list'
+				f.list.forEach(function (v) { const o = mk('option'); o.value = String(v); dl.appendChild(o) })
+				input.setAttribute('list', dl.id)
+				row.append(lab, input, dl)
+			} else {
+				input = mk('select', 'form-select serial-field-input')
+				f.options.forEach(function (o) { const n = mk('option', '', o[1]); n.value = o[0]; input.appendChild(n) })
+				row.append(lab, input)
+			}
+			input.id = id
+			fields[f.key] = input
+			listen(input, 'change', function () {
+				const lanes = window.serialLanes
+				if (!lanes || !lanes.configureFirmware) return
+				const patch = {}
+				patch[f.key] = input.value
+				Promise.resolve(lanes.configureFirmware(patch)).then(function (r) {
+					if (r && !r.ok && r.message && lanes.toast) lanes.toast(r.message, 'error')
+					refreshFwConn(true)
+				})
+			})
+			card.appendChild(row)
+		})
+		par.append(parCap, card)
+		const wireless = mk('div', 'mdn-fw-conn-note', '无线连接不使用本地串口参数')
+		wireless.hidden = true
+		pop.append(head, par, wireless)
+		const dd = mk('div', 'mdn-dd')
+		dd.hidden = true
+		dd.setAttribute('role', 'dialog')
+		dd.setAttribute('aria-label', '选择固件连接的设备')
+		listen(power, 'click', function () {
+			const lanes = window.serialLanes
+			if (!lanes || power.disabled) return
+			closePops()
+			lanes.toggle('F')
+		})
+		listen(b, 'click', function () {
+			const open = dd.hidden
+			closePops()
+			if (open) openDropdown('F')
+		})
+		listen(more, 'click', function () {
+			const open = pop.hidden
+			closePops()
+			if (!open) return
+			refreshFwConn(true)
+			pop.hidden = false
+			more.setAttribute('aria-expanded', 'true')
+			refs.openKey = 'F'
+		})
+		wrap.append(power, b, more, pop, dd)
+		const ports = makePortList('F')
+		dd.appendChild(ports.box)
+		return { wrap: wrap, power: power, btn: b, more: more, dot: dot, port: port, params: moreParams, pop: pop, dd: dd, par: par, wireless: wireless, fields: fields, ports: ports }
+	}
+
+	function mountFwConnBar() {
+		const top = $('app-topbar')
+		if (!top) return
+		if (window.AppPlatform && !window.AppPlatform.has('view.firmware-pack')) return
+		const lanes = window.serialLanes
+		if (!lanes || !window.serialApi || !window.serialApi.firmwareLink || !window.serialApi.firmwareLink.enabled()) return
+		const bar = hostEl(mk('div', 'mdn-connbar mdn-fw-connbar'), top)
+		bar.id = 'mdn-fw-connbar'
+		bar.setAttribute('role', 'toolbar')
+		bar.setAttribute('aria-label', '固件连接')
+		const cap = mk('span', 'mdn-fw-conn-cap', '固件连接')
+		const f = makeFwConn()
+		const note = mk('span', 'mdn-fw-conn-hint', '固件页自己的连接，与通信调试各路互不影响')
+		bar.append(cap, f.wrap, note)
+		refs.paths.F = f
+		refs.fwBar = bar
+		const refresh = batched(function () { refreshFwConn(false) })
+		listen(document, 'serial-fw-conn', refresh)
+		refs.refreshFw = refresh
+		refreshFwConn(true)
+	}
+
+	// syncFields：把存下的参数写回输入框(打开参数菜单时、改完一项后)；平时只刷新按钮
+	function refreshFwConn(syncFields) {
+		const p = refs.paths && refs.paths.F
+		const h = hub()
+		const lanes = window.serialLanes
+		if (!p || !h || !lanes) return
+		const port = lanes.portOf('F')
+		const open = h.isOpen('F')
+		const opening = h.isOpening('F')
+		const failed = h.isReleaseFailed('F')
+		const busy = !!(window.serialApi && window.serialApi.firmwareLink && window.serialApi.firmwareLink.isBusy())
+		const transport = lanes.transportOf ? lanes.transportOf('F') : 'serial'
+		p.wrap.dataset.state = failed ? 'close-failed' : (opening ? 'opening' : (open ? 'open' : 'closed'))
+		const name = port ? portRowTitle(lanes.portMeta(port)) : ''
+		p.port.textContent = name || '选择设备'
+		p.params.textContent = compactParams(lanes.summary('F'))
+		const st = failed ? '关闭失败，请重试' : (opening ? '正在连接' : (open ? '已连接' : '未连接'))
+		p.power.disabled = !port || (busy && !opening)
+		p.power.setAttribute('aria-pressed', String(!!open))
+		p.power.setAttribute('aria-label', '固件连接 ' + (failed ? '重试关闭串口' : (opening ? '正在连接，取消连接' : (open ? '断开串口' : '连接串口'))))
+		p.power.title = busy ? '固件升级进行中' : (failed ? '关闭失败，点此重试关闭' : (opening ? '正在连接，点此取消' : (open ? '已连接，点此断开' : (port ? '未连接，点此连接' : '先选择设备'))))
+		p.btn.disabled = busy
+		p.btn.setAttribute('aria-label', '固件连接 ' + (name || '未选择设备') + ' · ' + st + ' · 选择设备')
+		p.btn.title = busy ? '固件升级进行中，暂不能更换设备' : '固件连接 · ' + st + ' · 选择设备'
+		p.par.hidden = transport !== 'serial'
+		p.wireless.hidden = transport === 'serial'
+		const lock = busy || opening
+		Object.keys(p.fields).forEach(function (k) { p.fields[k].disabled = lock })
+		if (syncFields && lanes.firmwareParams) {
+			const o = lanes.firmwareParams()
+			Object.keys(p.fields).forEach(function (k) { if (o[k] != null) p.fields[k].value = String(o[k]) })
+		}
+		if (refs.ddKey === 'F') renderPorts(p.ports)
+	}
+
 	// 顶栏协议下拉按组（内置 / 每个来源一组）呈现，每路的协议键也要照抄同样的分组
 	function readProtoOptions(root) {
 		const out = []
@@ -842,6 +1009,8 @@
 		const h = hub()
 		const lanes = window.serialLanes
 		Object.keys(refs.paths).forEach(function (key) {
+			// 固件页的连接有自己的刷新(refreshFwConn)
+			if (key === 'F') return
 			const p = refs.paths[key]
 			const sid = sidFor(key)
 			// 每路自己的参数；双路两路协议可以不同，按钮上一并写出
@@ -1339,12 +1508,14 @@
 		mounted = true
 		refs = {}
 		mountConnBar()
+		mountFwConnBar()
 		mountLogBar()
 		mountLogZoom()
 		mountSendBar()
 		if (refs.connbar) refreshConn()
 		setInterval(function () {
 			if (!document.hidden && refs.refreshConn) refs.refreshConn()
+			if (!document.hidden && refs.refreshFw) refs.refreshFw()
 		}, 1000)
 	}
 

@@ -1155,6 +1155,8 @@
                     it.classList.toggle('active', it.dataset.view === id)
                 })
                 localStorage.setItem(KEY, id)
+                // 顶栏按当前视图只显示对应的连接条：通信调试是各路连接栏，固件页是它自己的固件连接
+                document.documentElement.setAttribute('data-view', id)
                 current = id
             }
             // 视图入口带 data-feature 时，平台画像没开这项功能就回到通信调试(存下的视图可能来自别的平台)
@@ -1174,6 +1176,7 @@
                 it.addEventListener('click', function () { switchTo(it.dataset.view) })
             })
             var saved = localStorage.getItem(KEY)
+            document.documentElement.setAttribute('data-view', 'view-serial')
             window.AppViews = { activate: activate, switchTo: switchTo, initialSaved: saved || '' }
             if (saved) switchTo(saved)
         })()
