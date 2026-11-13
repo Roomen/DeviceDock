@@ -471,6 +471,7 @@
 			rec.rxOffset = 0
 			rec.rx = null
 			genEntry(rec, rec.gen)
+			reapIdleGens(rec, true)
 			rec.open = true
 			rec.reading = true
 			rec.readTask = readClaim(rec)
@@ -548,19 +549,21 @@
 		rec.ctx.send('claim.gap', { claimId: rec.id, gen: ensureGen(rec), offset: gap.offset, bytes: gap.bytes, reason: gap.reason })
 	}
 
-	// 把一次丢弃并进待发缺口：reason 不同就先发旧的再开新的；相同则累加（offset 保留首次起点）。
-	// 这里**不立刻发送**，只挂 16 ms 定时器（每 claim 至多每 16 ms 一条）。
+	// 把一次丢弃并进待发缺口：每个 claim 只保留**一条**待发记录，连续丢弃累加 bytes、
+	// offset 保留首次丢弃起点；reason 变化时把旧的并入新的（保留最早 offset）。
+	// 这里**不发送、也不挂定时器**：缺口只在「即将真正发送一批数据之前」或关闭收尾时发出，
+	// 所以插件不消费时缺口一直合并在宿主这一条记录里（有界）。
 	function queueClaimGap(rec, offset, bytes, reason) {
 		if (!bytes) return
 		const st = claimRxState(rec)
 		const cur = st.pendingGap
-		if (cur && cur.reason !== reason) {
-			sendClaimGap(rec, cur)
-			st.pendingGap = null
+		if (!cur) {
+			st.pendingGap = { offset: offset, bytes: bytes, reason: reason }
+			return
 		}
-		if (!st.pendingGap) st.pendingGap = { offset: offset, bytes: bytes, reason: reason }
-		else st.pendingGap.bytes += bytes
-		scheduleClaimFlush(rec)
+		// 合并：保留最早的 offset 与字节数；reason 以最先记录的那条为准（overflow 先于 closing 时仍是 overflow）
+		cur.bytes += bytes
+		if (cur.offset > offset) cur.offset = offset
 	}
 
 	function takeClaimGap(rec) {
@@ -634,39 +637,28 @@
 	}
 
 	// 刷出缓冲。opts.discard：iframe 已销毁，直接丢弃且不报告（无人可收）。
-	// 关闭时不再「强发一批」：残余受同一套在途上限约束，发不下的按 reason:'closing' 并入缺口。
+	// 缺口只在「即将真正发送一批数据之前」发出（随这批一起受在途 ≤ 4 约束），或由关闭收尾发出。
 	function flushClaimRx(rec, opts) {
 		const st = rec.rx
 		if (!st) return false
-		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
 		if (opts && opts.discard) {
+			if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
 			st.chunks = []
 			st.bytes = 0
 			st.at = 0
 			st.pendingGap = null
 			return false
 		}
-		const fromTimer = !!(opts && opts.timer)
-		// 背压：在途未确认的批次（跨 gen 累计）到上限时**既不发数据也不发缺口**，直接返回；
-		// 唯一的例外是 16 ms 定时器到点——那条路径只把待发缺口发出去（每 claim 至多每 16 ms 一条），
-		// 让插件知道样本缺了哪些，而读取路径本身不会因为持续溢出而堆出无穷多条缺口。
-		if (claimInflight(rec) >= CLAIM_RX_INFLIGHT_MAX) {
-			if (fromTimer) {
-				const full = takeClaimGap(rec)
-				if (full) sendClaimGap(rec, full)
-			} else if (st.pendingGap) {
-				// 读路径提前 return 时会把定时器清掉：这里补挂一次，
-				// 保证待发缺口最终仍由 16 ms 定时器送出（每 claim 至多每 16 ms 一条）。
-				scheduleClaimFlush(rec)
-			}
-			return false
-		}
+		// （discard 的 gen 回收由 disposeClaimRx 统一处理）
+		// 背压：在途未确认的批次（跨 gen 累计）到上限时既不发数据也不发缺口。
+		// **早退时不清定时器**：数据合批窗口的截止时间不能被持续读取推迟。
+		if (claimInflight(rec) >= CLAIM_RX_INFLIGHT_MAX) return false
 		if (!st.bytes) {
-			// 没有数据可发：定时器到点时也把待发缺口发出去
-			const lone = takeClaimGap(rec)
-			if (lone) sendClaimGap(rec, lone)
+			// 没有数据可发（只有待发缺口）：保留到下一批数据之前或关闭时再发
+			if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
 			return false
 		}
+		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
 		// 即将真正发送一批数据：先发待发缺口（保证缺口先于后续数据到达）
 		const gap = takeClaimGap(rec)
 		if (gap) sendClaimGap(rec, gap)
@@ -684,12 +676,13 @@
 		return true
 	}
 
+	// 数据合批窗口（16 ms）：只负责把缓冲里的数据成批发出去，不承担缺口的发送。
 	function scheduleClaimFlush(rec) {
 		const st = claimRxState(rec)
 		if (st.timer) return
 		st.timer = setTimeout(function () {
 			st.timer = 0
-			flushClaimRx(rec, { timer: true })
+			flushClaimRx(rec)
 		}, CLAIM_RX_WINDOW_MS)
 	}
 
@@ -703,8 +696,10 @@
 		if (!Number.isInteger(seq) || seq <= 0 || seq > g.rxSeq) return false
 		if (seq <= g.ackedSeq) return false
 		g.ackedSeq = seq
-		// 该 gen 全部确认 → 删掉条目（跨 gen 的在途只剩未确认的那些）
-		if (g.ackedSeq >= g.rxSeq) delete rec.gens[gen]
+		// 当前 gen 的条目**永不删除**：seq / ackedSeq 在同一 gen 内必须单调，
+		// 删掉再重建会让新批次从 seq=1 开始，迟到的旧 ACK 就能"确认"新批次。
+		// 只回收「非当前 gen 且在途为 0」的旧 gen。
+		if (gen !== rec.gen && g.ackedSeq >= g.rxSeq) delete rec.gens[gen]
 		const st = rec.rx
 		if (st && st.bytes) flushClaimRx(rec)
 		return true
@@ -713,11 +708,16 @@
 	// 定时器随 claim 释放；关闭 / 停用时：能发多少发多少（受在途上限），发不下的按 closing 并进缺口。
 	function disposeClaimRx(rec, opts) {
 		const st = rec.rx
-		if (!st) return
+		if (!st) {
+			// 没有缓冲（例如空 open 后立刻 close）：仍然要回收零在途的 gen 记账
+			reapIdleGens(rec, false)
+			return
+		}
 		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
 		if (opts && opts.discard) {
 			flushClaimRx(rec, { discard: true })
 			rec.rx = null
+			reapIdleGens(rec, false)
 			return
 		}
 		// 最多发到在途上限为止：循环 flush 直到没有空间或缓冲清空
@@ -737,9 +737,27 @@
 			queueClaimGap(rec, gapStart, dropped, 'closing')
 		}
 		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
+		// 关闭是终态：把合并后的缺口（含 closing）发**一条**
 		const leftover = takeClaimGap(rec)
 		if (leftover) sendClaimGap(rec, leftover)
 		rec.rx = null
+		// 回收零在途的 gen 记账。关闭是终态：连当前 gen 也在「在途 0」时一起回收
+		// （下次 open 会开新 gen），所以反复空 open/close 不会让 rec.gens 无界增长。
+		reapIdleGens(rec, false)
+	}
+
+	// 只保留「还有在途批次的 gen」；keepCurrent 为真时额外保留当前 gen
+	// （同一 gen 内 seq 必须单调，不能在 ack 之后把条目删掉重建）。
+	// 因此条目数 ≤ 有在途批次的 gen 数 + (keepCurrent ? 1 : 0)。
+	function reapIdleGens(rec, keepCurrent) {
+		if (!rec.gens) return
+		const gens = rec.gens
+		for (const g in gens) {
+			const id = Number(g)
+			if (keepCurrent && id === rec.gen) continue
+			if (gens[g].ackedSeq < gens[g].rxSeq) continue
+			delete gens[g]
+		}
 	}
 
 	// 读循环：读错误后后端会换一条新流(Chromium 行为)，换流就续读；流为 null 表示设备丢失
@@ -852,6 +870,7 @@
 		// 测试注入：直接驱动合批（不经过真串口）
 		CLAIM_RX_INFLIGHT_MAX: CLAIM_RX_INFLIGHT_MAX,
 		_claimInflight: claimInflight,
+		_reapIdleGens: reapIdleGens,
 		_appendClaimRx: appendClaimRx,
 		_scheduleClaimFlush: scheduleClaimFlush,
 		_flushClaimRx: flushClaimRx,

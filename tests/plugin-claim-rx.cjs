@@ -242,12 +242,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.equal(sent[4].payload.offset, 4 * CLAIM_RX_FLUSH_BYTES + gapBytes, 'offset 体现缺口（含被丢字节）')
 	}
 
-	// ---- 5b. 缺口合并：连续丢弃只留一条待发缺口，offset 保留首次起点 ----
+	// ---- 5b. 缺口合并：连续丢弃只留一条待发缺口；reason 变化也并入同一条（不再立即发送）----
 	{
 		const box = fakeCtx()
 		const rec = box.ctx.claim('claim-gap-merge')
 		openGen(Api, rec)
-		// 先在途占满 4 批，让缓冲只能靠丢弃腾地方
 		const chunk = new Uint8Array(CLAIM_RX_MAX_BYTES)
 		chunk.fill(1)
 		Api._appendClaimRx(rec, chunk)
@@ -260,17 +259,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.ok(pending, '有且只有一条待发缺口')
 		assert.equal(pending.offset, 0, 'offset 保留首次丢弃起点')
 		assert.equal(pending.bytes, 8 * 1024, '连续丢弃累加进同一条缺口')
-		assert.equal(gapEvents(box.events).length, 0, '仍未发送（等 flush / 定时器）')
-		// reason 不同：先发旧的再开新的
+		assert.equal(gapEvents(box.events).length, 0, '不发送：缺口只在真正发数据前 / 关闭时发出')
+		// reason 变化：并入同一条（保留最早的 offset 与 reason），不立即发送
 		Api._queueClaimGap(rec, 999, 5, 'closing')
-		const sentGaps = gapEvents(box.events)
-		assert.equal(sentGaps.length, 1, 'reason 变化时先发旧的')
-		assert.equal(sentGaps[0].payload.reason, 'overflow')
-		assert.equal(Api._pendingClaimGap(rec).reason, 'closing', '新的缺口换 reason')
-		assert.equal(Api._pendingClaimGap(rec).bytes, 5)
-		// 定时器与缺口一起被清掉，不空转
-		Api._disposeClaimRx(rec, { discard: true })
-		assert.equal(rec.rx, null)
+		assert.equal(gapEvents(box.events).length, 0, 'reason 变化也不立即发送')
+		assert.equal(Api._pendingClaimGap(rec).offset, 0, 'offset 仍取最早')
+		assert.equal(Api._pendingClaimGap(rec).bytes, 8 * 1024 + 5, '字节继续累加')
+		assert.equal(Api._pendingClaimGap(rec).reason, 'overflow', 'reason 取最先记录的那条')
+		// 插件不消费：缺口一直留在宿主这一条记录里（有界）
+		for (let i = 0; i < 50; i++) Api._appendClaimRx(rec, new Uint8Array(1024))
+		assert.equal(gapEvents(box.events).length, 0)
+		assert.equal(Object.keys(rec.rx.pendingGap).length > 0, true)
 	}
 
 	// ---- 6. 关闭途中兑现的读块不丢（直接驱动 readClaim 的循环体语义）----
@@ -322,9 +321,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.equal(Api._claimInflight(rec), 1)
 		assert.equal(Api._ackClaimRx(rec, 1, 1), true)
 		assert.equal(Api._claimInflight(rec), 0)
-		assert.equal(rec.gens[1], undefined, '该 gen 全部确认后条目被删除')
+		assert.ok(rec.gens[1], '当前 gen 的条目**保留**（seq 在同一 gen 内必须单调）')
+		assert.equal(rec.gens[1].ackedSeq, 1)
+		// 全部确认后再发新批：seq 继续递增，迟到的旧 ack 不能确认新批
+		Api._appendClaimRx(rec, new Uint8Array([2]))
+		Api._flushClaimRx(rec)
+		const sentNew = rxEvents(box.events).pop().payload
+		assert.equal(sentNew.seq, 2, '同一 gen 内 seq 继续递增（不回到 1）')
+		assert.equal(Api._ackClaimRx(rec, 1, 1), false, '旧 ack 不能确认新批')
+		assert.equal(Api._claimInflight(rec), 1, '新批仍在途')
+		assert.equal(Api._ackClaimRx(rec, 1, 2), true, 'ack 到 2 才释放')
+		assert.equal(Api._claimInflight(rec), 0)
 		// 重复 / 旧 ack 不再改变任何状态
-		assert.equal(Api._ackClaimRx(rec, 1, 1), false, '重复 ack 被忽略（gen 条目已删除）')
+		assert.equal(Api._ackClaimRx(rec, 1, 2), false, '重复 ack 被忽略')
 		assert.equal(Api._claimInflight(rec), 0)
 		assert.equal(Api._ackClaimRx(null, 1, 1), false, '未知 claim 被忽略')
 
@@ -642,9 +651,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		}
 		assert.equal(Api._claimInflight(rec), 4, '三轮共 12 批尝试，实际只放出 4 批')
 		assert.equal(rxEvents(box.events).length, 4, '反复 open 不会突破上限')
-		// 只有 gen1 真有已发批次（4 批）；gen2/3 的数据在关闭时都记成了 closing 缺口
+		// 只有 gen1 真有已发批次（4 批）；gen2/3 一个都没发出去（额度已被占满），
+		// 它们在关闭时因「在途 0」被回收（数据记成了 closing 缺口），所以记账表只剩 gen1 + 当前 gen
 		assert.equal(rec.gens[1].rxSeq, 4, 'gen1 发出 4 批')
-		assert.equal(rec.gens[2].rxSeq, 0, 'gen2 一个都没发出去（额度已被 gen1 占满）')
+		assert.equal(rec.gens[2], undefined, 'gen2 在途 0，关闭时被回收')
+		assert.equal(rec.gens[3], undefined, 'gen3 同理')
 		assert.equal(Api._ackClaimRx(rec, 1, 4), true, '旧 gen 的 ack 释放额度')
 		assert.equal(Api._claimInflight(rec), 0)
 		assert.equal(rec.gens[1], undefined, 'gen1 全部确认后删除')
@@ -652,7 +663,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.equal(Api._ackClaimRx(rec, 2, 1), false)
 	}
 
-	// ---- 16. 在途已满 + 高频小块：缺口事件条数 ≤ 时长/16 ms + 1 ----
+	// ---- 16. 在途满 + 持续溢出：期间不发缺口，ack 后先收到 1 条合并缺口再收到数据 ----
 	{
 		const box = fakeCtx()
 		const rec = box.ctx.claim('claim-gap-rate')
@@ -660,23 +671,86 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		const buf = new Uint8Array(CLAIM_RX_FLUSH_BYTES)
 		for (let i = 0; i < 4; i++) { Api._appendClaimRx(rec, buf); Api._flushClaimRx(rec) }
 		assert.equal(Api._claimInflight(rec), 4)
-		const started = Date.now()
-		// 灌满缓冲并持续制造丢弃
-		const fill = new Uint8Array(CLAIM_RX_MAX_BYTES - 0)
+		const fill = new Uint8Array(CLAIM_RX_MAX_BYTES)
 		Api._appendClaimRx(rec, fill)
+		const started = Date.now()
 		for (let i = 0; i < 2000; i++) {
 			Api._appendClaimRx(rec, new Uint8Array(256))
 			Api._flushClaimRx(rec)
 		}
 		await sleep(CLAIM_RX_WINDOW_MS * 4)
 		const elapsed = Date.now() - started
+		assert.equal(gapEvents(box.events).length, 0, '在途满 + 持续溢出期间一条缺口都不发（' + elapsed + 'ms）')
+		const pendingBefore = Api._pendingClaimGap(rec)
+		assert.equal(pendingBefore.bytes, 2000 * 256, '缺口在宿主合并成一条')
+		assert.equal(rec.rx.bytes <= CLAIM_RX_MAX_BYTES, true, '缓冲不超上限')
+		const rxBefore = rxEvents(box.events).length
+		assert.equal(Api._ackClaimRx(rec, 1, 1), true)
 		const gaps = gapEvents(box.events)
-		const bound = Math.ceil(elapsed / CLAIM_RX_WINDOW_MS) + 2
-		assert.ok(gaps.length <= bound, '缺口条数 ' + gaps.length + ' ≤ ' + bound + '（时长 ' + elapsed + 'ms）')
-		// 可对账：所有缺口 bytes 之和 = 实际丢弃总量（每块 256 B）
-		const totalGapBytes = gaps.reduce((a, g) => a + g.payload.bytes, 0)
-		assert.ok(totalGapBytes >= 2000 * 256, '缺口字节覆盖全部丢弃')
-		assert.equal(Api._pendingClaimGap(rec) === null || Api._pendingClaimGap(rec).bytes >= 0, true)
+		assert.equal(gaps.length, 1, 'ack 后只发一条合并缺口')
+		assert.equal(gaps[0].payload.bytes, pendingBefore.bytes)
+		assert.equal(gaps[0].payload.offset, pendingBefore.offset)
+		assert.equal(gaps[0].payload.reason, 'overflow')
+		const sent = rxEvents(box.events)
+		assert.equal(sent.length, rxBefore + 1, '随后发一批数据')
+		assert.equal(sent[sent.length - 1].payload.offset, pendingBefore.offset + pendingBefore.bytes, '数据 offset 跳过缺口字节')
+	}
+
+
+	// ---- 17. 反复空 open/close 1000 次：gens 条目数 ≤ 1 ----
+	{
+		const box = fakeCtx()
+		const rec = box.ctx.claim('claim-churn')
+		for (let i = 0; i < 1000; i++) {
+			openGen(Api, rec)
+			Api._disposeClaimRx(rec)
+		}
+		assert.ok(Object.keys(rec.gens).length <= 1, 'gens 条目数 ≤ 1（实际 ' + Object.keys(rec.gens).length + '）')
+		assert.equal(rec.gen, 1000, 'gen 号仍然递增')
+	}
+
+	// ---- 18. 在途满时持续读取不推迟数据合批定时器（截止时间不变）----
+	{
+		const box = fakeCtx()
+		const rec = box.ctx.claim('claim-timer')
+		openGen(Api, rec)
+		const buf = new Uint8Array(CLAIM_RX_FLUSH_BYTES)
+		for (let i = 0; i < 4; i++) { Api._appendClaimRx(rec, buf); Api._flushClaimRx(rec) }
+		assert.equal(Api._claimInflight(rec), 4)
+		// 造一个待发缺口 + 一个已登记的合批定时器
+		Api._appendClaimRx(rec, new Uint8Array(CLAIM_RX_MAX_BYTES))
+		Api._appendClaimRx(rec, new Uint8Array(256))
+		Api._scheduleClaimFlush(rec)
+		const timerBefore = rec.rx.timer
+		assert.ok(timerBefore, '定时器已登记')
+		// 在途满时持续读取：不该 clear 也不该重设定时器
+		for (let i = 0; i < 20; i++) {
+			Api._appendClaimRx(rec, new Uint8Array(64))
+			Api._flushClaimRx(rec)
+			assert.equal(rec.rx.timer, timerBefore, '定时器句柄没有被换掉（截止时间不变）')
+		}
+	}
+
+	// ---- 19. 关闭时在途满：只发一条合并 closing 缺口（overflow 也并进去）----
+	{
+		const box = fakeCtx()
+		const rec = box.ctx.claim('claim-closing-one')
+		openGen(Api, rec)
+		const buf = new Uint8Array(CLAIM_RX_FLUSH_BYTES)
+		for (let i = 0; i < 4; i++) { Api._appendClaimRx(rec, buf); Api._flushClaimRx(rec) }
+		// 溢出一次（待发 overflow 缺口）+ 再灌一块让它成为 closing 残余
+		Api._appendClaimRx(rec, new Uint8Array(CLAIM_RX_MAX_BYTES))
+		Api._appendClaimRx(rec, new Uint8Array(1024))
+		const pending = Api._pendingClaimGap(rec)
+		assert.ok(pending, '有 overflow 缺口待发')
+		Api._appendClaimRx(rec, new Uint8Array(512))
+		const rxBefore = rxEvents(box.events).length
+		Api._disposeClaimRx(rec)
+		const gaps = gapEvents(box.events)
+		assert.equal(gaps.length, 1, '关闭时只发一条合并缺口')
+		assert.equal(rxEvents(box.events).length, rxBefore, '在途满不再发数据')
+		assert.ok(gaps[0].payload.bytes >= pending.bytes, '合并缺口覆盖 overflow + closing 字节')
+		assert.equal(rec.rx, null)
 	}
 
 	console.log('plugin-claim-rx: ok')
