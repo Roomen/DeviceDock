@@ -77,6 +77,10 @@
 		'device.ble-error', 'claim.state', 'app.busy',
 	]
 	const DATA_EVENTS = ['serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'device.ble']
+	// claim.rx 是宿主按 claim 合批后的数据事件（一条含多块、≤ ~60 条/秒、单条上限 8 MiB），
+	// 不计入上面每秒 120 条的数据事件配额，避免高采样场景丢样本。
+	const BATCHED_EVENTS = ['claim.rx']
+	function isBatchedEvent(name) { return BATCHED_EVENTS.indexOf(name) !== -1 }
 	function isStateEvent(name) { return STATE_EVENTS.indexOf(name) !== -1 }
 	function isDataEvent(name) { return DATA_EVENTS.indexOf(name) !== -1 }
 	// 状态事件合并键：device.lane 按 lane 分键（A/B 各自最新），device.ports 是
@@ -334,7 +338,7 @@
 
 	const lib = {
 		PROTOCOL, CAPABILITIES, CAPABILITY_TEXT, METHODS, EVENTS, ERROR_TEXT,
-		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, isStateEvent, isDataEvent, stateEventKey, coalesceState,
+		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, BATCHED_EVENTS, isStateEvent, isDataEvent, isBatchedEvent, stateEventKey, coalesceState,
 		estimateSize, newEventState, eventAdmission, newStateEventState, stateEventPlan,
 		newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,

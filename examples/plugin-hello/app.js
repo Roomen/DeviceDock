@@ -97,12 +97,20 @@
 	})
 	sdk.on('device.ports', refreshDevices)
 	sdk.on('device.lane', refreshDevices)
+	// serial.rx 的 bytes 是数组；claim.rx（合批事件）的 bytes 是 Uint8Array，两种都按字节序列处理
+	function rxBytes(pkt) {
+		if (!pkt) return null
+		if (pkt.bytes instanceof Uint8Array) return pkt.bytes
+		if (Array.isArray(pkt.bytes)) return Uint8Array.from(pkt.bytes)
+		return null
+	}
 	sdk.serial.onRx(function (pkt) {
-		if (!pkt || !Array.isArray(pkt.bytes)) return
+		const bytes = rxBytes(pkt)
+		if (!bytes) return
 		const lane = pkt.lane || 'S'
-		rxByLane[lane] = (rxByLane[lane] || 0) + pkt.bytes.length
-		rxTotal += pkt.bytes.length
-		const hex = pkt.bytes.slice(0, 16).map(function (b) { return Number(b).toString(16).padStart(2, '0').toUpperCase() }).join(' ')
+		rxByLane[lane] = (rxByLane[lane] || 0) + bytes.length
+		rxTotal += bytes.length
+		const hex = Array.from(bytes.slice(0, 16), function (b) { return Number(b).toString(16).padStart(2, '0').toUpperCase() }).join(' ')
 		renderRx(hex, lane)
 	})
 

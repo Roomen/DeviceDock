@@ -125,6 +125,24 @@
 			return function () { set.delete(fn) }
 		}
 
+		// claim.rx 的 bytes 是 Uint8Array（合批事件，一条可能含多帧）；统一成 Uint8Array 视图，
+		// 兼容老式数组 payload 与跨文档 structured clone 传进来的 typed array。
+		function bytesView(v) {
+			if (v instanceof Uint8Array) return v
+			if (v && v.buffer && typeof v.byteLength === 'number' && typeof v.length === 'number') {
+				return new Uint8Array(v.buffer, v.byteOffset || 0, v.byteLength)
+			}
+			if (Array.isArray(v)) return Uint8Array.from(v)
+			return new Uint8Array(0)
+		}
+		function onClaimRx(fn) {
+			if (typeof fn !== 'function') return function () {}
+			return on('claim.rx', function (pkt) {
+				const p = pkt && typeof pkt === 'object' ? pkt : {}
+				fn({ claimId: p.claimId, at: p.at || 0, seq: p.seq || 0, bytes: bytesView(p.bytes) })
+			})
+		}
+
 		function ready() {
 			if (readyInfo) return Promise.resolve(readyInfo)
 			return new Promise(function (resolve) { readyWaiters.push(resolve) })
@@ -139,6 +157,7 @@
 			getTheme: function () { return Object.assign({}, currentTheme, { tokens: Object.assign({}, currentTheme.tokens) }) },
 			// 测试注入入口
 			_handleMessage: onMessage,
+			bytesView: bytesView,
 			device: {
 				listPorts: function () { return call('device.listPorts', {}) },
 				listBle: function () { return call('device.listBle', {}) },
@@ -158,7 +177,8 @@
 				open: function (claimId, opts) { return call('claim.open', Object.assign({ claimId: claimId }, opts || {})) },
 				close: function (claimId) { return call('claim.close', { claimId: claimId }) },
 				write: function (claimId, bytes) { return call('claim.write', { claimId: claimId, bytes: bytes }) },
-				onRx: function (fn) { return on('claim.rx', fn) },
+				// 合批事件：bytes 为 Uint8Array，seq 每个 claim 单调递增，at 是本批第一块时间
+				onRx: onClaimRx,
 			},
 			protocol: {
 				info: function (lane) { return call('protocol.info', { lane: lane }) },

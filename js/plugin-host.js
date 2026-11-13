@@ -183,7 +183,9 @@
 					failures.push({ claimId: 'teardown', message: '清理回调失败：' + String(e && e.message ? e.message : e) })
 				}
 			}
-			const claimFailures = Api.closeClaims ? await Api.closeClaims(view.ctx, { cancelled: true }) : []
+			const claimFailures = Api.closeClaims
+				? await Api.closeClaims(view.ctx, { cancelled: true, discard: view.iframeGone === true })
+				: []
 			for (let i = 0; i < (claimFailures || []).length; i++) failures.push(claimFailures[i])
 			if (!failures.length && root.serialPortClaims && root.serialPortClaims.releasePlugin) {
 				root.serialPortClaims.releasePlugin(view.plugin.id)
@@ -206,6 +208,9 @@
 	function destroyView(id) {
 		const view = views.get(id)
 		if (!view) return Promise.resolve({ ok: true, failures: [] })
+		// 停用 / 卸载 / 重装 / 更新准备都会把 iframe 拿掉：此时 claim.rx 缓冲直接丢弃，
+		// 不再尝试发给一个已经销毁的文档（closeClaims 按这个标记传 discard）。
+		view.iframeGone = true
 		view.closed = true
 		view.iframe.removeAttribute('src')
 		view.el.remove()
@@ -309,6 +314,12 @@
 				view.pendingState = Rpc.coalesceState(view.pendingState, name, envelope.payload)
 				scheduleStateFlush(view)
 			}
+			return
+		}
+		// claim.rx 是宿主按 claim 合批后的事件（≤ ~60 条/秒，单条最大 8 MiB），
+		// 不再计入每秒 120 条的数据事件配额：功耗分析这类高采样场景不能丢样本。
+		if (Rpc.isBatchedEvent(name)) {
+			post(view, envelope)
 			return
 		}
 		const rolled = now - (view.eventState.windowStart || 0) >= Rpc.EVENT_LIMITS.windowMs

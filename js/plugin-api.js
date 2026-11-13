@@ -473,6 +473,99 @@
 		}
 	}
 
+	// ---------- claim.rx 合批 ----------
+	// 每个 claim 一个接收缓冲：读循环把块追加进去，按时间窗（16 ms）或字节阈值（256 KiB）刷一次。
+	// 一条 claim.rx 可能包含多次 read 的数据，插件必须按字节流解析、不能假设「一事件一帧」。
+	// 缓冲上界 8 MiB：超过时丢最早的字节并发 events.dropped（带 claimId 与字节数），绝不静默丢。
+	const CLAIM_RX_WINDOW_MS = 16
+	const CLAIM_RX_FLUSH_BYTES = 256 * 1024
+	const CLAIM_RX_MAX_BYTES = 8 * 1024 * 1024
+
+	function claimRxState(rec) {
+		if (!rec.rx) rec.rx = { chunks: [], bytes: 0, seq: 0, at: 0, timer: 0 }
+		return rec.rx
+	}
+
+	// 把一块字节追加进缓冲；返回是否到了需要立刻刷的字节阈值
+	function appendClaimRx(rec, value) {
+		const st = claimRxState(rec)
+		if (!st.at) st.at = Date.now()
+		const grow = st.bytes + value.length - CLAIM_RX_MAX_BYTES
+		if (grow > 0) {
+			// 先丢最老的字节，保证「丢掉的是最早的样本」；丢弃量按实际需要计算（含本块溢出）
+			let need = grow
+			let dropped = 0
+			while (need > 0 && st.chunks.length) {
+				const head = st.chunks[0]
+				if (head.length <= need) {
+					st.chunks.shift()
+					st.bytes -= head.length
+					need -= head.length
+					dropped += head.length
+				} else {
+					st.chunks[0] = head.subarray(need)
+					st.bytes -= need
+					dropped += need
+					need = 0
+				}
+			}
+			if (dropped > 0) {
+				rec.ctx.send('events.dropped', { reason: 'claim-rx-overflow', claimId: rec.id, bytes: dropped, at: Date.now() })
+			}
+		}
+		st.chunks.push(value)
+		st.bytes += value.length
+		return st.bytes >= CLAIM_RX_FLUSH_BYTES
+	}
+
+	function concatChunks(chunks, total) {
+		const out = new Uint8Array(total)
+		let off = 0
+		for (let i = 0; i < chunks.length; i++) {
+			out.set(chunks[i], off)
+			off += chunks[i].length
+		}
+		return out
+	}
+
+	// 刷出缓冲：bytes 用 Uint8Array（structured clone 支持，不再 Array.from），
+	// seq 每个 claim 单调递增，at 是本批第一块的到达时间。
+	function flushClaimRx(rec, opts) {
+		const st = rec.rx
+		if (!st) return false
+		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
+		if (!st.bytes) return false
+		const bytes = concatChunks(st.chunks, st.bytes)
+		const at = st.at || Date.now()
+		st.chunks = []
+		st.bytes = 0
+		st.at = 0
+		// iframe 已销毁 / 插件停用：直接丢弃，不再发事件
+		if (!opts || opts.discard !== true) {
+			st.seq += 1
+			rec.ctx.send('claim.rx', { claimId: rec.id, at: at, seq: st.seq, bytes: bytes })
+		}
+		return true
+	}
+
+	function scheduleClaimFlush(rec) {
+		const st = claimRxState(rec)
+		if (st.timer) return
+		st.timer = setTimeout(function () {
+			st.timer = 0
+			flushClaimRx(rec)
+		}, CLAIM_RX_WINDOW_MS)
+	}
+
+	// 定时器随 claim 释放
+	function disposeClaimRx(rec, opts) {
+		const st = rec.rx
+		if (!st) return
+		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
+		flushClaimRx(rec, opts)
+		rec.rx = null
+	}
+
 	// 读循环：读错误后后端会换一条新流(Chromium 行为)，换流就续读；流为 null 表示设备丢失
 	async function readClaim(rec) {
 		let lastStream = null
@@ -496,7 +589,9 @@
 					const { value, done } = await reader.read()
 					if (done || !rec.reading) break
 					if (!value || !value.length) continue
-					rec.ctx.send('claim.rx', { claimId: rec.id, at: Date.now(), bytes: Array.from(value) })
+					// 合批：累积到字节阈值立刻刷，否则等 16 ms 窗口
+					if (appendClaimRx(rec, value)) flushClaimRx(rec)
+					else scheduleClaimFlush(rec)
 				}
 			} catch (e) {
 				// 设备丢失 / 读错误：交给下面的换流判断或结束
@@ -507,6 +602,8 @@
 			if (!rec.port.readable) break
 		}
 		rec.reading = false
+		// 读循环结束时把残余刷出（插件仍在时）
+		flushClaimRx(rec)
 	}
 
 	// opts.cancelled=true 是停用 / 卸载（该声明此后不可再用）；false 是普通 claim.close（可重新 open）。
@@ -534,6 +631,8 @@
 				try { await rec.readTask } catch (e) {}
 				rec.readTask = null
 			}
+			// 3b) 读循环停了：把缓冲里的残余刷给插件（iframe 已销毁则丢弃），再释放定时器
+			disposeClaimRx(rec, opts && opts.discard ? { discard: true } : undefined)
 			// 4) 关闭失败要如实抛出：占用声明与 busy 源都保留，应用更新也不能放行
 			if (rec.portOpened && !rec.portClosed) {
 				await rec.port.close()
@@ -568,6 +667,14 @@
 	}
 
 	root.PluginApi = {
+		CLAIM_RX_WINDOW_MS: CLAIM_RX_WINDOW_MS,
+		CLAIM_RX_FLUSH_BYTES: CLAIM_RX_FLUSH_BYTES,
+		CLAIM_RX_MAX_BYTES: CLAIM_RX_MAX_BYTES,
+		// 测试注入：直接驱动合批（不经过真串口）
+		_appendClaimRx: appendClaimRx,
+		_scheduleClaimFlush: scheduleClaimFlush,
+		_flushClaimRx: flushClaimRx,
+		_disposeClaimRx: disposeClaimRx,
 		call: async function (method, params, ctx) {
 			const fn = api[method]
 			if (typeof fn !== 'function') throw fail('unknown_method', '宿主不支持这个方法：' + method)
