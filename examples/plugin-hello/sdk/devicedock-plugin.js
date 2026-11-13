@@ -137,27 +137,59 @@
 		}
 		// 合批事件：bytes 为 Uint8Array，gen / seq / offset 用于判断缺口
 		// （offset !== 上一批 offset + 上一批长度 即有缺口，缺口通知见 claim.gap）。
-		// 回调同步返回或返回的 Promise 结束后自动 claim.ack(seq)，宿主据此继续发送下一批。
+		//
+		// 同一 claim 的批次**串行**交给回调：上一批回调（含它返回的 Promise）结束后才调用下一批，
+		// 每批结束后按序 ack 该批 seq——保证累积确认只覆盖已完成的连续批次，宿主不会提前放行。
+		// 回调抛错（或 Promise 拒绝）：仍 ack 该批（视为已消费，避免把宿主卡死在背压里），
+		// 同时调用可选的 onError 处理器；没有就 console.error。
+		const claimQueues = new Map()
+		let claimErrorHandler = null
+		function reportClaimError(err, info) {
+			if (typeof claimErrorHandler === 'function') {
+				try { claimErrorHandler(err, info); return } catch (e) {}
+			}
+			if (typeof console !== 'undefined' && console.error) console.error('claim.rx handler failed', err)
+		}
+		function enqueueClaim(claimId, job) {
+			const prev = claimQueues.get(claimId) || Promise.resolve()
+			const next = prev.then(job).catch(function () {})
+			claimQueues.set(claimId, next)
+			next.then(function () { if (claimQueues.get(claimId) === next) claimQueues.delete(claimId) })
+			return next
+		}
 		function onClaimRx(fn) {
 			if (typeof fn !== 'function') return function () {}
 			return on('claim.rx', function (pkt) {
 				const p = pkt && typeof pkt === 'object' ? pkt : {}
-				const pktView = { claimId: p.claimId, gen: p.gen || 0, at: p.at || 0, seq: p.seq || 0, offset: p.offset || 0, bytes: bytesView(p.bytes) }
-				const ack = function () {
-					if (!pktView.claimId || !pktView.seq) return
-					try { call('claim.ack', { claimId: pktView.claimId, gen: pktView.gen, seq: pktView.seq }).catch(function () {}) } catch (e) {}
-				}
-				let out
-				try {
-					out = fn(pktView)
-				} catch (e) {
+				const item = { claimId: p.claimId, gen: p.gen || 0, at: p.at || 0, seq: p.seq || 0, offset: p.offset || 0, bytes: bytesView(p.bytes) }
+				if (!item.claimId) return
+				enqueueClaim(String(item.claimId), function () {
+					const ack = function () {
+						if (!item.seq) return
+						try { call('claim.ack', { claimId: item.claimId, gen: item.gen, seq: item.seq }).catch(function () {}) } catch (e) {}
+					}
+					let out
+					try {
+						out = fn(item)
+					} catch (e) {
+						reportClaimError(e, { claimId: item.claimId, gen: item.gen, seq: item.seq })
+						ack()
+						return
+					}
+					if (out && typeof out.then === 'function') {
+						return out.then(ack, function (e) {
+							reportClaimError(e, { claimId: item.claimId, gen: item.gen, seq: item.seq })
+							ack()
+						})
+					}
 					ack()
-					throw e
-				}
-				if (out && typeof out.then === 'function') out.then(ack, ack)
-				else ack()
+				})
 			})
 		}
+		// 回调失败时的处理器（可选）；不设就 console.error
+		function setClaimErrorHandler(fn) { claimErrorHandler = typeof fn === 'function' ? fn : null }
+		// 测试用：等某个 claim 的队列排空
+		function claimQueueDone(claimId) { return claimQueues.get(String(claimId)) || Promise.resolve() }
 
 		// 缺口通知（overflow / closing）：offset 是被丢字节的起点，插件据此知道样本缺了哪些
 		function onClaimGap(fn) {
@@ -182,6 +214,8 @@
 			getTheme: function () { return Object.assign({}, currentTheme, { tokens: Object.assign({}, currentTheme.tokens) }) },
 			// 测试注入入口
 			_handleMessage: onMessage,
+			setClaimErrorHandler: setClaimErrorHandler,
+			_claimQueueDone: claimQueueDone,
 			bytesView: bytesView,
 			bytesView: bytesView,
 			device: {

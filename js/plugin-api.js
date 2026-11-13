@@ -468,6 +468,7 @@
 			rec.gen = (rec.gen || 0) + 1
 			rec.rxSeq = 0
 			rec.rxOffset = 0
+			rec.ackedSeq = 0
 			rec.rx = null
 			rec.open = true
 			rec.reading = true
@@ -501,32 +502,63 @@
 	const CLAIM_RX_WINDOW_MS = 16
 	const CLAIM_RX_FLUSH_BYTES = 256 * 1024
 	const CLAIM_RX_MAX_BYTES = 8 * 1024 * 1024
-	// 背压：每个 claim 允许 4 批「已发未确认」在途；到上限就不再发，数据继续留在缓冲里
+	// 背压：每个 claim 允许 4 批「已发未确认」在途；到上限就不再发，数据继续留在缓冲里。
+	// 承认（ack）只前进：rec.ackedSeq 记当前 gen 已确认的最高 seq，inflight = rxSeq - ackedSeq。
 	const CLAIM_RX_INFLIGHT_MAX = 4
 
-	// gen / seq / offset 都存在 claim 记录上（rec.gen / rec.rxSeq / rec.rxOffset），
-	// 不随 rec.rx（缓冲状态）清空而丢；每次 claim.open 开新 gen 时三者一起重置。
+	// gen / seq / offset / ackedSeq 都存在 claim 记录上（rec.gen / rec.rxSeq / rec.rxOffset / rec.ackedSeq），
+	// 不随 rec.rx（缓冲状态）清空而丢；每次 claim.open 开新 gen 时一起重置。
 	function ensureGen(rec) {
 		if (!rec.gen) rec.gen = 1
 		if (typeof rec.rxSeq !== 'number') rec.rxSeq = 0
 		if (typeof rec.rxOffset !== 'number') rec.rxOffset = 0
+		if (typeof rec.ackedSeq !== 'number') rec.ackedSeq = 0
 		return rec.gen
+	}
+
+	function claimInflight(rec) {
+		return Math.max(0, rec.rxSeq - rec.ackedSeq)
 	}
 
 	function claimRxState(rec) {
 		ensureGen(rec)
-		if (!rec.rx) rec.rx = { chunks: [], bytes: 0, at: 0, timer: 0, inflight: 0 }
+		// pendingGap：每个 claim 至多一条待发缺口 { offset, bytes, reason }，连续丢弃累加进去
+		// （offset 保留首次丢弃起点）。它在下一批 claim.rx 之前发出，或由 16 ms 定时器发出。
+		if (!rec.rx) rec.rx = { chunks: [], bytes: 0, at: 0, timer: 0, pendingGap: null }
 		return rec.rx
 	}
 
-	function reportClaimGap(rec, offset, bytes, reason) {
+	function sendClaimGap(rec, gap) {
+		if (!gap || !gap.bytes) return
+		rec.ctx.send('claim.gap', { claimId: rec.id, gen: ensureGen(rec), offset: gap.offset, bytes: gap.bytes, reason: gap.reason })
+	}
+
+	// 把一次丢弃并进待发缺口：reason 不同就先发旧的再开新的；相同则累加（offset 保留首次起点）。
+	function queueClaimGap(rec, offset, bytes, reason) {
 		if (!bytes) return
-		rec.ctx.send('claim.gap', { claimId: rec.id, gen: ensureGen(rec), offset: offset, bytes: bytes, reason: reason })
+		const st = claimRxState(rec)
+		const cur = st.pendingGap
+		if (cur && cur.reason !== reason) {
+			sendClaimGap(rec, cur)
+			st.pendingGap = null
+		}
+		if (!st.pendingGap) st.pendingGap = { offset: offset, bytes: bytes, reason: reason }
+		else st.pendingGap.bytes += bytes
+		// 定时器顺手把缺口发出去（每 claim 至多每 16 ms 一条）
+		scheduleClaimFlush(rec)
+	}
+
+	function takeClaimGap(rec) {
+		const st = rec.rx
+		if (!st || !st.pendingGap) return null
+		const gap = st.pendingGap
+		st.pendingGap = null
+		return gap
 	}
 
 	// 把一块字节追加进缓冲；返回是否到了需要立刻刷的字节阈值。
-	// 溢出规则：始终丢**最早**的字节（含单个超过上限的新块，截掉它的前缀、保留最新），
-	// 实际丢弃字节全部计入一条 claim.gap，offset 是这批被丢字节的起点。
+	// 溢出规则：始终丢**最早**的字节；单个超过上限的新块截掉前缀、**复制**保留尾部（slice 而非 subarray，
+	// 否则视图仍引用整个原始 ArrayBuffer，实际持有内存会远超上限）。丢弃字节并入待发缺口。
 	function appendClaimRx(rec, value) {
 		const st = claimRxState(rec)
 		if (!st.at) st.at = Date.now()
@@ -545,25 +577,29 @@
 					need -= head.length
 					dropped += head.length
 				} else {
-					chunks[0] = head.subarray(need)
+					// 同样用 slice 复制：切掉前缀后不保留对原底层缓冲的引用
+					chunks[0] = head.slice(need)
 					bytes -= need
 					dropped += need
 					need = 0
 				}
 			}
-			// 2) 缓冲清空了还有剩余需求：截掉新块的前缀（保留最新），单个超上限的块也走这里
+			// 2) 缓冲清空了还有剩余需求：截掉新块前缀，复制保留尾部（单个超上限的块也走这里）
 			if (need > 0) {
 				const cut = Math.min(need, value.length)
-				value = value.subarray(cut)
+				value = value.slice(cut)
 				need -= cut
 				dropped += cut
 			}
 			if (dropped > 0) {
 				rec.rxOffset = gapStart + dropped
-				reportClaimGap(rec, gapStart, dropped, 'overflow')
+				queueClaimGap(rec, gapStart, dropped, 'overflow')
 			}
 		}
 		if (value.length) {
+			// 只接受独立、且大小与内容一致的块：view 指向大底层缓冲时按 byteLength 复制一份，
+			// 这样缓冲实际占用（栈上 bytes 计数 + 底层内存）都不超过上限。
+			if (value.byteOffset !== 0 || value.buffer.byteLength !== value.byteLength) value = value.slice()
 			chunks.push(value)
 			bytes += value.length
 		}
@@ -582,22 +618,25 @@
 		return out
 	}
 
-	// 刷出缓冲。opts.force：关闭时的最后一批，忽略在途上限（插件仍在，必须把残余交出去）。
-	// opts.discard：iframe 已销毁，直接丢弃且不报告（无人可收）。
+	// 刷出缓冲。opts.discard：iframe 已销毁，直接丢弃且不报告（无人可收）。
+	// 关闭时不再「强发一批」：残余受同一套在途上限约束，发不下的按 reason:'closing' 并入缺口。
 	function flushClaimRx(rec, opts) {
 		const st = rec.rx
 		if (!st) return false
 		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
-		if (!st.bytes) return false
-		const force = !!(opts && opts.force)
 		if (opts && opts.discard) {
 			st.chunks = []
 			st.bytes = 0
 			st.at = 0
+			st.pendingGap = null
 			return false
 		}
+		// 先发待发缺口（保证缺口先于后续数据到达），再考虑发数据
+		const gap = takeClaimGap(rec)
+		if (gap) sendClaimGap(rec, gap)
+		if (!st.bytes) return false
 		// 背压：在途未确认的批次数到上限就不再发，数据留在缓冲里等 claim.ack
-		if (!force && st.inflight >= CLAIM_RX_INFLIGHT_MAX) return false
+		if (claimInflight(rec) >= CLAIM_RX_INFLIGHT_MAX) return false
 		const bytes = concatChunks(st.chunks, st.bytes)
 		const at = st.at || Date.now()
 		const offset = rec.rxOffset
@@ -606,7 +645,6 @@
 		st.at = 0
 		rec.rxOffset = offset + bytes.length
 		rec.rxSeq += 1
-		st.inflight += 1
 		rec.ctx.send('claim.rx', { claimId: rec.id, gen: ensureGen(rec), seq: rec.rxSeq, offset: offset, at: at, bytes: bytes })
 		return true
 	}
@@ -620,25 +658,48 @@
 		}, CLAIM_RX_WINDOW_MS)
 	}
 
-	// 累计确认：ack(seq) 表示已处理到 seq。未知 claim / 旧 gen / 超前 seq 一律忽略。
+	// 累计确认（只前进）：ack(seq) 表示已处理到 seq。未知 claim / 旧 gen / 超前 seq / 不前进的 seq
+	// 一律忽略。inflight 永远由 rxSeq - ackedSeq 推出，重复或旧 ACK 不会改变它。
 	function ackClaimRx(rec, gen, seq) {
 		if (!rec || !rec.rx) return false
 		if (ensureGen(rec) !== gen) return false
-		const st = rec.rx
 		if (!Number.isInteger(seq) || seq <= 0 || seq > rec.rxSeq) return false
-		st.inflight = Math.max(0, rec.rxSeq - seq)
-		// 有残留且腾出了在途额度就继续发
+		if (seq <= rec.ackedSeq) return false
+		rec.ackedSeq = seq
+		const st = rec.rx
 		if (st.bytes) flushClaimRx(rec)
 		return true
 	}
 
-	// 定时器随 claim 释放；关闭时先把残余刷出（force），iframe 已销毁则丢弃
+	// 定时器随 claim 释放；关闭 / 停用时：能发多少发多少（受在途上限），发不下的按 closing 并进缺口。
 	function disposeClaimRx(rec, opts) {
 		const st = rec.rx
 		if (!st) return
 		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
-		if (opts && opts.discard) flushClaimRx(rec, { discard: true })
-		else flushClaimRx(rec, { force: true })
+		if (opts && opts.discard) {
+			flushClaimRx(rec, { discard: true })
+			rec.rx = null
+			return
+		}
+		// 最多发到在途上限为止：循环 flush 直到没有空间或缓冲清空
+		let guard = CLAIM_RX_INFLIGHT_MAX + 1
+		while (st.bytes && claimInflight(rec) < CLAIM_RX_INFLIGHT_MAX && guard-- > 0) {
+			if (!flushClaimRx(rec)) break
+		}
+		// 仍发不出去的残余：并入 closing 缺口（不静默丢，也不越过在途上限）
+		if (st.bytes) {
+			const gapStart = rec.rxOffset
+			const dropped = st.bytes
+			st.chunks = []
+			st.bytes = 0
+			st.at = 0
+			rec.rxOffset = gapStart + dropped
+			queueClaimGap(rec, gapStart, dropped, 'closing')
+			if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
+			const gap = takeClaimGap(rec)
+			sendClaimGap(rec, gap)
+		}
+		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
 		rec.rx = null
 	}
 
@@ -751,12 +812,15 @@
 		CLAIM_RX_MAX_BYTES: CLAIM_RX_MAX_BYTES,
 		// 测试注入：直接驱动合批（不经过真串口）
 		CLAIM_RX_INFLIGHT_MAX: CLAIM_RX_INFLIGHT_MAX,
+		_claimInflight: claimInflight,
 		_appendClaimRx: appendClaimRx,
 		_scheduleClaimFlush: scheduleClaimFlush,
 		_flushClaimRx: flushClaimRx,
 		_disposeClaimRx: disposeClaimRx,
 		_ackClaimRx: ackClaimRx,
-		_reportClaimGap: reportClaimGap,
+		_queueClaimGap: queueClaimGap,
+		_takeClaimGap: takeClaimGap,
+		_pendingClaimGap: function (rec) { return rec && rec.rx ? rec.rx.pendingGap : null },
 		call: async function (method, params, ctx) {
 			const fn = api[method]
 			if (typeof fn !== 'function') throw fail('unknown_method', '宿主不支持这个方法：' + method)

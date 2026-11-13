@@ -139,7 +139,7 @@
 		view = {
 			plugin: plugin, el: el, iframe: iframe, ready: false, closed: false,
 			claims: new Map(), busy: new Map(), busySeq: 0, teardowns: [], ctx: null,
-			admission: Rpc.newAdmissionState(), eventState: Rpc.newEventState(),
+			admission: Rpc.newAdmissionState(), ackState: Rpc.newAckState(), eventState: Rpc.newEventState(),
 			stateEventState: Rpc.newStateEventState(), pendingState: {}, stateTimer: 0,
 		}
 		view.ctx = makeContext(view)
@@ -377,48 +377,56 @@
 		return found
 	}
 	async function onMessage(event) {
-		const view = viewBySource(event.source)
-		if (!view || view.closed) return
-		const data = event.data
-		// claim.ack 是每个 claim.rx 的回执，量级与批次同阶：不计入每秒 60 次 RPC 配额，
-		// 但仍要过下面的 validateRequest / authorize（能力、参数与大小校验一个不少）。
-		const quickId = data && typeof data === 'object' && typeof data.id === 'string' ? data.id : ''
-		const exempt = data && typeof data === 'object' && Rpc.isQuotaExemptMethod(data.method)
-		const fastPath = !!exempt
-		if (!fastPath) {
-			// O(1) 轻量准入先做：无效 / 超大 / 高频消息都要先计数限流，
-			// 不能等遍历完整条消息（甚至整个大数组）才判断是否拒绝
-			const adm = Rpc.admission(view.admission, Date.now(), Rpc.LIMITS)
-			if (!adm.ok) {
-				if (quickId) post(view, Rpc.errorEnvelope(quickId, adm.error.code, adm.error.message))
-				return
-			}
-			view.admission = adm.state
+	const view = viewBySource(event.source)
+	if (!view || view.closed) return
+	const data = event.data
+
+	// claim.ack 走 O(1) 轻量校验 + 独立的每秒 240 条上限，**不做**通用遍历 / 不计 RPC 配额。
+	// 畸形（多余键、非字符串 claimId、非安全正整数 gen/seq）直接丢弃、不回包；超频也静默丢弃。
+	const ack = Rpc.validateAck(data)
+	if (ack) {
+		if (!ack.ok) return
+		const aadm = Rpc.ackAdmission(view.ackState, Date.now(), Rpc.ACK_LIMITS)
+		view.ackState = aadm.state
+		if (!aadm.ok) return
+		try { await Api.call('claim.ack', { claimId: ack.claimId, gen: ack.gen, seq: ack.seq }, view.ctx) } catch (e) { /* 静默 */ }
+		return
+	}
+
+	const quickId = data && typeof data === 'object' && typeof data.id === 'string' ? data.id : ''
+	// O(1) 轻量准入先做：无效 / 超大 / 高频消息都要先计数限流，
+	// 不能等遍历完整条消息（甚至整个大数组）才判断是否拒绝
+	const adm = Rpc.admission(view.admission, Date.now(), Rpc.LIMITS)
+	if (!adm.ok) {
+		if (quickId) post(view, Rpc.errorEnvelope(quickId, adm.error.code, adm.error.message))
+		return
+	}
+	view.admission = adm.state
+	try {
+		const req = Rpc.validateRequest(data)
+		if (!req.ok) {
+			// 请求本身不合法：能取到 id 就回错误，取不到就静默丢弃
+			if (quickId) post(view, Rpc.errorEnvelope(quickId, req.error.code, req.error.message))
+			return
+		}
+		const denied = Rpc.authorize(view.plugin.capabilities || [], req.method)
+		if (denied) {
+			post(view, Rpc.errorEnvelope(req.id, denied.code, denied.message))
+			return
 		}
 		try {
-			const req = Rpc.validateRequest(data)
-			if (!req.ok) {
-				// 请求本身不合法：能取到 id 就回错误，取不到就静默丢弃
-				if (quickId) post(view, Rpc.errorEnvelope(quickId, req.error.code, req.error.message))
-				return
-			}
-			const denied = Rpc.authorize(view.plugin.capabilities || [], req.method)
-			if (denied) {
-				post(view, Rpc.errorEnvelope(req.id, denied.code, denied.message))
-				return
-			}
-			try {
-				const result = await Api.call(req.method, req.params, view.ctx)
-				post(view, Rpc.resultEnvelope(req.id, result))
-			} catch (e) {
-				const code = e && e.code ? e.code : 'internal'
-				const message = String(e && e.message ? e.message : e)
-				post(view, Rpc.errorEnvelope(req.id, code, message))
-			}
-		} finally {
-			if (!fastPath) view.admission = Rpc.releaseInflight(view.admission)
+			const result = await Api.call(req.method, req.params, view.ctx)
+			post(view, Rpc.resultEnvelope(req.id, result))
+		} catch (e) {
+			const code = e && e.code ? e.code : 'internal'
+			const message = String(e && e.message ? e.message : e)
+			post(view, Rpc.errorEnvelope(req.id, code, message))
 		}
+	} finally {
+		view.admission = Rpc.releaseInflight(view.admission)
 	}
+}
+
 // ---------- 原始字节 / 解析帧 / 设备事件 ----------
 	function ensureByteTap() {
 		if (byteTapInstalled || !root.serialByteTap) return
