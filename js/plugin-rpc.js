@@ -126,6 +126,9 @@
 			if (typeof v === 'string') total += v.length
 			else if (v === null || v === undefined) total += 4
 			else if (typeof v === 'number' || typeof v === 'boolean') total += 8
+			// 字节缓冲(Uint8Array 等 ArrayBuffer 视图、ArrayBuffer)按字节数计，不逐元素遍历：
+			// for…in 逐个下标计步会把 64 KiB 的写入算成近一兆
+			else if (isByteBuffer(v)) total += v.byteLength
 			else if (Array.isArray(v)) {
 				total += 2
 				const n = Math.min(v.length, budget)
@@ -339,8 +342,22 @@
 	}
 
 	// 字节参数校验：插件只能给 0..255 的数组或十六进制串，宿主不替它猜
+	// ArrayBuffer 视图(Uint8Array、DataView 等)或 ArrayBuffer；跨 realm(iframe 结构化克隆)也认
+	function isArrayBuffer(v) {
+		return Object.prototype.toString.call(v) === '[object ArrayBuffer]'
+	}
+	function isByteBuffer(v) {
+		return !!v && typeof v === 'object' && ((typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(v)) || isArrayBuffer(v))
+	}
+	// 字节参数接受四种形状：0..255 整数数组、十六进制串、ArrayBuffer 视图(Uint8Array 等，宿主推的 claim.rx 就是 Uint8Array)、ArrayBuffer。
+	// 上限与校验一致：超过 maxBytes 一律 too_large；视图按它覆盖的字节取(byteOffset / byteLength)，不读整块底层缓冲
 	function toBytes(value, maxBytes) {
 		const limit = maxBytes || 65536
+		if (isByteBuffer(value)) {
+			if (value.byteLength > limit) return { ok: false, error: { code: 'too_large', message: '数据超过 ' + limit + ' 字节' } }
+			const u8 = isArrayBuffer(value) ? new Uint8Array(value) : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+			return { ok: true, bytes: Array.prototype.slice.call(u8) }
+		}
 		if (typeof value === 'string') {
 			const text = value.replace(/[\s,]/g, '')
 			if (!/^([0-9a-fA-F]{2})+$/.test(text)) return { ok: false, error: { code: 'bad_request', message: '十六进制串格式不对' } }
@@ -359,7 +376,7 @@
 			}
 			return { ok: true, bytes: out }
 		}
-		return { ok: false, error: { code: 'bad_request', message: '数据必须是字节数组或十六进制串' } }
+		return { ok: false, error: { code: 'bad_request', message: '数据必须是字节数组、Uint8Array 或十六进制串' } }
 	}
 
 	const lib = {

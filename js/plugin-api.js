@@ -437,9 +437,30 @@
 		try { await p } finally { owner.stopping = null }
 	}
 
+	// claim.open 的可选控制信号：{ dataTerminalReady?: boolean, requestToSend?: boolean }。
+	// 只收这两个键、值必须是布尔；没给或给了空对象返回 null(不调 setSignals)
+	const SIGNAL_KEYS = ['dataTerminalReady', 'requestToSend']
+	function claimSignals(raw) {
+		if (raw === undefined || raw === null) return null
+		if (typeof raw !== 'object' || Array.isArray(raw)) throw fail('bad_request', 'signals 必须是对象，如 { dataTerminalReady: true }')
+		const out = {}
+		let n = 0
+		for (const k in raw) {
+			if (!Object.prototype.hasOwnProperty.call(raw, k)) continue
+			if (SIGNAL_KEYS.indexOf(k) === -1) throw fail('bad_request', 'signals 只支持 dataTerminalReady / requestToSend')
+			if (typeof raw[k] !== 'boolean') throw fail('bad_request', 'signals.' + k + ' 必须是 true / false')
+			out[k] = raw[k]
+			n++
+		}
+		return n ? out : null
+	}
+
 	// ---------- 插件独占的口：打开 / 读循环 / 关闭 ----------
 	async function openClaim(rec, params) {
 		if (rec.open) return
+		// 控制信号先校验：端口不支持 setSignals 时明确报 unsupported，不打开、不静默忽略
+		const signals = claimSignals(params.signals)
+		if (signals && typeof rec.port.setSignals !== 'function') throw fail('unsupported', '这个串口不支持设置控制信号（DTR / RTS）')
 		if (rec.openTask) throw fail('bad_request', '正在打开，请稍候')
 		if (rec.cancelled) throw fail('not_found', '插件已停用')
 		if (rec.portOpened && !rec.portClosed) throw fail('internal', '上一次关闭未确认完成，请重试')
@@ -462,6 +483,16 @@
 			})
 			rec.portOpened = true
 			if (rec.cancelled) return false
+			if (signals) {
+				try {
+					await rec.port.setSignals(signals)
+				} catch (e) {
+					// 信号没设上就不算打开成功：把刚打开的口关掉(关不掉保持 portOpened，下次 open 先报未确认关闭)
+					try { await rec.port.close(); rec.portClosed = true } catch (closeErr) { /* 见上 */ }
+					throw fail('internal', '设置控制信号失败：' + String(e && e.message ? e.message : e))
+				}
+				if (rec.cancelled) return false
+			}
 			// 每次 claim.open 开一个新 gen：gen 记在 rec 上（跨 close 保留），
 			// 该 gen 的 seq 与 offset 从 0 重新起算（第一个批次 seq=1、offset=0）。
 			// 新 gen：只在 rec.gens 里新开一条记账（旧 gen 未确认的批次继续占用在途额度），

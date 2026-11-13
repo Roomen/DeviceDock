@@ -300,6 +300,68 @@ function fakeCtx() {
 		assert.equal(port.openCalls, 2, '同一声明可重新打开')
 	}
 
+	// ---- 8b. claim.write 接受 Uint8Array(与宿主推的 claim.rx 同类型)；claim.open 可选 DTR / RTS 信号 ----
+	{
+		const host = newClaimHost()
+		const box = fakeCtx()
+		const port = makeClaimPort()
+		const written = []
+		port.writable = { getWriter: () => ({ write: async (b) => { written.push(Array.from(b)) }, releaseLock() {} }) }
+		const signals = []
+		port.setSignals = async (s) => { signals.push(JSON.stringify(s)) }
+		await host.PluginApi.call('claim.acquire', { portKey: host.PluginApi.keyOfPort(port) }, box.ctx)
+		await host.PluginApi.call('claim.open', { claimId: 'c1', signals: { dataTerminalReady: true, requestToSend: false } }, box.ctx)
+		assert.deepEqual(signals, ['{"dataTerminalReady":true,"requestToSend":false}'], '打开成功后按需设置信号')
+		const r = await host.PluginApi.call('claim.write', { claimId: 'c1', bytes: new Uint8Array([0xa5, 0x01]) }, box.ctx)
+		assert.equal(r.bytes, 2)
+		const backing = new Uint8Array([0, 0x10, 0x20, 0])
+		await host.PluginApi.call('claim.write', { claimId: 'c1', bytes: backing.subarray(1, 3) }, box.ctx)
+		assert.deepEqual(written, [[0xa5, 0x01], [0x10, 0x20]])
+		await assert.rejects(host.PluginApi.call('claim.write', { claimId: 'c1', bytes: new Uint8Array(70000) }, box.ctx), (e) => e.code === 'too_large')
+		await host.PluginApi.call('claim.close', { claimId: 'c1' }, box.ctx)
+		// 没给 signals 不调 setSignals
+		await host.PluginApi.call('claim.open', { claimId: 'c1' }, box.ctx)
+		assert.equal(signals.length, 1)
+		await host.PluginApi.call('claim.close', { claimId: 'c1' }, box.ctx)
+		// 格式不对：bad_request，不打开
+		const opens = port.openCalls
+		await assert.rejects(host.PluginApi.call('claim.open', { claimId: 'c1', signals: { dataTerminalReady: 1 } }, box.ctx), (e) => e.code === 'bad_request')
+		await assert.rejects(host.PluginApi.call('claim.open', { claimId: 'c1', signals: { break: true } }, box.ctx), (e) => e.code === 'bad_request')
+		assert.equal(port.openCalls, opens, '参数不对不打开端口')
+	}
+	{
+		// 端口不支持 setSignals：明确 unsupported，不打开、不静默忽略
+		const host = newClaimHost()
+		const box = fakeCtx()
+		const port = makeClaimPort()
+		await host.PluginApi.call('claim.acquire', { portKey: host.PluginApi.keyOfPort(port) }, box.ctx)
+		await assert.rejects(host.PluginApi.call('claim.open', { claimId: 'c1', signals: { requestToSend: true } }, box.ctx), (e) => e.code === 'unsupported')
+		assert.equal(port.openCalls, 0)
+		// 设置失败：关掉刚打开的口，报错，不算打开
+		const host2 = newClaimHost()
+		const box2 = fakeCtx()
+		const port2 = makeClaimPort()
+		port2.setSignals = async () => { throw new Error('synthetic signal failure') }
+		await host2.PluginApi.call('claim.acquire', { portKey: host2.PluginApi.keyOfPort(port2) }, box2.ctx)
+		await assert.rejects(host2.PluginApi.call('claim.open', { claimId: 'c1', signals: { dataTerminalReady: false } }, box2.ctx), /设置控制信号失败/)
+		assert.equal(box2.recs.get('c1').open, false)
+		assert.equal(port2.closeCalls, 1)
+	}
+	{
+		// 插件声明只看物理口独占：口被某个会话(含固件页的连接 F)占着时拒绝，与通信页哪一路可见无关
+		const port = makeClaimPort()
+		const host = loadApi({
+			SerialHub: { allPhys: () => ['S', 'A', 'B', 'F'], getPort: () => null, isOpen: () => false, isOpening: () => false, isVisible: () => false,
+				sessionOwnerOfPort: (p) => (p === port ? 'F' : null) },
+			serialPortClaims: { claim: () => 'c1', release: () => {}, list: () => [], ownerOf: () => null },
+		})
+		const box = fakeCtx()
+		await assert.rejects(host.PluginApi.call('claim.acquire', { portKey: host.PluginApi.keyOfPort(port) }, box.ctx), /固件页的连接/)
+		const other = makeClaimPort()
+		const r = await host.PluginApi.call('claim.acquire', { portKey: host.PluginApi.keyOfPort(other) }, box.ctx)
+		assert.equal(r.claimId, 'c1', '不依赖通信页任何一路的连接状态')
+	}
+
 	// ---- 9. 回修 2：closeClaims 等在飞 claim.write 结束后才关端口 ----
 	{
 		const host = newClaimHost()

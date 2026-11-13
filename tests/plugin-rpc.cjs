@@ -72,6 +72,17 @@ const { blockers } = require('../js/app-update.js')
 	assert.equal(Rpc.toBytes('GG').ok, false)
 	assert.equal(Rpc.toBytes([256]).ok, false)
 	assert.equal(Rpc.toBytes([1, 2, 3], 2).error.code, 'too_large')
+	// Uint8Array / 其它 ArrayBuffer 视图 / ArrayBuffer 都收(宿主推的 claim.rx 就是 Uint8Array)，按视图覆盖的字节取，上限一致
+	assert.deepEqual(Rpc.toBytes(new Uint8Array([1, 2, 255])), { ok: true, bytes: [1, 2, 255] })
+	const backing = new Uint8Array([9, 9, 7, 8, 9, 9])
+	assert.deepEqual(Rpc.toBytes(backing.subarray(2, 4)), { ok: true, bytes: [7, 8] })
+	assert.deepEqual(Rpc.toBytes(new DataView(backing.buffer, 1, 2)), { ok: true, bytes: [9, 7] })
+	assert.deepEqual(Rpc.toBytes(new Uint8Array([4, 5]).buffer), { ok: true, bytes: [4, 5] })
+	assert.equal(Rpc.toBytes(new Uint8Array(3), 2).error.code, 'too_large')
+	assert.equal(Rpc.toBytes(new ArrayBuffer(3), 2).error.code, 'too_large')
+	assert.equal(Rpc.toBytes({ 0: 1, length: 1 }).ok, false, '类数组对象不算字节缓冲')
+	// 大小估算按字节数计，64 KiB 的 Uint8Array 不会被逐下标计步拒掉
+	assert.ok(Rpc.estimateSize({ bytes: new Uint8Array(65536) }, 128 * 1024) < 128 * 1024)
 }
 
 // ---- 4. 主题推送、SDK applyTheme 与双向 postMessage RPC ----
