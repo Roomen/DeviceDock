@@ -1,10 +1,12 @@
 name: Desktop release
-# dev 版本提交自动构建预览版；main 正式版推送 desktop-main-v<版本> tag 触发。
+# 发布由改了 js/version.js 的主干推送触发：main 出正式版，dev 出预览版。
+# 触发挂在主干分支上而不是 tag：GitHub Actions 的缓存按 ref 隔离，tag 触发的作业
+# 读不到 main 的缓存，每次发版都要全量重编 Rust。desktop-main-v<版本> tag 由本工作流
+# 在 publish 里创建，不需要手动推 tag。
 # 同一版本号只发布一次：版本没变(文档、内部改动)的推送直接跳过构建。
 on:
   push:
-    branches: [dev]
-    tags: [desktop-main-v*]
+    branches: [main, dev]
     paths:
       - js/version.js
       - .github/workflows/desktop-release.yml
@@ -17,7 +19,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: desktop-release-${{ startsWith(github.ref, 'refs/tags/desktop-main-v') && 'main' || github.ref_name }}
+  # 按通道(main / dev)串行，不取消进行中的发布：两个发布同时跑会抢同一个版本 release 与通道指针。
+  group: desktop-release-${{ github.ref_name }}
   cancel-in-progress: false
 jobs:
   prepare:
@@ -51,17 +54,11 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           version=$(node -e "const m=require('fs').readFileSync('js/version.js','utf8').match(/APP_VERSION\s*=\s*['\"](\d+\.\d+\.\d+)['\"]/);if(!m)process.exit(1);console.log(m[1])")
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            if [ "$REF_NAME" != "desktop-main-v$version" ]; then
-              echo "::error::Release tag must match js/version.js"; exit 1
-            fi
-            main_sha=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
-            if [ "$GITHUB_SHA" != "$main_sha" ]; then
-              echo "::error::Official release tag must point to main HEAD"; exit 1
-            fi
-            REF_NAME=main
+          # 通道就是触发分支：main 出正式版，dev 出预览版；正式版的 tag 在 publish 里创建。
+          case "$REF_NAME" in main|dev) ;; *) echo "::error::Publish only from main or dev (got $REF_NAME)"; exit 1 ;; esac
+          if [ "$GITHUB_REF_TYPE" != branch ]; then
+            echo "::error::Publish only from a main or dev push (got ref type $GITHUB_REF_TYPE)"; exit 1
           fi
-          case "$REF_NAME" in main|dev) ;; *) echo "::error::Publish only from main or dev"; exit 1 ;; esac
           updater=false
           if [ -n "$UPDATER_KEY" ] && [ -n "$UPDATER_PUBLIC_KEY" ]; then updater=true; fi
           apple=true
@@ -101,6 +98,9 @@ jobs:
       TAURI_UPDATER_PUBLIC_KEY: ${{ needs.prepare.outputs.updater == 'true' && vars.TAURI_UPDATER_PUBLIC_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ needs.prepare.outputs.updater == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Windows 用 rust-lld 链接：随 Rust 工具链一起装，比 MSVC link.exe 快。
+      # rustc 认得这个名字，会自己补 `-flavor link`（rust-lld 单独跑不认 msvc 风格参数）。
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ matrix.target == 'x86_64-pc-windows-msvc' && 'rust-lld.exe' || '' }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -118,7 +118,8 @@ jobs:
       # shared-key 与 ci 按 OS 对齐（同一平台的 registry 与依赖包只存一份），
       # key 带 release 与 target：release profile 的产物与 ci 的 debug/test 互不覆盖，
       # 交叉编译 target 也各自独立。发布的安装包、签名文件不在 workspace 内，不会进缓存。
-      # 只有正式版 tag 才写缓存，dev 分支构建与手动派发只读恢复。
+      # 只有 main 正式版发布才写缓存（tag 触发已取消，正式版就是 main 的推送），
+      # dev 分支构建与手动派发只读恢复。
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -128,7 +129,7 @@ jobs:
           shared-key: cargo-${{ runner.os }}
           key: release-${{ matrix.target }}
           cache-on-failure: true
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/desktop-main-v')) }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Import Developer ID certificate into temporary keychain
         if: runner.os == 'macOS' && needs.prepare.outputs.apple == 'true'
         env:
@@ -188,6 +189,40 @@ jobs:
           import { join } from 'node:path';
           import { tmpdir } from 'node:os';
           import { spawnSync } from 'node:child_process';
+          // 读 PE 可选头，列出 .rsrc 里登记的资源类型：3 图标 / 14 图标组 / 16 版本信息 / 24 应用清单。
+          function peResourceTypes(name, buf) {
+            if (buf.length < 0x40 || buf.readUInt16LE(0) !== 0x5a4d) throw new Error(name + ' is not a PE image');
+            const pe = buf.readUInt32LE(0x3c);
+            if (buf.readUInt32LE(pe) !== 0x00004550) throw new Error(name + ' is not a PE image');
+            const coff = pe + 4;
+            const sectionCount = buf.readUInt16LE(coff + 2);
+            const optSize = buf.readUInt16LE(coff + 16);
+            const opt = coff + 20;
+            if (buf.readUInt16LE(opt) !== 0x20b) throw new Error(name + ' is not a PE32+ image');
+            const rsrcRva = buf.readUInt32LE(opt + 128);
+            const rsrcSize = buf.readUInt32LE(opt + 132);
+            if (!rsrcRva || !rsrcSize) return new Set();
+            const sections = [];
+            for (let i = 0; i < sectionCount; i++) {
+              const s = opt + optSize + i * 40;
+              sections.push({
+                va: buf.readUInt32LE(s + 12),
+                size: Math.max(buf.readUInt32LE(s + 8), buf.readUInt32LE(s + 16)),
+                raw: buf.readUInt32LE(s + 20),
+              });
+            }
+            const section = sections.find((s) => rsrcRva >= s.va && rsrcRva < s.va + s.size);
+            if (!section) throw new Error(name + ' resource table is not mapped');
+            const base = section.raw + (rsrcRva - section.va);
+            const count = buf.readUInt16LE(base + 12) + buf.readUInt16LE(base + 14);
+            const types = new Set();
+            for (let i = 0; i < count; i++) {
+              const id = buf.readUInt32LE(base + 16 + i * 8);
+              if (!(id & 0x80000000)) types.add(id);
+            }
+            return types;
+          }
+          const contains = (buf, needle) => buf.includes(Buffer.from(needle, 'utf8')) || buf.includes(Buffer.from(needle, 'utf16le'));
           const dir = join('desktop', 'release', process.env.RELEASE_CHANNEL);
           const zips = readdirSync(dir).filter((n) => /^DeviceDock_\d+\.\d+\.\d+_windows_x64\.zip$/.test(n));
           if (zips.length !== 1) throw new Error(`expected exactly one portable ZIP, found ${zips.length}`);
@@ -206,7 +241,24 @@ jobs:
           const entries = readdirSync(out).sort();
           const needed = ['DeviceDock.exe', 'README.txt', 'devicedock-updater.exe'];
           for (const name of needed) if (!entries.includes(name)) throw new Error(`portable ZIP is missing ${name}`);
-          if (readFileSync(join(out, 'DeviceDock.exe')).length < 1024) throw new Error('portable ZIP program looks truncated');
+          const program = readFileSync(join(out, 'DeviceDock.exe'));
+          if (program.length < 1024) throw new Error('portable ZIP program looks truncated');
+
+          // Windows 换成 rust-lld 后最容易静默丢的是资源段：链接照样成功，但没有应用清单时
+          // comctl32 v6 不激活，程序一启动就缺 TaskDialogIndirect 这类 v6 专有入口（0xc0000139）。
+          // 图标与版本信息同在一个资源文件里，一并核对。
+          const programTypes = peResourceTypes('DeviceDock.exe', program);
+          if (!programTypes.has(24)) throw new Error('DeviceDock.exe has no application manifest resource');
+          if (!contains(program, '<assembly')) throw new Error('DeviceDock.exe has no embedded application manifest');
+          if (!contains(program, 'Microsoft.Windows.Common-Controls')) throw new Error('DeviceDock.exe manifest does not require Common Controls 6');
+          if (!programTypes.has(14) || !programTypes.has(3)) throw new Error('DeviceDock.exe has no icon resources');
+          if (!programTypes.has(16)) throw new Error('DeviceDock.exe has no version info resource');
+
+          // helper 没有 tauri-build 的资源，清单由它的 build.rs 自己用 /MANIFEST:EMBED 加，
+          // 少了就没有 asInvoker：文件名含 "update" 会命中安装器检测，可能弹出 UAC 提权。
+          const helper = readFileSync(join(out, 'devicedock-updater.exe'));
+          if (!peResourceTypes('devicedock-updater.exe', helper).has(24)) throw new Error('devicedock-updater.exe has no application manifest resource');
+          if (!contains(helper, 'requestedExecutionLevel')) throw new Error('devicedock-updater.exe manifest does not declare requestedExecutionLevel');
           rmSync(out, { recursive: true, force: true });
           console.log('portable ZIP contents verified: ' + entries.join(', '));
           JS
@@ -286,6 +338,12 @@ jobs:
       - name: Publish immutable version release
         run: |
           TAG="desktop-$CHANNEL-v$VERSION"
+          # tag 由这里创建：tag 还不存在时 gh release create --target 会在本次提交上建 tag。
+          # tag 已存在而 release 不存在（上次只建了 tag 就失败、或 release 被手工删掉）时明确报错，
+          # 不要覆盖既有 tag 指向的提交，交给人工确认后清理。
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "::error::tag $TAG already exists but release $TAG does not; remove the tag or fix the release manually"; exit 1
+          fi
           PRERELEASE=()
           if [ "$CHANNEL" = dev ]; then PRERELEASE=(--prerelease --latest=false); fi
           TITLE="$VERSION"

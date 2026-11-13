@@ -34,6 +34,11 @@ jobs:
           - os: macos-15
           - os: windows-2025
     runs-on: ${{ matrix.os }}
+    env:
+      # Windows 用 rust-lld 链接：随 Rust 工具链一起装，比 MSVC link.exe 快。
+      # rustc 认得这个名字，会自己补 `-flavor link`（rust-lld 单独跑不认 msvc 风格参数）；
+      # 不带 --target 时编的就是 host 三元组 x86_64-pc-windows-msvc，同一个变量同样生效。
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: ${{ startsWith(matrix.os, 'windows') && 'rust-lld.exe' || '' }}
     steps:
       - uses: actions/checkout@v6
       # generate_context! 要求 frontendDist（desktop/dist）存在，cargo 之前先按发布流程复制一份网页文件。
