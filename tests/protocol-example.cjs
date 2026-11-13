@@ -1,6 +1,7 @@
 // Run: node tests/protocol-example.cjs
 // 示例协议仓库（examples/protocol-repo）的摘要自洽：catalog → manifest → entry，以及 provides 覆盖两个协议。
 // 改过示例的入口 / 清单 / 目录后，先跑 node examples/protocol-repo/tools/refresh-integrity.mjs，再跑本测试。
+require('./i18n-env.cjs')
 'use strict'
 const assert = require('node:assert/strict')
 const fs = require('node:fs')

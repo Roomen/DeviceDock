@@ -117,7 +117,7 @@
 		}
 		tip.className = 'serial-toast native-toast' + (isError ? ' is-error' : '')
 		tip.textContent = ''
-		tip.title = '点击关闭'
+		tip.title = I18n.t('native.clickToDismiss')
 		tip.appendChild(doc.createElement('span')).textContent = text
 		tip._act = action ? action.run : null
 		if (action) {
@@ -138,15 +138,15 @@
 	function reveal(path) {
 		const o = T.opener
 		const p = o && o.revealItemInDir ? o.revealItemInDir(path) : T.core.invoke('plugin:opener|reveal_item_in_dir', { paths: [path] })
-		Promise.resolve(p).catch(function (e) { notify('无法打开所在文件夹：' + (e && e.message ? e.message : e), true) })
+		Promise.resolve(p).catch(function (e) { notify(I18n.t('native.canTOpenTheContainingFolder', { v: (e && e.message ? e.message : e) }), true) })
 	}
 
 	T.event.listen('app-download', function (e) {
 		const p = e && e.payload ? e.payload : {}
 		const path = String(p.path || '')
 		const name = path.split(/[\\/]/).pop()
-		if (p.success === false) notify('保存失败' + (name ? '：' + name : ''), true)
-		else notify('已保存到「下载」' + (name ? '：' + name : ''), false, path ? { label: P.os === 'macos' ? '在访达中显示' : '在资源管理器中显示', run: function () { reveal(path) } } : null)
+		if (p.success === false) notify(name ? I18n.t('native.saveFailed2', { name }) : I18n.t('native.saveFailed'), true)
+		else notify(name ? I18n.t('native.savedToDownloads2', { name }) : I18n.t('native.savedToDownloads'), false, path ? { label: P.os === 'macos' ? I18n.t('native.showInFinder') : I18n.t('native.showInExplorer'), run: function () { reveal(path) } } : null)
 	})
 
 	// ---------- 原生菜单 → 页面动作 ----------
@@ -315,7 +315,7 @@
 		if (h && h.mode === 'dual') {
 			const a = portName('serial-chip-a')
 			const b = portName('serial-chip-b')
-			if (a || b) desc = h.getLabelA() + ' ' + (a || '未选择') + ' · ' + h.getLabelB() + ' ' + (b || '未选择')
+			if (a || b) desc = h.getLabelA() + ' ' + (a || I18n.t('native.notSelected')) + ' · ' + h.getLabelB() + ' ' + (b || I18n.t('native.notSelected'))
 		} else {
 			desc = portName('serial-chip')
 		}
@@ -395,7 +395,7 @@
 			ctx.id = 'native-ctx'
 			ctx.className = 'native-ctx'
 			ctx.setAttribute('role', 'menu')
-			;[['copy', '拷贝'], ['all', '全选日志'], ['sep'], ['clear', '清空日志']].forEach(function (d) {
+			;[['copy', I18n.t('native.copy')], ['all', I18n.t('native.selectAllLog')], ['sep'], ['clear', I18n.t('native.clearLog')]].forEach(function (d) {
 				if (d[0] === 'sep') {
 					ctx.appendChild(doc.createElement('hr'))
 					return

@@ -17,7 +17,7 @@
 		skipped: 'skipped',
 	}
 	const STATUS_LABEL = {
-		success: '成功', fail: '失败', timeout: '超时', mismatch: '不匹配', unsupported: '不支持', skipped: '跳过',
+		success: I18n.t('testFlow.pass'), fail: I18n.t('testFlow.fail'), timeout: I18n.t('testFlow.timeout'), mismatch: I18n.t('testFlow.mismatch'), unsupported: I18n.t('testFlow.unsupported'), skipped: I18n.t('testFlow.skipped'),
 	}
 
 	function toInt(v, fallback, min, max) {
@@ -41,7 +41,7 @@
 	function normalizeStep(raw, index, defaults) {
 		const d = normalizeDefaults(defaults)
 		const src = raw || {}
-		if (KINDS.indexOf(src.kind) === -1) throw new Error('第 ' + (index + 1) + ' 步的类型不支持：' + (src.kind || '(空)'))
+		if (KINDS.indexOf(src.kind) === -1) throw new Error(I18n.t('testFlow.stepHasAnUnsupportedType', { v: (index + 1), v2: (src.kind || I18n.t('testFlow.empty')) }))
 		const step = {
 			kind: src.kind,
 			field: src.field != null ? String(src.field) : '',
@@ -57,10 +57,10 @@
 			randomValue: !!src.randomValue,
 		}
 		if (step.kind !== 'wait' && step.kind !== 'send-raw' && !step.field) {
-			throw new Error('第 ' + (index + 1) + ' 步缺少字段')
+			throw new Error(I18n.t('testFlow.stepHasNoField', { v: (index + 1) }))
 		}
 		if (step.kind === 'send-raw' && !step.raw && !step.query) {
-			throw new Error('第 ' + (index + 1) + ' 步的原始发送既没有 HEX 也没有查询用例')
+			throw new Error(I18n.t('testFlow.stepRawSendHasNeitherHex', { v: (index + 1) }))
 		}
 		return step
 	}
@@ -71,9 +71,9 @@
 		const steps = (Array.isArray(src.steps) ? src.steps : []).map(function (s, i) {
 			return normalizeStep(s, i, defaults)
 		})
-		if (steps.length > MAX_STEPS) throw new Error('流程步骤超过上限 ' + MAX_STEPS)
+		if (steps.length > MAX_STEPS) throw new Error(I18n.t('testFlow.theFlowExceedsSteps', { MAX_STEPS }))
 		return {
-			name: src.name ? String(src.name).slice(0, 60) : '未命名流程',
+			name: src.name ? String(src.name).slice(0, 60) : I18n.t('testFlow.untitledFlow'),
 			kind: src.kind === 'random' ? 'random' : 'batch',
 			seed: src.seed == null ? null : toInt(src.seed, 0, 0, 0x7fffffff),
 			steps: steps,
@@ -240,25 +240,25 @@
 		const idx = fieldIndex(fields)
 		const errors = []
 		const steps = (flow && flow.steps) || []
-		if (!steps.length) errors.push({ index: -1, message: '流程没有步骤' })
+		if (!steps.length) errors.push({ index: -1, message: I18n.t('testFlow.theFlowHasNoSteps') })
 		steps.forEach(function (step, i) {
 			const at = { index: i, message: '' }
 			if (step.kind === 'send-raw') {
 				if (step.query) {
 					if (!(flow.queries || []).some(function (q) { return q.key === step.query })) {
-						at.message = '查询用例不存在：' + step.query
+						at.message = I18n.t('testFlow.queryNotFound', { query: step.query })
 						errors.push(at)
 					}
 					return
 				}
 				// 期望 HEX（send-raw 的应答子串过滤）也要是合法字节，运行时才能转成凭证
 				if (step.expect && !parseHex(step.expect)) {
-					at.message = '期望 HEX 不合法'
+					at.message = I18n.t('testFlow.invalidExpectedHex')
 					errors.push(at)
 					return
 				}
 				if (!parseHex(step.raw)) {
-					at.message = '原始发送的 HEX 不合法'
+					at.message = I18n.t('testFlow.invalidRawSendHex')
 					errors.push(at)
 				}
 				return
@@ -266,18 +266,18 @@
 			if (step.kind === 'wait') return
 			const f = idx.get(step.field)
 			if (!f) {
-				at.message = '字段不存在：' + step.field
+				at.message = I18n.t('testFlow.fieldNotFound', { field: step.field })
 				errors.push(at)
 				return
 			}
 			if ((step.kind === 'read' || step.kind === 'verify') && f.read === false) {
-				at.message = f.name + ' 不可读'
+				at.message = I18n.t('testFlow.isnTReadable', { name: f.name })
 				errors.push(at)
 				return
 			}
 			if (step.kind === 'write') {
 				if (f.write === false) {
-					at.message = f.name + ' 不可写'
+					at.message = I18n.t('testFlow.isnTWritable', { name: f.name })
 					errors.push(at)
 					return
 				}
@@ -296,23 +296,23 @@
 	function checkValue(field, value) {
 		const v = String(value == null ? '' : value)
 		if (field.type === 'bcd') {
-			if (!/^[0-9]+$/.test(v)) return '须为纯数字'
-			if (field.fillLen && v.length > field.fillLen * 2) return '超出字段长度(' + (field.fillLen * 2) + ' 位十进制)'
+			if (!/^[0-9]+$/.test(v)) return I18n.t('testFlow.mustBeDigitsOnly')
+			if (field.fillLen && v.length > field.fillLen * 2) return I18n.t('testFlow.exceedsFieldLengthDecimalDigits', { v: (field.fillLen * 2) })
 			return ''
 		}
 		if (field.type === 'ascii') {
-			if (field.fillLen && v.length > field.fillLen) return '超出字段长度(' + field.fillLen + ' 字节)'
+			if (field.fillLen && v.length > field.fillLen) return I18n.t('testFlow.exceedsFieldLengthBytes', { fillLen: field.fillLen })
 			return ''
 		}
 		const n = Number(v)
-		if (!Number.isFinite(n)) return '须为数值'
+		if (!Number.isFinite(n)) return I18n.t('testFlow.mustBeANumber')
 		if (field.type === 'enum' || field.type === 'bool') {
 			const vs = field.type === 'bool' ? [0, 1] : enumValues(field)
-			if (vs.length && vs.indexOf(n) === -1) return '不在可选值内'
+			if (vs.length && vs.indexOf(n) === -1) return I18n.t('testFlow.isnTOneOfTheAllowed')
 			return ''
 		}
-		if (field.min != null && n < field.min) return '小于下限 ' + field.min
-		if (field.max != null && n > field.max) return '大于上限 ' + field.max
+		if (field.min != null && n < field.min) return I18n.t('testFlow.belowMinimum', { min: field.min })
+		if (field.max != null && n > field.max) return I18n.t('testFlow.aboveMaximum', { max: field.max })
 		return ''
 	}
 
@@ -324,29 +324,29 @@
 	function normalizeBatchImport(flow) {
 		const defaults = normalizeDefaults(flow && flow.defaults)
 		const stepsSrc = Array.isArray(flow && flow.steps) ? flow.steps : []
-		if (!stepsSrc.length) throw new Error('流程没有步骤')
+		if (!stepsSrc.length) throw new Error(I18n.t('testFlow.theFlowHasNoSteps'))
 		const steps = stepsSrc.map(function (s, i) {
 			const norm = normalizeStep(s, i, defaults)
 			if (norm.kind !== 'write') {
-				throw new Error('批量流程仅支持写步骤（第 ' + (i + 1) + ' 步是「' + norm.kind + '」）')
+				throw new Error(I18n.t('testFlow.batchFlowsOnlySupportWriteSteps', { v: (i + 1), kind: norm.kind }))
 			}
 			if (norm.delayAfterMs !== defaults.delayAfterMs) {
-				throw new Error('第 ' + (i + 1) + ' 步的延时为自定义值（' + norm.delayAfterMs + 'ms），批量清单只有全局间隔，无法表达')
+				throw new Error(I18n.t('testFlow.stepHasACustomDelayMs', { v: (i + 1), delayAfterMs: norm.delayAfterMs }))
 			}
 			if (norm.timeoutMs !== defaults.timeoutMs) {
-				throw new Error('第 ' + (i + 1) + ' 步的超时为自定义值（' + norm.timeoutMs + 'ms），批量清单只有全局超时，无法表达')
+				throw new Error(I18n.t('testFlow.stepHasACustomTimeoutMs', { v: (i + 1), timeoutMs: norm.timeoutMs }))
 			}
 			if (norm.retries !== defaults.retries) {
-				throw new Error('第 ' + (i + 1) + ' 步的重试为自定义值（' + norm.retries + '），批量清单只有全局重试，无法表达')
+				throw new Error(I18n.t('testFlow.stepHasCustomRetriesBatchLists', { v: (i + 1), retries: norm.retries }))
 			}
 			if (norm.randomValue) {
-				throw new Error('第 ' + (i + 1) + ' 步是随机取值步骤，批量清单无法表达')
+				throw new Error(I18n.t('testFlow.stepUsesRandomValuesWhichBatch', { v: (i + 1) }))
 			}
 			return { field: norm.field, value: norm.value, step: s.step != null ? String(s.step) : '0' }
 		})
 		const verif = stepsSrc.map(function (s, i) { return normalizeStep(s, i, defaults).verify })
 		if (verif.some(function (v) { return v !== verif[0] })) {
-			throw new Error('各步骤的「写后回读」不一致，批量清单只有一个全局开关，无法表达')
+			throw new Error(I18n.t('testFlow.stepsDifferInReadBackAfter'))
 		}
 		return {
 			steps: steps,
@@ -472,13 +472,13 @@
 	}
 
 	function describe(step, fields) {
-		if (step.kind === 'wait') return '等待 ' + step.delayAfterMs + ' ms'
-		if (step.kind === 'send-raw') return step.query ? '查询 ' + step.query : '原始发送 ' + step.raw
+		if (step.kind === 'wait') return I18n.t('testFlow.waitMs', { delayAfterMs: step.delayAfterMs })
+		if (step.kind === 'send-raw') return step.query ? I18n.t('testFlow.query', { query: step.query }) : I18n.t('testFlow.rawSend', { raw: step.raw })
 		const f = fields && fields.get ? fields.get(step.field) : null
 		const name = f ? f.name : step.field
-		if (step.kind === 'read') return '读 ' + name
-		if (step.kind === 'verify') return '回读比对 ' + name
-		return '写 ' + name + ' = ' + step.value + (step.verify ? '（写后回读）' : '')
+		if (step.kind === 'read') return I18n.t('testFlow.read', { name })
+		if (step.kind === 'verify') return I18n.t('testFlow.verify', { name })
+		return I18n.t('testFlow.write', { name, value: step.value, v: (step.verify ? I18n.t('testFlow.readBack') : '') })
 	}
 
 	// io：由界面注入的串口与协议适配层，见 js/test-flow-panel.js
@@ -539,19 +539,19 @@
 			if (io.now() - lastCommAt < idleMs) return
 			const req = sess.keepalive()
 			if (!req) return
-			io.log('info', '距上次通信已 ' + Math.round((io.now() - lastCommAt) / 1000) + 's，发送保活查询')
+			io.log('info', I18n.t('testFlow.sSinceLastTrafficSendingKeepalive', { round: Math.round((io.now() - lastCommAt) / 1000) }))
 			await io.send(req.bytes, req.request, sess.keepaliveTimeoutMs || 4000)
 			lastCommAt = io.now()
-			io.log('info', '保活成功')
+			io.log('info', I18n.t('testFlow.keepaliveOk'))
 		}
 
 		async function readOnce(field, timeoutMs) {
 			const req = io.buildRead(field)
-			if (!req) throw Object.assign(new Error(field.name + ' 没有可用的读请求'), { unsupported: true })
+			if (!req) throw Object.assign(new Error(I18n.t('testFlow.hasNoReadRequest', { name: field.name })), { unsupported: true })
 			const res = await io.send(req.bytes, req.request, timeoutMs)
 			lastCommAt = io.now()
 			const bytes = io.readField(res.frame, field)
-			if (!bytes) throw Object.assign(new Error(field.name + ' 应答里没有该字段'), { unsupported: true })
+			if (!bytes) throw Object.assign(new Error(I18n.t('testFlow.theReplyHasNo', { name: field.name })), { unsupported: true })
 			return { bytes: bytes, value: decodeFieldBytes(bytes, field), res: res }
 		}
 
@@ -563,7 +563,7 @@
 			// 原值登记只接受完整有效的解码值：null（字段缺失 / 字节不足）/ NaN / ±Infinity
 			// 不能作为恢复基准，否则恢复阶段会静默跳过或写坏设备
 			if (v == null || (typeof v === 'number' && !Number.isFinite(v))) {
-				throw Object.assign(new Error('原值无效'), { invalid: true })
+				throw Object.assign(new Error(I18n.t('testFlow.invalidOriginalValue')), { invalid: true })
 			}
 			originals.set(field.key, { field: field, value: v })
 			return v
@@ -590,9 +590,9 @@
 					let req = null
 					if (step.query) {
 						const q = (io.queries || []).filter(function (x) { return x.key === step.query })[0]
-						if (!q) throw Object.assign(new Error('查询用例不存在：' + step.query), { unsupported: true })
+						if (!q) throw Object.assign(new Error(I18n.t('testFlow.queryNotFound', { query: step.query })), { unsupported: true })
 						req = io.buildQuery(q)
-						if (!req) throw Object.assign(new Error('查询用例无法构帧：' + step.query), { unsupported: true })
+						if (!req) throw Object.assign(new Error(I18n.t('testFlow.canTBuildAFrameFor', { query: step.query })), { unsupported: true })
 						const res = await io.send(req.bytes, req.request, step.timeoutMs)
 						lastCommAt = io.now()
 						patch.requestHex = hexOf(req.bytes)
@@ -600,9 +600,9 @@
 						return record(step, index, patch)
 					}
 					const bytes = parseHex(step.raw)
-					if (!bytes) throw new Error('原始发送的 HEX 不合法')
+					if (!bytes) throw new Error(I18n.t('testFlow.invalidRawSendHex'))
 					const expectBytes = step.expect ? parseHex(step.expect) : null
-					if (step.expect && !expectBytes) throw Object.assign(new Error('期望 HEX 不合法'), { unsupported: true })
+					if (step.expect && !expectBytes) throw Object.assign(new Error(I18n.t('testFlow.invalidExpectedHex')), { unsupported: true })
 					const request = { op: 'raw', expect: step.expect || '', expectBytes: expectBytes }
 					const res = await io.send(bytes, request, step.timeoutMs)
 					lastCommAt = io.now()
@@ -611,7 +611,7 @@
 					return record(step, index, patch)
 				}
 				const field = fields.get(step.field)
-				if (!field) throw Object.assign(new Error('字段不存在：' + step.field), { unsupported: true })
+				if (!field) throw Object.assign(new Error(I18n.t('testFlow.fieldNotFound', { field: step.field })), { unsupported: true })
 				if (step.kind === 'read') {
 					const got = await readOnce(field, step.timeoutMs)
 					patch.requestHex = ''
@@ -627,11 +627,11 @@
 						await readOriginal(field, step.timeoutMs)
 					} catch (e) {
 						if (e && e.unclosed) {
-							return record(step, index, { status: STATUS.fail, reason: (e && e.message) || '写入未确认收尾', unclosed: true })
+							return record(step, index, { status: STATUS.fail, reason: (e && e.message) || I18n.t('testFlow.writeNotConfirmedComplete'), unclosed: true })
 						}
-						const why = e && e.timeout ? '读原值超时' : e && e.unsupported ? '设备未返回原值' : (e && e.message) || '读原值失败'
+						const why = e && e.timeout ? I18n.t('testFlow.readingTheOriginalValueTimedOut') : e && e.unsupported ? I18n.t('testFlow.theDeviceDidnTReturnThe') : (e && e.message) || I18n.t('testFlow.failedToReadTheOriginalValue')
 						const status = e && e.timeout ? STATUS.timeout : e && e.unsupported ? STATUS.unsupported : STATUS.fail
-						return record(step, index, { status: status, reason: why + '，未写入' })
+						return record(step, index, { status: status, reason: I18n.t('testFlow.notWritten', { why }) })
 					}
 				}
 				let value = substituteVars(step.value, vars)
@@ -640,7 +640,7 @@
 					const cur = lastWritten.has(field.key) ? lastWritten.get(field.key) : originals.get(field.key).value
 					const v = newValueFor(rng, field, cur)
 					if (v == null) {
-						return record(step, index, { status: STATUS.skipped, reason: '无法生成与当前值不同的随机值' })
+						return record(step, index, { status: STATUS.skipped, reason: I18n.t('testFlow.canTGenerateARandomValue') })
 					}
 					value = String(v)
 				}
@@ -652,7 +652,7 @@
 						patch.responseHex = hexOf(out.read.bytes)
 						if (!sameValue(out.read.value, value, field)) {
 							patch.status = STATUS.mismatch
-							patch.reason = '写后回读不一致：期望 ' + value + '，实际 ' + out.read.value
+							patch.reason = I18n.t('testFlow.readBackMismatchExpectedGot', { value, value2: out.read.value })
 						}
 					}
 					return record(step, index, patch)
@@ -668,7 +668,7 @@
 				}
 				if (!sameValue(got.value, expected, field)) {
 					patch.status = STATUS.mismatch
-					patch.reason = '期望 ' + expected + '，实际 ' + got.value
+					patch.reason = I18n.t('testFlow.expectedGot', { expected, value: got.value })
 				}
 				return record(step, index, patch)
 			} catch (e) {
@@ -688,17 +688,17 @@
 				if (req) {
 					await io.send(req.bytes, req.request, flow.defaults.timeoutMs)
 					lastCommAt = io.now()
-					io.log('pass', '连通检查 OK')
+					io.log('pass', I18n.t('testFlow.connectivityCheckOk'))
 				}
 			} catch (e) {
-				fatal = '连通检查失败：' + (e && e.message ? e.message : e)
+				fatal = I18n.t('testFlow.connectivityCheckFailed', { v: (e && e.message ? e.message : e) })
 				io.log('fail', fatal)
 			}
 		}
 
 		for (let i = 0; i < steps.length && !fatal; i++) {
-			if (io.shouldStop()) { stopped = true; io.log('warn', '用户停止'); break }
-			if (!io.isOpen()) { fatal = '串口已关闭'; io.log('warn', fatal); break }
+			if (io.shouldStop()) { stopped = true; io.log('warn', I18n.t('testFlow.stoppedByUser')); break }
+			if (!io.isOpen()) { fatal = I18n.t('testFlow.portClosed'); io.log('warn', fatal); break }
 			const step = steps[i]
 			// 重试算在同一步里：耗时包含前面失败的尝试
 			stepStartedAt = io.now()
@@ -706,11 +706,11 @@
 			let result = null
 			for (;;) {
 				// 停止后不再起新尝试：直接记「用户停止」并跳到恢复阶段
-				if (io.shouldStop()) { stopped = true; io.log('warn', '用户停止'); break }
+				if (io.shouldStop()) { stopped = true; io.log('warn', I18n.t('testFlow.stoppedByUser')); break }
 				try {
 					await keepAlive()
 				} catch (e) {
-					fatal = '保活失败：' + (e && e.message ? e.message : e)
+					fatal = I18n.t('testFlow.keepaliveFailed', { v: (e && e.message ? e.message : e) })
 					io.log('fail', fatal)
 					break
 				}
@@ -719,23 +719,23 @@
 				if (result.status === STATUS.success || result.status === STATUS.skipped || result.status === STATUS.unsupported) break
 				if (attempt >= step.retries) break
 				// 停止后不再重试：attempts 只统计真实发生过的尝试
-				if (io.shouldStop()) { stopped = true; io.log('warn', '用户停止'); break }
+				if (io.shouldStop()) { stopped = true; io.log('warn', I18n.t('testFlow.stoppedByUser')); break }
 				attempt++
-				io.log('warn', '第 ' + (i + 1) + ' 步失败，重试 ' + attempt + '/' + step.retries)
+				io.log('warn', I18n.t('testFlow.stepFailedRetry', { v: (i + 1), attempt, retries: step.retries }))
 			}
 			if (fatal) break
 			if (result) result.attempts = attempt + 1
 			if (result) commit(result, i)
 			if (result && result.unclosed) {
 				writeUnclosed = true
-				fatal = '写入未确认收尾'
+				fatal = I18n.t('testFlow.writeNotConfirmedComplete')
 				io.log('fail', fatal)
 				break
 			}
 			if (result && result.status !== STATUS.success && result.status !== STATUS.skipped && result.status !== STATUS.unsupported) {
 				if (flow.defaults.onFailure === 'stop') {
 					stopped = true
-					io.log('warn', '遇失败已停止')
+					io.log('warn', I18n.t('testFlow.stoppedOnFailure'))
 					break
 				}
 			}
@@ -747,7 +747,7 @@
 			const settled = await io.settleWrites()
 			if (!settled) {
 				writeUnclosed = true
-				fatal = '写入未确认收尾'
+				fatal = I18n.t('testFlow.writeNotConfirmedComplete')
 				io.log('fail', fatal)
 			}
 		}
@@ -755,7 +755,7 @@
 		const restore = { restored: [], failed: [] }
 		if (flow.defaults.restoreOriginals && originals.size && !writeUnclosed) {
 			if (!io.isOpen()) {
-				restore.failed.push({ field: '(全部)', message: '串口已关闭，未能恢复' })
+				restore.failed.push({ field: I18n.t('testFlow.all'), message: I18n.t('testFlow.portClosedNotRestored') })
 			} else {
 				for (const entry of originals.values()) {
 					const f = entry.field
@@ -767,14 +767,14 @@
 						await io.sleep(80)
 						const back = await readOnce(f, flow.defaults.timeoutMs)
 						if (sameValue(back.value, entry.value, f)) restore.restored.push(f.name)
-						else restore.failed.push({ field: f.name, message: '写回后=' + back.value + '，期望 ' + entry.value })
+						else restore.failed.push({ field: f.name, message: I18n.t('testFlow.afterRestoreExpected', { value: back.value, value2: entry.value }) })
 					} catch (e) {
 						restore.failed.push({ field: f.name, message: e && e.message ? e.message : String(e) })
 					}
 				}
 			}
-			if (restore.restored.length) io.log('pass', '已恢复：' + restore.restored.join('、'))
-			restore.failed.forEach(function (x) { io.log('fail', '恢复失败：' + x.field + ' ' + x.message) })
+			if (restore.restored.length) io.log('pass', I18n.t('testFlow.restored', { restored: restore.restored.join(I18n.t('testFlow.s')) }))
+			restore.failed.forEach(function (x) { io.log('fail', I18n.t('testFlow.restoreFailed', { field: x.field, message: x.message })) })
 		}
 
 		const durationMs = io.now() - startedAt

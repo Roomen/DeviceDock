@@ -347,8 +347,8 @@
 				tb = laneText('B')
 			} else {
 				// 单路：接收在左、发送在右(与气泡的左右一致)
-				ta = '接收 RX'
-				tb = '发送 TX'
+				ta = I18n.t('timeline.receivedRx')
+				tb = I18n.t('timeline.sentTx')
 			}
 			if (a.textContent !== ta) a.textContent = ta
 			if (b.textContent !== tb) b.textContent = tb

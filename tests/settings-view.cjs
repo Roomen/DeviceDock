@@ -2,6 +2,7 @@
 // 覆盖 js/settings-view.js：分组导航(点击 / 键盘 / 门控隐藏)、open 保留或退回分组、分组内容经
 // SettingsView.onMount 建进 .settings-host(只建一次)、客户端服务行按服务缺失隐藏、GitHub 令牌的保存/清除/错误文案
 // (仍走 plugins 平台服务的钥匙串接口，界面不回显明文)。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

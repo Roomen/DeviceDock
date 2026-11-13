@@ -1,6 +1,7 @@
 // Run: node tests/transport-ble.cjs — synthetic data only.
 // 覆盖: BLE 透传传输(js/transport-ble.js)经 SerialAdapter.createStreamPort 包出来的端口：按 UUID 档位找服务、通知推数据、
 // 分片串行写、写失败不卡队列、GATT 断开按设备丢失、关闭释放、同一设备同一端口、后端按 kind 被 pick 选中
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const A = require('../js/serial-adapter.js')
 const B = require('../js/transport-ble.js')

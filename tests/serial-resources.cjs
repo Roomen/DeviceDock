@@ -1,4 +1,5 @@
 // Synthetic timer/write backpressure and log budget tests; no real ports or logs.
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

@@ -37,20 +37,19 @@
 	function build(body, s) {
 		body.classList.add('mdn-src-panel')
 		body.appendChild(mk('p', 'mdn-src-intro',
-			'添加来源只读取目录与清单，不会执行代码。每个协议包要先勾选「信任此版本」才能启用；' +
-			'启用后协议在页面内以同源权限运行，只应添加你信任的仓库。'))
+			I18n.t('protoPanel.addingASourceOnlyReadsIts')))
 
 		const addRow = mk('div', 'mdn-src-add')
 		s.urlInput = mk('input', 'form-control form-control-sm')
 		s.urlInput.type = 'text'
-		s.urlInput.placeholder = 'https://github.com/组织/仓库 或 catalog.json 地址'
-		s.urlInput.setAttribute('aria-label', '协议来源地址')
+		s.urlInput.placeholder = I18n.t('protoPanel.httpsGithubComOrgRepoOr')
+		s.urlInput.setAttribute('aria-label', I18n.t('protoPanel.protocolSourceUrl'))
 		s.urlInput.setAttribute('autocomplete', 'off')
 		s.urlInput.setAttribute('spellcheck', 'false')
 		s.addBtn = mk('button', 'btn btn-sm btn-primary')
 		s.addBtn.type = 'button'
 		s.addBtn.appendChild(mk('i', 'icon icon-sm icon-plus'))
-		s.addBtn.appendChild(mk('span', '', '添加来源'))
+		s.addBtn.appendChild(mk('span', '', I18n.t('protoPanel.addSource')))
 		addRow.appendChild(s.urlInput)
 		addRow.appendChild(s.addBtn)
 		body.appendChild(addRow)
@@ -73,7 +72,7 @@
 		if (s.adding) return
 		const value = s.urlInput.value.trim()
 		if (!value) {
-			s.addError = '请输入来源地址'
+			s.addError = I18n.t('protoPanel.enterASourceUrl')
 			render(s)
 			return
 		}
@@ -92,7 +91,7 @@
 
 	function runAction(s, tag, fn, label) {
 		if (s.busy[tag]) return
-		s.busy[tag] = label || '处理中'
+		s.busy[tag] = label || I18n.t('protoPanel.working')
 		s.errors[tag] = ''
 		render(s)
 		Promise.resolve().then(fn).then(function () {
@@ -113,19 +112,19 @@
 		title.appendChild(mk('span', 'mdn-src-name', src.name || src.key))
 		if (src.sha) {
 			const sha = mk('span', 'mdn-src-sha', shortSha(src.sha))
-			sha.title = '已固定到这个版本：' + src.sha
+			sha.title = I18n.t('protoPanel.pinnedToThisVersion', { sha: src.sha })
 			title.appendChild(sha)
 		}
 		if (src.busy) title.appendChild(mk('span', 'mdn-src-busy', src.busy))
 		head.appendChild(title)
 
 		const actions = mk('div', 'mdn-src-head-actions')
-		const refreshBtn = iconBtn('refresh-cw', '刷新来源')
+		const refreshBtn = iconBtn('refresh-cw', I18n.t('protoPanel.refreshSource'))
 		refreshBtn.disabled = !!src.busy || !!s.busy['refresh:' + src.key]
 		refreshBtn.addEventListener('click', function () {
-			runAction(s, 'refresh:' + src.key, function () { return S.refresh(src.key) }, '刷新中')
+			runAction(s, 'refresh:' + src.key, function () { return S.refresh(src.key) }, I18n.t('protoPanel.refreshing'))
 		})
-		const removeBtn = iconBtn('trash-2', s.confirmRemove === src.key ? '确认删除这个来源' : '删除来源')
+		const removeBtn = iconBtn('trash-2', s.confirmRemove === src.key ? I18n.t('protoPanel.confirmRemovingThisSource') : I18n.t('protoPanel.removeSource'))
 		if (s.confirmRemove === src.key) removeBtn.classList.add('is-danger')
 		removeBtn.disabled = !!s.busy['remove:' + src.key]
 		removeBtn.addEventListener('click', function () {
@@ -141,7 +140,7 @@
 			}
 			clearTimeout(s.confirmTimer)
 			s.confirmRemove = ''
-			runAction(s, 'remove:' + src.key, function () { return S.remove(src.key) }, '删除中')
+			runAction(s, 'remove:' + src.key, function () { return S.remove(src.key) }, I18n.t('protoPanel.removing'))
 		})
 		actions.appendChild(refreshBtn)
 		actions.appendChild(removeBtn)
@@ -155,7 +154,7 @@
 		if (s.errors['remove:' + src.key]) card.appendChild(mk('div', 'mdn-src-err', s.errors['remove:' + src.key]))
 
 		if (!src.packages.length) {
-			if (!src.busy && !src.error) card.appendChild(mk('div', 'mdn-src-empty', '来源里没有可用的协议包'))
+			if (!src.busy && !src.error) card.appendChild(mk('div', 'mdn-src-empty', I18n.t('protoPanel.thisSourceHasNoUsableProtocol')))
 			return card
 		}
 		const list = mk('div', 'mdn-src-pkgs')
@@ -167,18 +166,18 @@
 	function packageRow(s, src, pkg) {
 		const row = mk('div', 'mdn-src-pkg')
 		const head = mk('div', 'mdn-src-pkg-head')
-		head.appendChild(mk('span', 'mdn-src-pkg-name', pkg.name || pkg.id || '（无效包）'))
+		head.appendChild(mk('span', 'mdn-src-pkg-name', pkg.name || pkg.id || I18n.t('protoPanel.invalidPackage')))
 		if (pkg.version) head.appendChild(mk('span', 'mdn-src-ver', 'v' + pkg.version))
 		if (pkg.digest) {
 			const d = mk('span', 'mdn-src-digest', shortDigest(pkg.digest))
-			d.title = '入口文件摘要：' + pkg.digest
+			d.title = I18n.t('protoPanel.entryFileDigest', { digest: pkg.digest })
 			head.appendChild(d)
 		}
 		row.appendChild(head)
 
 		if (pkg.provides.length) {
 			const prov = mk('div', 'mdn-src-provides')
-			prov.appendChild(mk('span', 'mdn-src-provides-label', '提供协议'))
+			prov.appendChild(mk('span', 'mdn-src-provides-label', I18n.t('protoPanel.provides')))
 			pkg.provides.forEach(function (p) {
 				const chip = mk('span', 'mdn-src-chip', p.name)
 				chip.title = p.id
@@ -193,8 +192,8 @@
 		const trustBtn = mk('button', 'btn btn-sm ' + (pkg.trusted ? 'btn-outline-secondary' : 'btn-outline-primary'))
 		trustBtn.type = 'button'
 		trustBtn.appendChild(mk('i', 'icon icon-sm icon-' + (pkg.trusted ? 'shield-check' : 'lock-open')))
-		trustBtn.appendChild(mk('span', '', pkg.trusted ? '已信任此版本' : '信任此版本'))
-		trustBtn.title = pkg.trusted ? '点击撤销信任（会同时停用这个版本）' : '确认这个版本的代码可以运行'
+		trustBtn.appendChild(mk('span', '', pkg.trusted ? I18n.t('protoPanel.versionTrusted') : I18n.t('protoPanel.trustThisVersion')))
+		trustBtn.title = pkg.trusted ? I18n.t('protoPanel.clickToRevokeTrustAlsoDisables') : I18n.t('protoPanel.confirmThisVersionSCodeMay')
 		trustBtn.disabled = !!pkg.error || !!src.busy || !!s.busy[trustTag] || !!s.busy[enableTag] || !pkg.id
 		trustBtn.addEventListener('click', function () {
 			try {
@@ -219,18 +218,18 @@
 			enableInput.disabled = true
 			runAction(s, enableTag, function () {
 				return on ? S.enable(src.key, pkg.id) : S.disable(src.key, pkg.id)
-			}, on ? '启用中' : '停用中')
+			}, on ? I18n.t('protoPanel.enabling') : I18n.t('protoPanel.disabling'))
 		})
-		const enableLabel = mk('label', 'form-check-label', pkg.enabled ? '已启用' : '启用')
+		const enableLabel = mk('label', 'form-check-label', pkg.enabled ? I18n.t('protoPanel.enabled') : I18n.t('protoPanel.enable'))
 		enableLabel.setAttribute('for', enableInput.id)
 		enableWrap.appendChild(enableInput)
 		enableWrap.appendChild(enableLabel)
 		actions.appendChild(enableWrap)
 		row.appendChild(actions)
 
-		if (!pkg.platformOk) row.appendChild(mk('div', 'mdn-src-note', '这个协议包没有声明支持当前平台，不能启用'))
+		if (!pkg.platformOk) row.appendChild(mk('div', 'mdn-src-note', I18n.t('protoPanel.thisPackageDoesnTDeclareSupport')))
 		if (pkg.error) row.appendChild(mk('div', 'mdn-src-err', pkg.error))
-		if (pkg.bootError) row.appendChild(mk('div', 'mdn-src-err', '启动时启用失败：' + pkg.bootError))
+		if (pkg.bootError) row.appendChild(mk('div', 'mdn-src-err', I18n.t('protoPanel.failedToEnableAtStartup', { bootError: pkg.bootError })))
 		if (s.errors[trustTag]) row.appendChild(mk('div', 'mdn-src-err', s.errors[trustTag]))
 		if (s.errors[enableTag]) row.appendChild(mk('div', 'mdn-src-err', s.errors[enableTag]))
 		return row
@@ -239,7 +238,7 @@
 	function render(s) {
 		if (!s) return
 		s.addBtn.disabled = !!s.adding
-		s.addBtn.querySelector('span').textContent = s.adding ? '读取中…' : '添加来源'
+		s.addBtn.querySelector('span').textContent = s.adding ? I18n.t('protoPanel.loading') : I18n.t('protoPanel.addSource')
 		s.urlInput.disabled = !!s.adding
 		s.addErr.hidden = !s.addError
 		s.addErr.textContent = s.addError || ''
@@ -247,10 +246,9 @@
 		s.listEl.textContent = ''
 		if (!list.length) {
 			const empty = mk('div', 'mdn-src-empty-block')
-			empty.appendChild(mk('div', 'mdn-src-empty-title', '还没有添加来源'))
+			empty.appendChild(mk('div', 'mdn-src-empty-title', I18n.t('protoPanel.noSourcesAdded')))
 			empty.appendChild(mk('div', 'mdn-src-empty',
-				'仓库根目录放 catalog.json 与各包的 manifest.json 即可。本地示例：在仓库根目录运行 ' +
-				'python3 -m http.server 8000，然后添加 http://localhost:8000/examples/protocol-repo/catalog.json'))
+				I18n.t('protoPanel.putCatalogJsonAndEachPackage')))
 			s.listEl.appendChild(empty)
 			return
 		}

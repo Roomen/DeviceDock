@@ -1,5 +1,6 @@
 // Run: node tests/parse-view.cjs — synthetic data only.
 // 覆盖: 日志「解析」渲染器 js/parse-view.js（转义、折叠、键值对拆分），以及 SEK 协议的 logView 模型
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

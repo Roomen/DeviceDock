@@ -45,7 +45,7 @@
 	function bumpOp(kind, sourceKey, packageId) { opTokens[opKey(kind, sourceKey, packageId)] = ++opSeq }
 	function readOp(kind, sourceKey, packageId) { return opTokens[opKey(kind, sourceKey, packageId)] || 0 }
 
-	function message(e) { return String((e && e.message) || e || '未知错误') }
+	function message(e) { return String((e && e.message) || e || I18n.t('protoSources.unknownError')) }
 	function notify() {
 		listeners.slice().forEach(function (fn) {
 			try { fn() } catch (e) { console.warn('protocol-sources 监听器出错', e) }
@@ -201,7 +201,7 @@
 		if (dbPromise) return dbPromise
 		dbPromise = new Promise(function (resolve, reject) {
 			const idb = root.indexedDB
-			if (!idb) { reject(new Error('当前环境没有 IndexedDB，无法缓存协议包')); return }
+			if (!idb) { reject(new Error(I18n.t('protoSources.indexeddbIsnTAvailableHereSo'))); return }
 			let req
 			try { req = idb.open(DB_NAME, 1) } catch (e) { reject(e); return }
 			req.onupgradeneeded = function () {
@@ -209,7 +209,7 @@
 				if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'digest' })
 			}
 			req.onsuccess = function () { resolve(req.result) }
-			req.onerror = function () { reject(req.error || new Error('打开协议缓存失败')) }
+			req.onerror = function () { reject(req.error || new Error(I18n.t('protoSources.failedToOpenTheProtocolCache'))) }
 		}).catch(function (e) {
 			dbPromise = null
 			throw e
@@ -224,8 +224,8 @@
 				let out
 				try { out = fn(tx.objectStore(DB_STORE)) } catch (e) { reject(e); return }
 				tx.oncomplete = function () { resolve(out) }
-				tx.onerror = function () { reject(tx.error || new Error('协议缓存读写失败')) }
-				tx.onabort = function () { reject(tx.error || new Error('协议缓存事务中止')) }
+				tx.onerror = function () { reject(tx.error || new Error(I18n.t('protoSources.protocolCacheReadWriteFailed'))) }
+				tx.onabort = function () { reject(tx.error || new Error(I18n.t('protoSources.protocolCacheTransactionAborted'))) }
 			})
 		})
 	}
@@ -274,7 +274,7 @@
 
 	// ---------- 网络 ----------
 	async function request(url) {
-		if (typeof root.fetch !== 'function') throw new Error('当前环境不支持网络请求')
+		if (typeof root.fetch !== 'function') throw new Error(I18n.t('protoSources.networkRequestsArenTSupportedHere'))
 		const ctrl = typeof root.AbortController === 'function' ? new root.AbortController() : null
 		const timer = ctrl ? setTimeout(function () { ctrl.abort() }, FETCH_TIMEOUT) : 0
 		let res
@@ -286,26 +286,26 @@
 				signal: ctrl ? ctrl.signal : undefined,
 			})
 		} catch (e) {
-			if (e && e.name === 'AbortError') throw new Error('请求超时：' + url)
-			throw new Error('无法获取 ' + url + '：网络请求失败（可能是 CORS 限制或网络不可达）')
+			if (e && e.name === 'AbortError') throw new Error(I18n.t('protoSources.requestTimedOut', { url }))
+			throw new Error(I18n.t('protoSources.canTFetchNetworkRequestFailed', { url }))
 		} finally {
 			if (timer) clearTimeout(timer)
 		}
 		return res
 	}
 	function checkOk(res, url) {
-		if (res.status === 404) throw new Error('地址不存在（404）：' + url)
-		if (!res.ok) throw new Error('请求失败（HTTP ' + res.status + '）：' + url)
+		if (res.status === 404) throw new Error(I18n.t('protoSources.notFound404', { url }))
+		if (!res.ok) throw new Error(I18n.t('protoSources.requestFailedHttp', { status: res.status, url }))
 		return res
 	}
 	async function fetchBytes(url, maxBytes) {
 		const res = await request(url)
 		checkOk(res, url)
 		const declared = Number(res.headers.get('content-length') || 0)
-		if (declared && declared > maxBytes) throw new Error('文件超过上限 ' + Math.round(maxBytes / 1024) + ' KiB：' + url)
+		if (declared && declared > maxBytes) throw new Error(I18n.t('protoSources.fileExceedsTheKibLimit', { round: Math.round(maxBytes / 1024), url }))
 		if (!res.body || typeof res.body.getReader !== 'function') {
 			const buf = new Uint8Array(await res.arrayBuffer())
-			if (buf.length > maxBytes) throw new Error('文件超过上限 ' + Math.round(maxBytes / 1024) + ' KiB：' + url)
+			if (buf.length > maxBytes) throw new Error(I18n.t('protoSources.fileExceedsTheKibLimit', { round: Math.round(maxBytes / 1024), url }))
 			return buf
 		}
 		const reader = res.body.getReader()
@@ -316,7 +316,7 @@
 				const step = await reader.read()
 				if (step.done) break
 				size += step.value.length
-				if (size > maxBytes) throw new Error('文件超过上限 ' + Math.round(maxBytes / 1024) + ' KiB：' + url)
+				if (size > maxBytes) throw new Error(I18n.t('protoSources.fileExceedsTheKibLimit', { round: Math.round(maxBytes / 1024), url }))
 				chunks.push(step.value)
 			}
 		} finally {
@@ -331,10 +331,10 @@
 	function decodeJson(bytes, url) {
 		let text
 		try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch (e) {
-			throw new Error('文件不是合法 UTF-8：' + url)
+			throw new Error(I18n.t('protoSources.fileIsnTValidUtf8', { url }))
 		}
 		try { return JSON.parse(text) } catch (e) {
-			throw new Error('JSON 解析失败：' + url)
+			throw new Error(I18n.t('protoSources.jsonParseFailed', { url }))
 		}
 	}
 
@@ -348,15 +348,14 @@
 			const reset = Number(res.headers.get('x-ratelimit-reset') || 0)
 			if (remaining === '0' || res.status === 429) {
 				const when = reset ? new Date(reset * 1000).toLocaleTimeString() : ''
-				throw new Error('GitHub API 未认证限额已用完（每小时 60 次）' + (when ? '，' + when + ' 后恢复' : '') +
-					'。可在地址后加 @<40 位提交 SHA> 直接固定版本，跳过 API')
+				throw new Error(I18n.t('protoSources.githubApiUnauthenticatedRateLimitReached', { v: (when ? I18n.t('protoSources.resetsAt', { when }) : '') }))
 			}
 		}
 		checkOk(res, apiUrl)
 		let json
-		try { json = await res.json() } catch (e) { throw new Error('GitHub 返回的不是 JSON：' + apiUrl) }
+		try { json = await res.json() } catch (e) { throw new Error(I18n.t('protoSources.githubDidnTReturnJson', { apiUrl })) }
 		const sha = json && json.sha
-		if (!Contract.isSha40(sha)) throw new Error('GitHub 没有返回有效的提交 SHA：' + apiUrl)
+		if (!Contract.isSha40(sha)) throw new Error(I18n.t('protoSources.githubDidnTReturnAValid', { apiUrl }))
 		return sha
 	}
 
@@ -395,7 +394,7 @@
 				try {
 					const mbytes = await fetchBytes(manifestUrl, MAX_MANIFEST_BYTES)
 					const actual = await Contract.digestHex(mbytes)
-					if (actual !== p.sha256) throw new Error('清单摘要不符：' + p.manifest)
+					if (actual !== p.sha256) throw new Error(I18n.t('protoSources.manifestDigestMismatch', { manifest: p.manifest }))
 					out.packages.push(await summarizeManifest(source, desc, p.manifest, manifestUrl, p.sha256, mbytes))
 				} catch (e) {
 					out.packages.push({
@@ -426,7 +425,7 @@
 			try {
 				const mbytes = await fetchBytes(manifestUrl, MAX_MANIFEST_BYTES)
 				const actual = await Contract.digestHex(mbytes)
-				if (actual !== p.sha256) throw new Error('清单摘要不符：' + p.manifest)
+				if (actual !== p.sha256) throw new Error(I18n.t('protoSources.manifestDigestMismatch', { manifest: p.manifest }))
 				out.packages.push(await summarizeManifest(source, desc, p.manifest, manifestUrl, p.sha256, mbytes))
 			} catch (e) {
 				out.packages.push({
@@ -452,12 +451,12 @@
 			const cachedHex = await Contract.digestHex(cached)
 			if (cachedHex === want) return cached
 			await cacheDelete(want)
-			if (cacheOnly) throw new Error('本机缓存的协议包摘要不符，已丢弃缓存；请刷新来源后重新启用')
+			if (cacheOnly) throw new Error(I18n.t('protoSources.theCachedPackageDigestDoesnT'))
 		}
-		if (cacheOnly) throw new Error('本机没有该版本的缓存，请刷新来源后重新启用')
+		if (cacheOnly) throw new Error(I18n.t('protoSources.thisVersionIsnTCachedLocally'))
 		const bytes = await fetchBytes(entryUrlFor(pkg), MAX_ENTRY_BYTES)
 		const actual = await Contract.digestHex(bytes)
-		if (actual !== want) throw new Error('入口文件摘要不符（可能被篡改）：' + pkg.entry)
+		if (actual !== want) throw new Error(I18n.t('protoSources.entryFileDigestMismatchPossiblyTampered', { entry: pkg.entry }))
 		await cachePut(actual, bytes)
 		return bytes
 	}
@@ -484,13 +483,13 @@
 		const host = {
 			apiVersion: Contract.API_VERSION,
 			registerProtocol: function (def) {
-				if (!open) throw new Error('协议包的注册窗口已关闭（activate 已返回或已失败）')
-				if (!def || typeof def !== 'object') throw new Error('registerProtocol 需要协议对象')
+				if (!open) throw new Error(I18n.t('protoSources.thePackageSRegistrationWindowIs'))
+				if (!def || typeof def !== 'object') throw new Error(I18n.t('protoSources.registerprotocolNeedsAProtocolObject'))
 				const plain = String(def.id || '')
-				if (!plain) throw new Error('协议对象缺少 id')
-				if (staged.some(function (r) { return r.id === plain })) throw new Error('协议 id 重复注册：' + plain)
+				if (!plain) throw new Error(I18n.t('protoSources.protocolObjectHasNoId'))
+				if (staged.some(function (r) { return r.id === plain })) throw new Error(I18n.t('protoSources.protocolIdRegisteredTwice', { plain }))
 				const fullId = Contract.namespaceId(source.key, plain)
-				if (!P.allowsProtocol(fullId)) throw new Error('当前平台不支持外部协议')
+				if (!P.allowsProtocol(fullId)) throw new Error(I18n.t('protoSources.externalProtocolsArenTSupportedOn'))
 				staged.push({ id: plain, fullId: fullId, def: Contract.normalizeProtocolDef(def), meta: meta })
 				return fullId
 			},
@@ -503,17 +502,17 @@
 			const mod = await Promise.race([
 				import(blobUrl),
 				new Promise(function (_, reject) {
-					setTimeout(function () { reject(new Error('协议包加载超时')) }, ACTIVATE_TIMEOUT)
+					setTimeout(function () { reject(new Error(I18n.t('protoSources.protocolPackageLoadTimedOut'))) }, ACTIVATE_TIMEOUT)
 				}),
 			])
 			// 顶层 await 可能让 import 等很久：等它回来、调用 activate 之前再确认一次，
 			// 来源被删 / 版本变了就不再执行包里的副作用（已开始求值的模块代码无法撤回）。
 			if (typeof stillValid === 'function') stillValid()
-			if (!mod || typeof mod.activate !== 'function') throw new Error('协议包必须导出 activate(host)')
+			if (!mod || typeof mod.activate !== 'function') throw new Error(I18n.t('protoSources.thePackageMustExportActivateHost'))
 			await Promise.race([
 				Promise.resolve(mod.activate(host)),
 				new Promise(function (_, reject) {
-					setTimeout(function () { reject(new Error('协议包 activate 超时')) }, ACTIVATE_TIMEOUT)
+					setTimeout(function () { reject(new Error(I18n.t('protoSources.packageActivateTimedOut'))) }, ACTIVATE_TIMEOUT)
 				}),
 			])
 		} finally {
@@ -524,9 +523,9 @@
 	}
 	function describeMismatch(check) {
 		const parts = []
-		if (check.extra.length) parts.push('多出 ' + check.extra.join('、'))
-		if (check.missing.length) parts.push('缺少 ' + check.missing.join('、'))
-		return parts.length ? '：' + parts.join('；') : ''
+		if (check.extra.length) parts.push(I18n.t('protoSources.extra', { extra: check.extra.join(I18n.t('protoSources.s')) }))
+		if (check.missing.length) parts.push(I18n.t('protoSources.missing', { missing: check.missing.join(I18n.t('protoSources.s')) }))
+		return parts.length ? I18n.t('protoSources.s2', { parts: parts.join(I18n.t('protoSources.s3')) }) : ''
 	}
 	function enableTag(sourceKey, packageId) {
 		return 'enable:' + sourceKey + '\u0000' + packageId
@@ -541,33 +540,33 @@
 	async function enable(sourceKey, packageId, opts) {
 		opts = opts || {}
 		const source = findSource(sourceKey)
-		if (!source) throw new Error('来源不存在')
-		if (state.busy[sourceKey]) throw new Error('这个来源正在刷新，请等刷新完成后再启用')
+		if (!source) throw new Error(I18n.t('protoSources.sourceNotFound'))
+		if (state.busy[sourceKey]) throw new Error(I18n.t('protoSources.thisSourceIsRefreshingEnableAfter'))
 		const pkg = findPackage(source, packageId)
-		if (!pkg) throw new Error('来源里没有这个协议包，请刷新来源')
+		if (!pkg) throw new Error(I18n.t('protoSources.thisPackageIsnTInThe'))
 		if (pkg.error) throw new Error(pkg.error)
-		if (pkg.platformOk === false) throw new Error('该协议包不支持当前平台')
-		if (P.mobile) throw new Error('移动端只提供内置 SEK 协议，不支持外部协议')
-		if (!isTrusted(sourceKey, pkg)) throw new Error('需要先勾选「信任此版本」')
+		if (pkg.platformOk === false) throw new Error(I18n.t('protoSources.thisPackageDoesnTSupportThe'))
+		if (P.mobile) throw new Error(I18n.t('protoSources.mobileOnlyOffersTheBuiltIn'))
+		if (!isTrusted(sourceKey, pkg)) throw new Error(I18n.t('protoSources.markTrustThisVersionFirst'))
 		const tag = enableTag(sourceKey, packageId)
-		if (state.busy[tag]) throw new Error('这个协议包正在启用')
+		if (state.busy[tag]) throw new Error(I18n.t('protoSources.thisPackageIsBeingEnabled'))
 		const sourceToken = readOp('source', sourceKey)
 		const pkgToken = readOp('pkg', sourceKey, packageId)
 		function ensureValid() {
 			if (readOp('source', sourceKey) !== sourceToken || readOp('pkg', sourceKey, packageId) !== pkgToken) {
-				throw new Error('启用已取消（来源或版本已变化）')
+				throw new Error(I18n.t('protoSources.enableCanceledSourceOrVersionChanged'))
 			}
 			const src = findSource(sourceKey)
-			if (!src) throw new Error('来源已删除，启用已取消')
+			if (!src) throw new Error(I18n.t('protoSources.sourceRemovedEnableCanceled'))
 			const current = findPackage(src, packageId)
-			if (!current) throw new Error('协议包已不在来源里，请刷新来源')
+			if (!current) throw new Error(I18n.t('protoSources.thePackageIsNoLongerIn'))
 			// 只比 id 不够：刷新可能换掉同 id 的包，最终提交前要核对本次用的身份
 			if (current.version !== pkg.version || current.entryDigest !== pkg.entryDigest ||
 				current.manifestUrl !== pkg.manifestUrl || current.manifestSha !== pkg.manifestSha) {
-				throw new Error('协议包已更新，请重新信任后再启用')
+				throw new Error(I18n.t('protoSources.thePackageWasUpdatedTrustIt'))
 			}
 		}
-		state.busy[tag] = '启用中'
+		state.busy[tag] = I18n.t('protoSources.enabling')
 		try {
 			// 同一包旧版本 / 旧 id 先清掉，避免 provides 变化后留下孤儿协议；
 			// 先把「已停用」落盘，失败时不会留下内存与存储不一致的启用记录
@@ -581,7 +580,7 @@
 			const check = Contract.checkProvides({ provides: pkg.provides }, staged.map(function (s) { return s.id }))
 			if (!check.ok) {
 				failEnable(sourceKey, packageId)
-				throw new Error('协议包注册的 id 与 provides 不一致' + describeMismatch(check))
+				throw new Error(I18n.t('protoSources.registeredIdsDonTMatchProvides', { describeMismatch: describeMismatch(check) }))
 			}
 			// 暂存区通过核对后才发布；跨包同 id 冲突由 registerExternal 拒绝，
 			// 发布到一半失败只回滚本次注册，不碰别的包。
@@ -629,7 +628,7 @@
 	function add(input) {
 		let desc
 		try { desc = Contract.resolveSourceUrl(input) } catch (e) { return Promise.reject(e) }
-		if (findSource(desc.sourceKey)) return Promise.reject(new Error('来源已存在：' + desc.sourceKey))
+		if (findSource(desc.sourceKey)) return Promise.reject(new Error(I18n.t('protoSources.sourceAlreadyAdded', { sourceKey: desc.sourceKey })))
 		const source = {
 			input: String(input).trim(),
 			key: desc.sourceKey,
@@ -664,13 +663,13 @@
 	}
 	async function refresh(key) {
 		const source = findSource(key)
-		if (!source) throw new Error('来源不存在')
-		if (state.busy[key]) throw new Error('这个来源正在刷新')
+		if (!source) throw new Error(I18n.t('protoSources.sourceNotFound'))
+		if (state.busy[key]) throw new Error(I18n.t('protoSources.thisSourceIsRefreshing'))
 		// 刷新会让目录 / 版本变化：在飞的启用全部作废，不能让旧版本在刷新后落地
 		bumpOp('source', key)
 		source.error = ''
 		source.notice = ''
-		state.busy[key] = '刷新中'
+		state.busy[key] = I18n.t('protoSources.refreshing')
 		notify()
 		try {
 			const cat = await loadCatalog(source)
@@ -688,7 +687,7 @@
 					stale.push(r.id)
 				}
 			})
-			if (stale.length) source.notice = '来源版本已变化，已停用：' + stale.join('、') + '（需要重新信任）'
+			if (stale.length) source.notice = I18n.t('protoSources.sourceVersionChangedDisabledTrustAgain', { stale: stale.join(I18n.t('protoSources.s')) })
 			saveSources()
 			return findSource(key)
 		} catch (e) {
@@ -703,7 +702,7 @@
 	function trust(sourceKey, packageId) {
 		const source = findSource(sourceKey)
 		const pkg = findPackage(source, packageId)
-		if (!pkg || pkg.error) throw new Error('协议包不可用，无法信任')
+		if (!pkg || pkg.error) throw new Error(I18n.t('protoSources.packageUnavailableCanTTrustIt'))
 		const rec = {
 			source: sourceKey,
 			id: pkg.id,

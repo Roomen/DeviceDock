@@ -1,5 +1,6 @@
 // Run: node tests/modern-firmware.cjs — synthetic data only.
 // 覆盖: 现代布局固件流水线 js/modern-firmware.js 的纯函数（版本识别、分块状态、事件归约、四步状态推导、速率与剩余时间）
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

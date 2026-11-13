@@ -1,3 +1,4 @@
+require('./i18n-env.cjs')
 'use strict'
 // Real PCP framing and production receive/wait functions; synthetic versions and payloads only.
 const assert = require('node:assert/strict')

@@ -27,10 +27,10 @@
 		if (navigator.clipboard && navigator.clipboard.writeText) {
 			try {
 				await navigator.clipboard.writeText(text)
-				toast('已复制到剪贴板')
-			} catch (e) { toast('复制失败，请重试或手动复制配置') }
+				toast(I18n.t('mcpService.copiedToClipboard'))
+			} catch (e) { toast(I18n.t('mcpService.copyFailedRetryOrCopyThe')) }
 		} else {
-			toast('当前环境不支持剪贴板，请手动选择文本')
+			toast(I18n.t('mcpService.clipboardIsnTAvailableHereSelect'))
 		}
 	}
 	function baseUrl(status) {
@@ -53,16 +53,16 @@
 	}
 	function agentInstructions(status, token) {
 		return [
-			'请连接正在运行的串口调试工具桌面版 MCP 服务，并使用它操作软件当前已选择的设备。',
-			'传输：Streamable HTTP；地址：' + baseUrl(status),
-			'以下是完整的 MCP 客户端配置，请按你所用客户端的配置格式接入：',
+			I18n.t('mcpService.connectToTheRunningMcpServer'),
+			I18n.t('mcpService.transportStreamableHttpUrl', { baseUrl: baseUrl(status) }),
+			I18n.t('mcpService.hereIsTheCompleteMcpClient'),
 			'```json', configJson(status, token), '```',
-			'Claude Code 也可执行以下接入命令：',
+			I18n.t('mcpService.claudeCodeCanAlsoRunThis'),
 			'```sh', cliCommand(status, token), '```',
-			'接入后先调用 windows_list，再用 serial_state 确认目标窗口与设备。所有操作显式指定 window；串口还需指定 lane（单路 S，双路 A/B）。',
-			'串口工具：serial_open、serial_close、serial_write、serial_read。',
-			'设备需先在软件中选择。',
-			'该配置含本机访问令牌，请只用于本机接入，不要提交到仓库或输出到日志。',
+			I18n.t('mcpService.afterConnectingCallWindowsListFirst'),
+			I18n.t('mcpService.serialToolsSerialOpenSerialClose'),
+			I18n.t('mcpService.selectTheDeviceInTheApp'),
+			I18n.t('mcpService.thisConfigContainsALocalAccess'),
 		].join('\n\n')
 	}
 
@@ -76,12 +76,12 @@
 			if (s.closed) return
 			s.status = status
 			if (!status || !status.running) {
-				toast('请先启用并启动本地 MCP 服务，再复制接入配置')
+				toast(I18n.t('mcpService.enableAndStartTheLocalMcp'))
 				return
 			}
 			const token = String(await svc.revealToken())
 			if (s.closed) return
-			if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('接入令牌不可用，请重新启用服务')
+			if (!/^[a-f0-9]{64}$/.test(token)) throw new Error(I18n.t('mcpService.theAccessTokenIsUnavailableRe'))
 			const text = format === 'agent' ? agentInstructions(status, token)
 				: (format === 'cli' ? cliCommand(status, token) : configJson(status, token))
 			await copyText(text)
@@ -98,9 +98,9 @@
 		if (!entry) return
 		const st = status || {}
 		const state = st.running ? 'running' : st.lastError ? 'error' : st.enabled ? 'waiting' : 'off'
-		const label = { running: '运行中', error: '服务异常', waiting: '等待启动', off: '未启用' }[state]
+		const label = { running: I18n.t('mcpService.running'), error: I18n.t('mcpService.error'), waiting: I18n.t('mcpService.waitingToStart'), off: I18n.t('mcpService.off') }[state]
 		entry.dataset.state = state
-		entry.title = '本地 MCP 服务 · ' + label
+		entry.title = I18n.t('mcpService.localMcpServer2', { label })
 		entry.setAttribute('aria-label', entry.title)
 	}
 
@@ -133,7 +133,7 @@
 		s.urlLine.hidden = true
 
 		const portRow = mk('div', 'mdn-mcp-row')
-		const portLabel = mk('label', 'mdn-mcp-label', '端口')
+		const portLabel = mk('label', 'mdn-mcp-label', I18n.t('mcpService.port'))
 		s.port = mk('input', 'form-control form-control-sm mdn-mcp-port')
 		s.port.type = 'number'
 		s.port.value = String((s.status && s.status.port) || 38992)
@@ -142,9 +142,9 @@
 		s.port.setAttribute('inputmode', 'numeric')
 		portLabel.appendChild(s.port)
 		portRow.appendChild(portLabel)
-		s.toggleBtn = mk('button', 'btn btn-sm btn-primary', '启用服务')
+		s.toggleBtn = mk('button', 'btn btn-sm btn-primary', I18n.t('mcpService.enableServer'))
 		s.toggleBtn.type = 'button'
-		s.startBtn = mk('button', 'btn btn-sm btn-outline-primary', '启动')
+		s.startBtn = mk('button', 'btn btn-sm btn-outline-primary', I18n.t('mcpService.start'))
 		s.startBtn.type = 'button'
 		s.startBtn.hidden = true
 		portRow.appendChild(s.toggleBtn)
@@ -152,18 +152,18 @@
 		body.appendChild(s.statusLine)
 		body.appendChild(s.urlLine)
 		body.appendChild(portRow)
-		s.copyAgentBtn = mk('button', 'btn btn-sm btn-primary', '一键复制给 Agent')
+		s.copyAgentBtn = mk('button', 'btn btn-sm btn-primary', I18n.t('mcpService.copyForAgent'))
 		s.copyAgentBtn.type = 'button'
-		s.copyAgentBtn.title = '复制完整接入说明、服务地址与访问令牌，可直接粘贴给本机 Agent'
+		s.copyAgentBtn.title = I18n.t('mcpService.copyTheFullSetupInstructionsServer')
 		body.appendChild(s.copyAgentBtn)
 
 		const tokenRow = mk('div', 'mdn-mcp-row')
-		s.tokenBox = mk('code', 'mdn-mcp-token', '未显示')
-		s.revealBtn = mk('button', 'btn btn-sm btn-outline-secondary', '显示令牌')
+		s.tokenBox = mk('code', 'mdn-mcp-token', I18n.t('mcpService.hidden'))
+		s.revealBtn = mk('button', 'btn btn-sm btn-outline-secondary', I18n.t('mcpService.showToken'))
 		s.revealBtn.type = 'button'
-		s.copyTokenBtn = mk('button', 'btn btn-sm btn-outline-secondary', '复制令牌')
+		s.copyTokenBtn = mk('button', 'btn btn-sm btn-outline-secondary', I18n.t('mcpService.copyToken'))
 		s.copyTokenBtn.type = 'button'
-		s.regenBtn = mk('button', 'btn btn-sm btn-outline-danger', '重新生成…')
+		s.regenBtn = mk('button', 'btn btn-sm btn-outline-danger', I18n.t('mcpService.regenerate'))
 		s.regenBtn.type = 'button'
 		tokenRow.appendChild(s.tokenBox)
 		tokenRow.appendChild(s.revealBtn)
@@ -172,8 +172,8 @@
 		body.appendChild(tokenRow)
 
 		const configHead = mk('div', 'mdn-mcp-section-head')
-		configHead.appendChild(mk('div', 'mdn-mcp-sub', '客户端配置'))
-		s.copyCfgBtn = mk('button', 'btn btn-sm btn-outline-secondary', '复制配置')
+		configHead.appendChild(mk('div', 'mdn-mcp-sub', I18n.t('mcpService.clientConfig')))
+		s.copyCfgBtn = mk('button', 'btn btn-sm btn-outline-secondary', I18n.t('mcpService.copyConfig'))
 		s.copyCfgBtn.type = 'button'
 		s.cfg = mk('pre', 'mdn-mcp-cfg')
 		configHead.appendChild(s.copyCfgBtn)
@@ -181,13 +181,13 @@
 		body.appendChild(s.cfg)
 		const cliHead = mk('div', 'mdn-mcp-section-head')
 		cliHead.appendChild(mk('div', 'mdn-mcp-sub', 'Claude Code'))
-		s.copyCliBtn = mk('button', 'btn btn-sm btn-outline-secondary', '复制命令')
+		s.copyCliBtn = mk('button', 'btn btn-sm btn-outline-secondary', I18n.t('mcpService.copyCommand'))
 		s.copyCliBtn.type = 'button'
 		s.cli = mk('pre', 'mdn-mcp-cfg')
 		cliHead.appendChild(s.copyCliBtn)
 		body.appendChild(cliHead)
 		body.appendChild(s.cli)
-		body.appendChild(mk('div', 'mdn-mcp-hint', '只监听 127.0.0.1，需要 Bearer 令牌；每个工具都必须显式指定窗口。服务开启后才会把工具暴露给 agent。端口只能在服务停止时修改，绑定失败会如实报错，不会自动换端口。'))
+		body.appendChild(mk('div', 'mdn-mcp-hint', I18n.t('mcpService.listensOn127001')))
 
 		s.toggleBtn.addEventListener('click', function () { toggleService(s) })
 		s.startBtn.addEventListener('click', function () { toggleService(s, true) })
@@ -263,7 +263,7 @@
 			s.token = ''
 			s.status = status || s.status
 			render(s)
-			toast('令牌已重新生成，旧的客户端配置需要更新')
+			toast(I18n.t('mcpService.tokenRegeneratedUpdateExistingClientConfigs'))
 		}, function (e) {
 			if (!s.closed) toast(String((e && e.message) || e))
 		})
@@ -274,12 +274,12 @@
 		const st = s.status || {}
 		const running = !!st.running
 		let text
-		if (running) text = '运行中'
-		else if (st.starting) text = '正在启动…'
-		else if (st.enabled && st.lastError) text = '启动失败：' + st.lastError
-		else if (st.enabled && st.waitingForWindow) text = '已启用，等窗口就绪后自动启动'
-		else if (st.enabled) text = '已启用，未运行'
-		else text = '未启用（默认关闭）'
+		if (running) text = I18n.t('mcpService.running')
+		else if (st.starting) text = I18n.t('mcpService.starting')
+		else if (st.enabled && st.lastError) text = I18n.t('mcpService.failedToStart', { lastError: st.lastError })
+		else if (st.enabled && st.waitingForWindow) text = I18n.t('mcpService.enabledStartsOnceTheWindowIs')
+		else if (st.enabled) text = I18n.t('mcpService.enabledNotRunning')
+		else text = I18n.t('mcpService.offDefault')
 		s.statusLine.textContent = text
 		s.statusLine.classList.toggle('is-on', running)
 		s.statusLine.classList.toggle('is-error', !!(st.enabled && st.lastError))
@@ -288,16 +288,16 @@
 		if (doc.activeElement !== s.port) s.port.value = String(st.port || 38992)
 		s.port.disabled = running || !!s.busy
 		s.toggleBtn.disabled = !!s.busy
-		s.toggleBtn.textContent = st.enabled ? '停用服务' : '启用服务'
+		s.toggleBtn.textContent = st.enabled ? I18n.t('mcpService.disableServer') : I18n.t('mcpService.enableServer')
 		s.startBtn.hidden = !(st.enabled && !running)
 		s.startBtn.disabled = !!s.busy
 		const copyButtons = [s.copyAgentBtn, s.copyCfgBtn, s.copyCliBtn]
 		copyButtons.forEach(function (button) {
 			button.disabled = !!s.copying || !!s.busy || !running
 		})
-		s.tokenBox.textContent = s.token || '未显示'
-		s.revealBtn.textContent = s.token ? '隐藏令牌' : '显示令牌'
-		s.regenBtn.textContent = s.regenArmed ? '确认重新生成' : '重新生成…'
+		s.tokenBox.textContent = s.token || I18n.t('mcpService.hidden')
+		s.revealBtn.textContent = s.token ? I18n.t('mcpService.hideToken') : I18n.t('mcpService.showToken')
+		s.regenBtn.textContent = s.regenArmed ? I18n.t('mcpService.confirmRegenerate') : I18n.t('mcpService.regenerate')
 		s.cfg.textContent = configJson(st, s.token)
 		s.cli.textContent = cliCommand(st, s.token)
 	}
@@ -323,9 +323,9 @@
 		opening = false
 		session = s
 		root.AppDialog.panel({
-			title: '本地 MCP 服务',
+			title: I18n.t('mcpService.localMcpServer'),
 			wide: true,
-			closeText: '关闭',
+			closeText: I18n.t('mcpService.close'),
 			build: function (body) { buildPanel(body, s) },
 		}).then(function () {
 			s.closed = true
@@ -351,7 +351,7 @@
 	root.McpServiceStatus = {
 		state: statusState,
 		label: function () {
-			return { running: '运行中', error: '服务异常', waiting: '等待启动', off: '未启用' }[statusState()]
+			return { running: I18n.t('mcpService.running'), error: I18n.t('mcpService.error'), waiting: I18n.t('mcpService.waitingToStart'), off: I18n.t('mcpService.off') }[statusState()]
 		},
 		port: function () {
 			const st = latestStatus || {}

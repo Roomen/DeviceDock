@@ -2,6 +2,7 @@
 // 覆盖: 页内对话框(js/app-dialog.js，假 DOM)作为最上层模态：isOpen 查询(含排队)、打开时收起命令面板、
 // Enter / Esc 只在焦点属于对话框时生效(焦点在外面时不确认、不放给页面、拉回焦点)、带 ⌘/Ctrl/Alt 的组合键不传给页面快捷键、焦点移出被拉回；
 // 以及命令面板快捷键只认不带 Shift / Alt 的 ⌘/Ctrl+K：截取 js/command-palette.js 的 `function isPaletteKey(` 与 js/native-shell.js 的 `const PAGE_KEYS = {` 到 `let lastKey`
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

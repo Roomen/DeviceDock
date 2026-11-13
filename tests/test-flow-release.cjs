@@ -1,6 +1,7 @@
 // Run: node tests/test-flow-release.cjs — synthetic data only.
 // 回修 7/8 · 故障占用（写永不兑现）的手动释放：关闭门控与事务释放都来自 js/common.js 的真实源码切片。
 // 按锚点截取 test-flow-panel.js 的 stopAll，配假 DOM / 假串口（真实入口，不是纯函数）。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

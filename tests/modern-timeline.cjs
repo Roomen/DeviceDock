@@ -1,6 +1,7 @@
 // Run: node tests/modern-timeline.cjs — synthetic data only.
 // 覆盖: 现代布局聊天视图 js/modern-timeline.js 与检查器结构化视图 js/modern-inspector.js 的纯函数
 // (时间/Δ/静默格式、Δ 与静默与慢应答的逐条计算、单路 lanes 与双路默认互不串、交互区间、持久化清理、视图模型拍平与摘要)
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

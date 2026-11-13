@@ -6,7 +6,7 @@
 	var verEl = document.getElementById('app-version')
 	if (verEl && window.APP_VERSION) {
 		verEl.textContent = 'v' + window.APP_VERSION
-		verEl.title = '应用版本 v' + window.APP_VERSION
+		verEl.title = I18n.t('boot.appVersionV', { APP_VERSION: window.APP_VERSION })
 	}
 
 	var tip = document.getElementById('issue-tip')

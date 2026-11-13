@@ -1,3 +1,4 @@
+require('./i18n-env.cjs')
 'use strict'
 // Synthetic slow xterm and quota failures; exercise actual production functions.
 const assert = require('node:assert/strict')

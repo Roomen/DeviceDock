@@ -7,8 +7,8 @@
 
 	function blockers(env) {
 		const reasons = env.Workbench && env.Workbench.updateBlockers ? env.Workbench.updateBlockers().slice() : []
-		if (env.serialApi && env.serialApi.isPinned()) reasons.push('协议事务')
-		for (const [name, label] of [['classic', '经典蓝牙操作'], ['computer-ble', 'BLE 操作'], ['connection-source', '连接选择'], ['plugin-host', '插件后台任务']]) {
+		if (env.serialApi && env.serialApi.isPinned()) reasons.push(I18n.t('appUpdate.protocolTransaction'))
+		for (const [name, label] of [['classic', I18n.t('appUpdate.classicBluetoothOperation')], ['computer-ble', I18n.t('appUpdate.bleOperation')], ['connection-source', I18n.t('appUpdate.connectionSelection')], ['plugin-host', I18n.t('appUpdate.pluginBackgroundTask')]]) {
 			const transport = env.AppPlatform && env.AppPlatform.service(name)
 			if (transport && transport.isBusyForUpdate && transport.isBusyForUpdate()) {
 				const labels = transport.busyLabels && transport.busyLabels()
@@ -16,7 +16,7 @@
 				else reasons.push(label)
 			}
 		}
-		if (!env.serialApi || !env.serialApi.prepareForAppUpdate) reasons.push('页面尚未就绪')
+		if (!env.serialApi || !env.serialApi.prepareForAppUpdate) reasons.push(I18n.t('appUpdate.thePageIsnTReadyYet'))
 		return Array.from(new Set(reasons))
 	}
 
@@ -98,14 +98,14 @@
 						// 安装准备过程中如果后端已超时或取消，不能交付迟到的确认。
 						ready = frozen && operation === data.operationId
 						if (ready) {
-							if (!env.sessionStorage) throw new Error('会话存储不可用')
+							if (!env.sessionStorage) throw new Error(I18n.t('appUpdate.sessionStorageIsUnavailable'))
 							for (let i = 0; i < env.sessionStorage.length; i++) {
 								const key = env.sessionStorage.key(i)
 								if (key === 'appInstanceId' || /^serial/.test(key)) session[key] = env.sessionStorage.getItem(key)
 							}
 						}
 					}
-				} catch (e) { ready = false; emit({ state: 'blocked', reasons: ['会话未确认保存或串口未确认释放'] }) }
+				} catch (e) { ready = false; emit({ state: 'blocked', reasons: [I18n.t('appUpdate.theSessionWasnTConfirmedSaved')] }) }
 				try { await service.ack(data.operationId, ready, session) } catch (e) { ready = false }
 				if (!ready && frozen && operation === data.operationId) freeze(false)
 			},
@@ -136,9 +136,9 @@
 			shield.className = 'app-update-shield'
 			shield.setAttribute('role', 'dialog')
 			shield.setAttribute('aria-modal', 'true')
-			shield.setAttribute('aria-label', '正在安装应用更新')
+			shield.setAttribute('aria-label', I18n.t('appUpdate.installingAppUpdate'))
 			shield.tabIndex = -1
-			shield.textContent = '正在保存会话并安装更新，应用会自动重启，请稍候…'
+			shield.textContent = I18n.t('appUpdate.savingTheSessionAndInstallingThe')
 			doc.body.appendChild(shield)
 			shield.focus()
 		} else if (!on && shield) {
@@ -154,27 +154,27 @@
 		const version = doc.getElementById('app-version')
 		if (version && (s.state === 'current' || (s.state === 'error' && s.retry === 'check'))) {
 			version.classList.remove('rail-version--update')
-			version.title = '应用版本'
+			version.title = I18n.t('appUpdate.appVersion')
 			version.removeAttribute('role')
 			version.removeAttribute('tabindex')
 		}
 		if (!manualChecking && (s.state === 'checking' || s.state === 'current' || (s.state === 'error' && s.retry === 'check'))) return
 		const messages = {
-			checking: '正在检查更新…', current: '已是最新版本',
-			available: '有新版本 v' + (s.update ? s.update.version : ''),
-			downloading: '正在下载更新…', preparing: '正在保存会话…', installing: '正在安装更新…',
-			blocked: '暂不能安装，请先结束：' + (s.reasons || []).join('、'),
-			error: '更新未完成，请重试；当前版本可继续使用',
+			checking: I18n.t('appUpdate.checkingForUpdates'), current: I18n.t('appUpdate.upToDate'),
+			available: I18n.t('appUpdate.vIsAvailable', { v: (s.update ? s.update.version : '') }),
+			downloading: I18n.t('appUpdate.downloadingUpdate'), preparing: I18n.t('appUpdate.savingSession'), installing: I18n.t('appUpdate.installingUpdate'),
+			blocked: I18n.t('appUpdate.canTInstallYetFinishFirst', { v: (s.reasons || []).join(I18n.t('appUpdate.listSep')) }),
+			error: I18n.t('appUpdate.updateDidnTCompleteRetryYou'),
 		}
-		status.textContent = messages[s.state] || '正在更新…'
+		status.textContent = messages[s.state] || I18n.t('appUpdate.updating')
 		if (s.state === 'downloading' && s.total > 0) status.textContent += ' ' + Math.min(100, Math.floor(s.downloaded / s.total * 100)) + '%'
 		status.parentNode.hidden = false
 		action.hidden = !['available', 'error', 'blocked'].includes(s.state)
 		retry = s.retry || (s.state === 'available' || s.state === 'blocked' ? 'install' : retry)
-		action.textContent = s.state === 'available' ? '查看更新' : '重试'
+		action.textContent = s.state === 'available' ? I18n.t('appUpdate.viewUpdate') : I18n.t('appUpdate.retry')
 		if (version && s.state === 'available') {
 			version.classList.add('rail-version--update')
-			version.title = '有新版本，点击查看更新'
+			version.title = I18n.t('appUpdate.updateAvailableClickToView')
 			version.setAttribute('role', 'button')
 			version.tabIndex = 0
 		}
@@ -182,8 +182,9 @@
 	async function offerInstall() {
 		const update = controller.pending
 		if (!update || controller.busy || controller.frozen) return
-		const text = '当前版本 v' + (update.currentVersion || root.APP_VERSION) + '\n新版本 v' + update.version + '\n\n' + String(update.body || '此版本未提供更新说明。').slice(0, 16000) + '\n\n安装完成后应用将重启。'
-		if (await root.AppDialog.confirm(text, { title: '应用更新', okText: '下载并安装', cancelText: '稍后' })) {
+		const notes = String(update.body || I18n.t('appUpdate.noReleaseNotesForThisVersion')).slice(0, 16000)
+		const text = I18n.t('appUpdate.currentVersionVNewVersionV', { v: update.currentVersion || root.APP_VERSION, version: update.version, notes })
+		if (await root.AppDialog.confirm(text, { title: I18n.t('appUpdate.appUpdate'), okText: I18n.t('appUpdate.downloadAndInstall'), cancelText: I18n.t('appUpdate.later') })) {
 			try { await controller.install() } catch (e) { /* 状态条提供重试，原生错误不暴露路径或配置 */ }
 		}
 	}
@@ -194,9 +195,9 @@
 		try {
 			const update = await controller.check()
 			if (manual && update) await offerInstall()
-			else if (manual && update === null) await root.AppDialog.alert('当前已是最新版本。', { title: '应用更新' })
+			else if (manual && update === null) await root.AppDialog.alert(I18n.t('appUpdate.youReOnTheLatestVersion'), { title: I18n.t('appUpdate.appUpdate') })
 		} catch (e) {
-			if (manual && root.APP_UPDATER_CONFIGURED === false) await root.AppDialog.alert('此版本暂不支持在线更新，请安装发布版客户端。', { title: '应用更新' })
+			if (manual && root.APP_UPDATER_CONFIGURED === false) await root.AppDialog.alert(I18n.t('appUpdate.thisBuildCanTUpdateIn'), { title: I18n.t('appUpdate.appUpdate') })
 		} finally { manualChecking = false }
 	}
 	root.AppUpdate = { check: check }
@@ -213,8 +214,12 @@
 			button.id = 'serial-check-update'
 			button.type = 'button'
 			button.className = 'rail-item'
-			button.title = '检查应用更新'
-			button.innerHTML = '<i class="icon icon-circle-arrow-down"></i><span class="rail-label">更新</span>'
+			button.title = I18n.t('appUpdate.checkForAppUpdates')
+			button.innerHTML = '<i class="icon icon-circle-arrow-down"></i>'
+			const railLabel = doc.createElement('span')
+			railLabel.className = 'rail-label'
+			railLabel.textContent = I18n.t('appUpdate.update')
+			button.appendChild(railLabel)
 			button.addEventListener('click', function () { check(true) })
 			menu.insertBefore(button, doc.getElementById('app-version'))
 		}
@@ -231,7 +236,7 @@
 		const dismiss = doc.createElement('button')
 		dismiss.type = 'button'
 		dismiss.className = 'btn btn-sm'
-		dismiss.setAttribute('aria-label', '关闭更新提示')
+		dismiss.setAttribute('aria-label', I18n.t('appUpdate.dismissUpdateNotice'))
 		dismiss.textContent = '×'
 		dismiss.addEventListener('click', function () { bar.hidden = true })
 		bar.append(status, action, dismiss)
@@ -246,11 +251,12 @@
 		if (service.takeResult) {
 			Promise.resolve(service.takeResult()).then(function (result) {
 				if (!result || result.success || !status) return
-				status.textContent = '上次更新未完成，当前仍是 v' + (root.APP_VERSION || '') + '：' + String(result.message || '未知原因')
+				const why = String(result.message || I18n.t('appUpdate.unknownReason'))
+				status.textContent = I18n.t('appUpdate.theLastUpdateDidnTComplete2', { v: root.APP_VERSION || '', why })
 				status.parentNode.hidden = false
 				retry = 'install'
 				action.hidden = true
-				if (root.AppDialog) root.AppDialog.alert('上次更新未完成，当前仍是旧版本。\n\n' + String(result.message || '未知原因'), { title: '应用更新' }).catch(function () {})
+				if (root.AppDialog) root.AppDialog.alert(I18n.t('appUpdate.theLastUpdateDidnTComplete', { why }), { title: I18n.t('appUpdate.appUpdate') }).catch(function () {})
 			}).catch(function () { /* 结果读不到不影响使用 */ })
 		}
 		listeners.then(function () {

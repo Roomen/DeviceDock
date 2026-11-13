@@ -2,6 +2,7 @@
 // 覆盖 js/mcp-bridge.js：只有桌面服务存在才挂载、先装监听再登记、提交点(commit)在真正执行之前、
 // 提交被拒/取消/端口变化时不执行、按路的串行队列、读游标的代次与命名空间、
 // 迟到/重复/错代次的事件被忽略。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

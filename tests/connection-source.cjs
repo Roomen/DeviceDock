@@ -1,4 +1,5 @@
 // Execute the real selection UI, native BLE service and stream adapter together.
+require('./i18n-env.cjs')
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm')
 const B=require('../js/native-ble.js'),A=require('../js/serial-adapter.js')
 const flush=async()=>{for(let i=0;i<12;i++)await new Promise(r=>setImmediate(r))}

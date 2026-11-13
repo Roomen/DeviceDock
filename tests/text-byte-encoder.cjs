@@ -1,4 +1,5 @@
 // Synthetic byte grammar tests; no device data.
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

@@ -1,4 +1,5 @@
 // Synthetic Web Serial streams and a fake clock: no device identifiers or real logs.
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

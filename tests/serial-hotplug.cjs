@@ -4,6 +4,7 @@
 // 口带路径/序列号(原生后端)时按强身份接回(序列号优先、其次路径)，对不上(同型号另一台)的会话不认领，
 // 两边都没有强身份(网页版只有 VID/PID)照旧按 VID/PID；reload 自动重连按已存身份找口(findPortByKey)：
 // 强身份排异后序列号 → 路径，唯一候选才自动连，歧义与找不到一样不连
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

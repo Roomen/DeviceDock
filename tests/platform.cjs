@@ -1,6 +1,7 @@
 // Run: node tests/platform.cjs — synthetic data only.
 // 覆盖: 平台层(js/platform.js)的系统 / 运行时识别、功能画像(桌面全功能、移动端只留 SEK 协议与固件升级)、
 // 传输优先顺序、协议与布局白名单、多开、功能门控样式
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const P = require('../js/platform.js')
 

@@ -1,5 +1,6 @@
 // Run: node tests/dual-config.cjs — synthetic data only.
 // 覆盖: 双路两路参数 / 两路协议的存储迁移，串口预设(单路 / 双路)的规范化、增删改、匹配与套用计划(js/dual-config.js 的纯函数)
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const D = require('../js/dual-config.js')
 

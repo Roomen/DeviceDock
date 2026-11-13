@@ -35,9 +35,9 @@
 		// 方向不再在标题前画箭头：日志行的元信息列已经表达方向（TX ↑ / RX ↓），
 		// 两处一起画会出现「↑ RX + ↓ 应答」这种自相矛盾（帧的 up/down 是协议方向，和行的收发不一定同向）
 		let h = ''
-		h += '<span class="pv-title">' + esc(m.title || '帧') + '</span>'
+		h += '<span class="pv-title">' + esc(m.title || I18n.t('parseView.frame')) + '</span>'
 		if (m.code) h += ' <span class="pv-code">' + esc(m.code) + '</span>'
-		if (opts.tag) h += ' <span class="pv-tag" title="快捷发送名称">' + esc(opts.tag) + '</span>'
+		if (opts.tag) h += ' <span class="pv-tag" title="' + esc(I18n.t('parseView.quickSendName')) + '">' + esc(opts.tag) + '</span>'
 		const s = m.subject
 		if (s && s.value != null && s.value !== '') {
 			h += ' <span class="pv-subject">' + (s.label ? '<span class="pv-sl">' + esc(s.label) + '</span> ' : '') +

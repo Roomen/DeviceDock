@@ -1,6 +1,7 @@
 // Run: node tests/transport-native-serial.cjs — synthetic data only.
 // 覆盖: 桌面客户端原生串口后端(js/transport-native-serial.js)：getInfo 带设备名与口名、选口过滤与取消、授权后才进 getPorts 与插拔事件、
 // 拔插给新端口对象、同一路径换设备、listPorts 列出全部在位口与 grantPort 授权、change 事件(含未授权口)、打开参数映射、通道推数据、读错误换流、设备丢失替页面释放句柄、写入、控制信号、按 kind 被 pick 选中
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const A = require('../js/serial-adapter.js')
 const N = require('../js/transport-native-serial.js')

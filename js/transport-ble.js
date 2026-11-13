@@ -55,7 +55,7 @@
 				const rx = p.notify === p.write ? tx : await svc.getCharacteristic(p.notify)
 				return { tx, rx }
 			}
-			throw makeError('NotFoundError', '设备上没有可识别的蓝牙透传服务')
+			throw makeError('NotFoundError', I18n.t('ble.noSupportedBluetoothUartServiceOn'))
 		}
 
 		function writeChunk(tx, bytes) {
@@ -85,7 +85,7 @@
 					onGone = function () {
 						conn++
 						detach()
-						sink.lost(makeError('NetworkError', '蓝牙连接已断开'))
+						sink.lost(makeError('NetworkError', I18n.t('ble.bluetoothConnectionLost')))
 					}
 					rxChar.addEventListener('characteristicvaluechanged', onValue)
 					device.addEventListener('gattserverdisconnected', onGone)
@@ -102,7 +102,7 @@
 				const tx = txChar
 				const job = chain.then(async function () {
 					for (let off = 0; off < u8.byteLength; off += chunkSize) {
-						if (my !== conn || !tx) throw makeError('NetworkError', '蓝牙连接已断开')
+						if (my !== conn || !tx) throw makeError('NetworkError', I18n.t('ble.bluetoothConnectionLost'))
 						await writeChunk(tx, u8.slice(off, off + chunkSize))
 					}
 				})

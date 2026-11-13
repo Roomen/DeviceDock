@@ -187,7 +187,7 @@
 				break
 			case 'device-version':
 				u.querying = false
-				if (!e.ok) { u.queryError = e.error || '失败'; break }
+				if (!e.ok) { u.queryError = e.error || I18n.t('fwPipe.failed'); break }
 				u.queryError = ''
 				if (e.source === 'query' && u.outcome === 'ok') u.post = e.version
 				else { u.pre = e.version; u.post = null }
@@ -297,11 +297,11 @@
 	}
 
 	const PHASE_TEXT = {
-		query: '查询设备版本',
-		notify: '通知设备新版本',
-		transfer: '传输分块',
-		result: '等待设备下载结果',
-		execute: '发送升级命令',
+		query: I18n.t('fwPipe.queryingDeviceVersion'),
+		notify: I18n.t('fwPipe.notifyingDeviceOfNewVersion'),
+		transfer: I18n.t('fwPipe.transferringChunks'),
+		result: I18n.t('fwPipe.waitingForDeviceDownloadResult'),
+		execute: I18n.t('fwPipe.sendingUpgradeCommand'),
 	}
 
 	function shortMsg(s, n) {
@@ -321,60 +321,60 @@
 			const ov = p.old ? p.old.version : null
 			let sum
 			if (p.old) sum = (ov || shortMsg(p.old.name, 18)) + ' → ' + (nv || shortMsg(p.nw.name, 18))
-			else sum = nv ? '新固件 ' + nv : shortMsg(p.nw.name, 28)
-			st.push({ key: 'select', name: '选择固件', state: 'done', summary: sum })
+			else sum = nv ? I18n.t('fwPipe.newFirmware', { nv }) : shortMsg(p.nw.name, 28)
+			st.push({ key: 'select', name: I18n.t('fwPipe.selectFirmware'), state: 'done', summary: sum })
 		} else if (u.file) {
-			st.push({ key: 'select', name: '选择固件', state: 'done', summary: '直接载入升级包' })
+			st.push({ key: 'select', name: I18n.t('fwPipe.selectFirmware'), state: 'done', summary: I18n.t('fwPipe.loadedPackageDirectly') })
 		} else {
-			st.push({ key: 'select', name: '选择固件', state: 'waiting', summary: '未选择新固件' })
+			st.push({ key: 'select', name: I18n.t('fwPipe.selectFirmware'), state: 'waiting', summary: I18n.t('fwPipe.noNewFirmwareSelected') })
 		}
 
 		// 2 生成升级包
 		if (p.running) {
-			st.push({ key: 'pack', name: '生成升级包', state: 'active', summary: '生成中，已出 ' + p.outputs.length + ' 个' })
+			st.push({ key: 'pack', name: I18n.t('fwPipe.buildPackage'), state: 'active', summary: I18n.t('fwPipe.buildingReady', { length: p.outputs.length }) })
 		} else if (p.outputs.length) {
-			st.push({ key: 'pack', name: '生成升级包', state: 'done', summary: p.outputs.length + ' 个产物' + (p.errors ? ' · ' + p.errors + ' 项失败' : '') })
+			st.push({ key: 'pack', name: I18n.t('fwPipe.buildPackage'), state: 'done', summary: p.errors ? I18n.t('fwPipe.outputsFailed', { length: p.outputs.length, errors: p.errors }) : I18n.t('fwPipe.outputs', { length: p.outputs.length }) })
 		} else if (p.ran && p.errors && !p.aborted) {
-			st.push({ key: 'pack', name: '生成升级包', state: 'failed', summary: p.notice ? shortMsg(p.notice.msg, 36) : '生成失败' })
+			st.push({ key: 'pack', name: I18n.t('fwPipe.buildPackage'), state: 'failed', summary: p.notice ? shortMsg(p.notice.msg, 36) : I18n.t('fwPipe.buildFailed') })
 		} else if (p.ran && p.aborted) {
-			st.push({ key: 'pack', name: '生成升级包', state: 'waiting', summary: '已取消' })
+			st.push({ key: 'pack', name: I18n.t('fwPipe.buildPackage'), state: 'waiting', summary: I18n.t('fwPipe.canceled') })
 		} else if (!p.nw && u.file) {
-			st.push({ key: 'pack', name: '生成升级包', state: 'done', summary: '已跳过' })
+			st.push({ key: 'pack', name: I18n.t('fwPipe.buildPackage'), state: 'done', summary: I18n.t('fwPipe.skipped') })
 		} else {
-			st.push({ key: 'pack', name: '生成升级包', state: 'waiting', summary: p.nw ? '待生成' : '先选择新固件' })
+			st.push({ key: 'pack', name: I18n.t('fwPipe.buildPackage'), state: 'waiting', summary: p.nw ? I18n.t('fwPipe.notBuilt') : I18n.t('fwPipe.selectNewFirmwareFirst') })
 		}
 
 		// 3 升级
 		if (u.running) {
-			let sum = PHASE_TEXT[u.phase] || '升级中'
+			let sum = PHASE_TEXT[u.phase] || I18n.t('fwPipe.upgrading')
 			if (u.phase === 'transfer' && u.plan) sum += ' ' + u.sent + '/' + u.plan.totalChunks
-			st.push({ key: 'upgrade', name: '升级', state: 'active', summary: sum + ' · ' + u.percent + '%' })
+			st.push({ key: 'upgrade', name: I18n.t('fwPipe.upgrade'), state: 'active', summary: sum + ' · ' + u.percent + '%' })
 		} else if (u.outcome === 'ok') {
-			st.push({ key: 'upgrade', name: '升级', state: 'done', summary: '升级命令已发出' })
+			st.push({ key: 'upgrade', name: I18n.t('fwPipe.upgrade'), state: 'done', summary: I18n.t('fwPipe.upgradeCommandSent') })
 		} else if (u.outcome === 'failed') {
-			st.push({ key: 'upgrade', name: '升级', state: 'failed', summary: u.error ? shortMsg(u.error, 36) : '升级失败' })
+			st.push({ key: 'upgrade', name: I18n.t('fwPipe.upgrade'), state: 'failed', summary: u.error ? shortMsg(u.error, 36) : I18n.t('fwPipe.upgradeFailed') })
 		} else if (u.outcome === 'stopped') {
-			st.push({ key: 'upgrade', name: '升级', state: 'waiting', summary: '已停止 · ' + u.percent + '%' })
+			st.push({ key: 'upgrade', name: I18n.t('fwPipe.upgrade'), state: 'waiting', summary: I18n.t('fwPipe.stopped', { percent: u.percent }) })
 		} else if (u.parsed && u.parsed.ok === false && u.file) {
-			st.push({ key: 'upgrade', name: '升级', state: 'failed', summary: '固件解析失败' })
+			st.push({ key: 'upgrade', name: I18n.t('fwPipe.upgrade'), state: 'failed', summary: I18n.t('fwPipe.firmwareParseFailed') })
 		} else if (u.file) {
-			st.push({ key: 'upgrade', name: '升级', state: 'waiting', summary: '已载入 ' + shortMsg(u.file.name, 24) })
+			st.push({ key: 'upgrade', name: I18n.t('fwPipe.upgrade'), state: 'waiting', summary: I18n.t('fwPipe.loaded', { shortMsg: shortMsg(u.file.name, 24) }) })
 		} else {
-			st.push({ key: 'upgrade', name: '升级', state: 'waiting', summary: '未载入升级包' })
+			st.push({ key: 'upgrade', name: I18n.t('fwPipe.upgrade'), state: 'waiting', summary: I18n.t('fwPipe.noPackageLoaded') })
 		}
 
 		// 4 校验
 		const target = targetVersion(m)
 		if (u.querying && u.outcome === 'ok') {
-			st.push({ key: 'verify', name: '校验', state: 'active', summary: '查询中' })
+			st.push({ key: 'verify', name: I18n.t('fwPipe.verify'), state: 'active', summary: I18n.t('fwPipe.querying2') })
 		} else if (u.outcome === 'ok' && u.post != null) {
-			if (target != null && sameVersion(u.post, target)) st.push({ key: 'verify', name: '校验', state: 'done', summary: '一致 · ' + u.post })
-			else if (target != null) st.push({ key: 'verify', name: '校验', state: 'failed', summary: '不一致 · ' + u.post + ' ≠ ' + target })
-			else st.push({ key: 'verify', name: '校验', state: 'waiting', summary: '设备版本 ' + u.post })
+			if (target != null && sameVersion(u.post, target)) st.push({ key: 'verify', name: I18n.t('fwPipe.verify'), state: 'done', summary: I18n.t('fwPipe.match', { post: u.post }) })
+			else if (target != null) st.push({ key: 'verify', name: I18n.t('fwPipe.verify'), state: 'failed', summary: I18n.t('fwPipe.mismatch', { post: u.post, target }) })
+			else st.push({ key: 'verify', name: I18n.t('fwPipe.verify'), state: 'waiting', summary: I18n.t('fwPipe.deviceVersion', { post: u.post }) })
 		} else if (u.outcome === 'ok') {
-			st.push({ key: 'verify', name: '校验', state: 'waiting', summary: '待查询升级后版本' })
+			st.push({ key: 'verify', name: I18n.t('fwPipe.verify'), state: 'waiting', summary: I18n.t('fwPipe.queryTheVersionAfterUpgrading') })
 		} else {
-			st.push({ key: 'verify', name: '校验', state: 'waiting', summary: '升级完成后查询' })
+			st.push({ key: 'verify', name: I18n.t('fwPipe.verify'), state: 'waiting', summary: I18n.t('fwPipe.queryAfterUpgrading') })
 		}
 		return st
 	}
@@ -391,8 +391,8 @@
 
 	const $ = function (id) { return document.getElementById(id) }
 	const model = newModel()
-	const KIND_LABEL = { origin: '原始包', compress: '压缩包', 'diff-fwd': '差分包（旧→新）', 'diff-rev': '差分包（新→旧）' }
-	const STATE_LABEL = { done: '完成', active: '进行中', waiting: '等待', failed: '失败' }
+	const KIND_LABEL = { origin: I18n.t('fwPipe.raw'), compress: I18n.t('fwPipe.compressed'), 'diff-fwd': I18n.t('fwPipe.diffOldNew'), 'diff-rev': I18n.t('fwPipe.diffNewOld') }
+	const STATE_LABEL = { done: I18n.t('fwPipe.done'), active: I18n.t('fwPipe.inProgress'), waiting: I18n.t('fwPipe.waiting'), failed: I18n.t('fwPipe.failed') }
 	const STATE_MARK = { done: '✓', failed: '!', active: '', waiting: '' }
 
 	let ui = null
@@ -468,12 +468,12 @@
 	function build() {
 		const rootEl = h('section', 'mdn-fw')
 		rootEl.id = 'mdn-fw'
-		rootEl.setAttribute('aria-label', '固件打包与升级流水线')
+		rootEl.setAttribute('aria-label', I18n.t('fwPipe.firmwarePackagingAndUpgradePipeline'))
 
 		// 顶部四步进度条
 		const steps = h('ol', 'mdn-fw-steps')
 		const stepEls = []
-		;['选择固件', '生成升级包', '升级', '校验'].forEach(function (name, i) {
+		;[I18n.t('fwPipe.selectFirmware'), I18n.t('fwPipe.buildPackage'), I18n.t('fwPipe.upgrade'), I18n.t('fwPipe.verify')].forEach(function (name, i) {
 			const li = h('li', 'mdn-fw-step')
 			const badge = h('span', 'mdn-fw-step-badge', String(i + 1))
 			badge.setAttribute('aria-hidden', 'true')
@@ -491,7 +491,7 @@
 		const cards = h('div', 'mdn-fw-cards')
 
 		// 卡片 1：选择固件
-		const c1 = card(1, '选择固件')
+		const c1 = card(1, I18n.t('fwPipe.selectFirmware'))
 		const slots = {}
 		;[['old', 'fp-drop-old'], ['nw', 'fp-drop-new']].forEach(function (pair) {
 			const slot = h('div', 'mdn-fw-slot')
@@ -515,10 +515,10 @@
 		const udSlot = h('div', 'mdn-fw-slot')
 		park(ud ? ud.closest('.fw-config-item') : null, udSlot)
 		c1.el.appendChild(udSlot)
-		c1.el.appendChild(h('p', 'mdn-fw-hint', '也可以跳过打包，直接把现成的升级包拖进第 3 步的固件文件框。'))
+		c1.el.appendChild(h('p', 'mdn-fw-hint', I18n.t('fwPipe.youCanAlsoSkipPackagingAnd')))
 
 		// 卡片 2：生成升级包
-		const c2 = card(2, '生成升级包')
+		const c2 = card(2, I18n.t('fwPipe.buildPackage'))
 		const typesSlot = h('div', 'mdn-fw-slot')
 		const origin = $('fp-gen-origin')
 		park(origin ? origin.closest('.fw-config-item') : null, typesSlot)
@@ -532,27 +532,27 @@
 		c2.el.appendChild(packNote)
 		const list = h('div', 'mdn-fw-outs')
 		list.setAttribute('role', 'listbox')
-		list.setAttribute('aria-label', '生成的升级包')
-		const outEmpty = h('div', 'mdn-fw-empty', '生成后在这里列出每个产物')
+		list.setAttribute('aria-label', I18n.t('fwPipe.generatedPackages'))
+		const outEmpty = h('div', 'mdn-fw-empty', I18n.t('fwPipe.eachOutputIsListedHereAfter'))
 		c2.el.append(outEmpty, list)
 		const zipNote = h('div', 'mdn-fw-zipnote')
 		zipNote.hidden = true
 		const actions = h('div', 'mdn-fw-actions')
-		const dl = h('button', 'btn btn-sm btn-outline-secondary', '下载')
+		const dl = h('button', 'btn btn-sm btn-outline-secondary', I18n.t('fwPipe.download'))
 		dl.type = 'button'
 		dl.id = 'mdn-fw-download'
-		const use = h('button', 'btn btn-sm btn-primary', '用此包升级 →')
+		const use = h('button', 'btn btn-sm btn-primary', I18n.t('fwPipe.upgradeWithThisPackage'))
 		use.type = 'button'
 		use.id = 'mdn-fw-use'
 		actions.append(dl, use)
 		c2.el.append(zipNote, actions)
 		const logCard = $('fp-log') ? $('fp-log').closest('.fw-log-card') : null
-		const packFold = fold('生成日志')
+		const packFold = fold(I18n.t('fwPipe.buildLog'))
 		park(logCard, packFold.region)
 		c2.el.appendChild(packFold.el)
 
 		// 卡片 3：升级
-		const c3 = card(3, '升级', '')
+		const c3 = card(3, I18n.t('fwPipe.upgrade'), '')
 		const fileA = $('fw-file') ? $('fw-file').closest('.fw-upgrade-card') : null
 		const fileSlot = h('div', 'mdn-fw-slot')
 		park(fileA, fileSlot)
@@ -572,11 +572,11 @@
 		const gridWrap = h('div', 'mdn-fw-grid')
 		const canvas = h('canvas', 'mdn-fw-canvas')
 		canvas.setAttribute('role', 'img')
-		const gridEmpty = h('div', 'mdn-fw-empty', '载入并解析固件后显示分块进度')
+		const gridEmpty = h('div', 'mdn-fw-empty', I18n.t('fwPipe.chunkProgressAppearsAfterLoadingAnd'))
 		gridWrap.append(canvas, gridEmpty)
 		const legend = h('div', 'mdn-fw-legend')
 		const legendItems = {}
-		;[['done', '已确认'], ['retried', '重发过'], ['active', '进行中'], ['pending', '待发']].forEach(function (p) {
+		;[['done', I18n.t('fwPipe.confirmed')], ['retried', I18n.t('fwPipe.resent')], ['active', I18n.t('fwPipe.inProgress')], ['pending', I18n.t('fwPipe.pending')]].forEach(function (p) {
 			const item = h('span', 'mdn-fw-legend-item')
 			const sw = h('span', 'mdn-fw-swatch mdn-fw-swatch--' + p[0])
 			sw.setAttribute('aria-hidden', 'true')
@@ -585,18 +585,18 @@
 			legend.appendChild(item)
 			legendItems[p[0]] = { txt: txt, label: p[1] }
 		})
-		legend.title = '已确认：设备已转去请求后续分块或上报结果；重发过：设备重复请求过该块；进行中：设备正在请求/刚发出的块'
+		legend.title = I18n.t('fwPipe.confirmedTheDeviceMovedOnTo')
 		const upNote = note()
 		c3.el.append(gridWrap, legend, upNote)
-		const upFold = fold('升级日志')
+		const upFold = fold(I18n.t('fwPipe.upgradeLog'))
 		park($('fw-log'), upFold.region)
 		c3.el.appendChild(upFold.el)
 
 		// 卡片 4：校验
-		const c4 = card(4, '校验')
+		const c4 = card(4, I18n.t('fwPipe.verify'))
 		const rows = h('dl', 'mdn-fw-rows')
 		const val = {}
-		;[['pre', '升级前'], ['target', '目标'], ['post', '升级后']].forEach(function (p) {
+		;[['pre', I18n.t('fwPipe.before')], ['target', I18n.t('fwPipe.target')], ['post', I18n.t('fwPipe.after')]].forEach(function (p) {
 			const dt = h('dt', null, p[1])
 			const dd = h('dd', 'mdn-fw-mono', '--')
 			rows.append(dt, dd)
@@ -605,10 +605,10 @@
 		c4.el.appendChild(rows)
 		const verdict = h('div', 'mdn-fw-verdict')
 		verdict.setAttribute('role', 'status')
-		const verifyBtn = h('button', 'btn btn-sm btn-outline-secondary', '查询版本')
+		const verifyBtn = h('button', 'btn btn-sm btn-outline-secondary', I18n.t('fwPipe.queryVersion'))
 		verifyBtn.type = 'button'
 		verifyBtn.id = 'mdn-fw-verify'
-		const verifyHint = h('p', 'mdn-fw-hint', '升级后点「查询版本」，与目标版本比对')
+		const verifyHint = h('p', 'mdn-fw-hint', I18n.t('fwPipe.afterUpgradingClickQueryVersionTo'))
 		c4.el.append(verdict, verifyBtn, verifyHint)
 
 		cards.append(c1.el, c2.el, c3.el, c4.el)
@@ -698,7 +698,7 @@
 			const f = pair[1]
 			if (f && f.version) {
 				ver.hidden = false
-				ver.textContent = '识别为 ' + f.version
+				ver.textContent = I18n.t('fwPipe.detected', { version: f.version })
 			} else {
 				ver.hidden = true
 				ver.textContent = ''
@@ -734,13 +734,13 @@
 				track.appendChild(fill)
 				b.appendChild(track)
 			}
-			const label = KIND_LABEL[o.kind] || '升级包'
+			const label = KIND_LABEL[o.kind] || I18n.t('fwPipe.package')
 			b.appendChild(h('span', 'mdn-fw-out-desc', label + (r != null ? ' · ' + Math.round(r * 100) + '%' : '')))
 			ui.list.appendChild(b)
 		})
 		if (p.zip) {
 			ui.zipNote.hidden = false
-			ui.zipNote.textContent = 'ZIP：' + p.zip.name + ' · ' + fmtSize(p.zip.size) + ' · ' + p.zip.count + ' 个文件'
+			ui.zipNote.textContent = I18n.t('fwPipe.zipFiles', { name: p.zip.name, fmtSize: fmtSize(p.zip.size), count: p.zip.count })
 		} else {
 			ui.zipNote.hidden = true
 		}
@@ -756,13 +756,13 @@
 		let line
 		if (u.plan) {
 			const st = computeStats(model, now)
-			const parts = ['块 ' + u.sent + '/' + u.plan.totalChunks, u.plan.chunkSize + ' B/块']
+			const parts = [I18n.t('fwPipe.chunk2', { sent: u.sent, totalChunks: u.plan.totalChunks }), I18n.t('fwPipe.bChunk', { chunkSize: u.plan.chunkSize })]
 			if (st.rate != null) parts.push(fmtRate(st.rate))
-			if (u.running && u.phase === 'transfer') parts.push('剩余 ' + fmtEta(st.eta))
+			if (u.running && u.phase === 'transfer') parts.push(I18n.t('fwPipe.left', { fmtEta: fmtEta(st.eta) }))
 			else if (u.running) parts.push(PHASE_TEXT[u.phase] || '')
 			line = parts.filter(Boolean).join(' · ')
 		} else {
-			line = u.running ? (PHASE_TEXT[u.phase] || '升级中') : '未开始'
+			line = u.running ? (PHASE_TEXT[u.phase] || I18n.t('fwPipe.upgrading')) : I18n.t('fwPipe.notStarted')
 		}
 		ui.stats.textContent = line
 		setNote(ui.upNote, u.notice)
@@ -772,7 +772,7 @@
 			let t = ''
 			try {
 				const link = root.serialApi && root.serialApi.firmwareLink
-				if (link && link.enabled()) t = link.isOpen() ? '经固件连接' : '固件连接未连接'
+				if (link && link.enabled()) t = link.isOpen() ? I18n.t('fwPipe.viaFirmwareLink') : I18n.t('fwPipe.firmwareLinkClosed')
 			} catch (e) { /* 取不到就不显示 */ }
 			if (ui.c3.sub.textContent !== t) ui.c3.sub.textContent = t
 		}
@@ -784,14 +784,14 @@
 		const target = targetVersion(model)
 		ui.val.pre.textContent = u.pre != null ? u.pre : '--'
 		ui.val.target.textContent = target != null ? target : '--'
-		ui.val.post.textContent = u.post != null ? u.post : (u.querying ? '查询中…' : '待查询')
+		ui.val.post.textContent = u.post != null ? u.post : (u.querying ? I18n.t('fwPipe.querying') : I18n.t('fwPipe.notQueried'))
 		let text = ''
 		let state = ''
-		if (u.queryError && !u.querying) { text = '查询失败：' + u.queryError; state = 'failed' }
+		if (u.queryError && !u.querying) { text = I18n.t('fwPipe.queryFailed', { queryError: u.queryError }); state = 'failed' }
 		if (u.outcome === 'ok' && u.post != null && target != null) {
-			if (sameVersion(u.post, target)) { text = '一致：设备已运行目标版本'; state = 'done' } else { text = '不一致：设备版本与目标版本不同'; state = 'failed' }
+			if (sameVersion(u.post, target)) { text = I18n.t('fwPipe.matchTheDeviceRunsTheTarget'); state = 'done' } else { text = I18n.t('fwPipe.mismatchTheDeviceVersionDiffersFrom'); state = 'failed' }
 		} else if (!text && u.post == null && u.pre != null && target != null && sameVersion(u.pre, target)) {
-			text = '设备当前已是目标版本'
+			text = I18n.t('fwPipe.theDeviceAlreadyRunsTheTarget')
 			state = 'waiting'
 		}
 		ui.verdict.textContent = text
@@ -799,7 +799,7 @@
 		ui.verdict.hidden = !text
 		const q = $('fw-query')
 		ui.verifyBtn.disabled = !!(q && q.disabled) || u.querying
-		ui.verifyBtn.textContent = u.outcome === 'ok' ? '查询升级后版本' : '查询版本'
+		ui.verifyBtn.textContent = u.outcome === 'ok' ? I18n.t('fwPipe.queryVersionAfterUpgrade') : I18n.t('fwPipe.queryVersion')
 	}
 
 	function render() {
@@ -865,11 +865,11 @@
 		li.active.txt.textContent = li.active.label + ' ' + counts.active
 		li.pending.txt.textContent = li.pending.label + ' ' + counts.pending
 		if (!has) {
-			cv.setAttribute('aria-label', '分块进度：尚无分块')
+			cv.setAttribute('aria-label', I18n.t('fwPipe.chunkProgressNoChunksYet'))
 			lastLayout = null
 			return
 		}
-		cv.setAttribute('aria-label', '分块进度：共 ' + g.total + ' 块，已确认 ' + counts.done + '，重发过 ' + counts.retried + '，进行中 ' + counts.active + '，待发 ' + counts.pending)
+		cv.setAttribute('aria-label', I18n.t('fwPipe.chunkProgressChunksConfirmedResentIn', { total: g.total, done: counts.done, retried: counts.retried, active: counts.active, pending: counts.pending }))
 		const width = Math.floor(cv.parentElement.clientWidth)
 		if (width < 20) return
 		const L = gridLayout(g.total, width)
@@ -922,8 +922,8 @@
 		if (i >= L.cells) return ''
 		const from = i * L.per
 		const to = Math.min(g.total, from + L.per)
-		const name = ['待发', '进行中', '已确认', '重发过'][gridBucket(g, from, to)]
-		return L.per === 1 ? '块 #' + from + ' · ' + name : '块 #' + from + '–#' + (to - 1) + ' · ' + name
+		const name = [I18n.t('fwPipe.pending'), I18n.t('fwPipe.inProgress'), I18n.t('fwPipe.confirmed'), I18n.t('fwPipe.resent')][gridBucket(g, from, to)]
+		return L.per === 1 ? I18n.t('fwPipe.chunk', { from, name }) : I18n.t('fwPipe.chunks', { from, v: (to - 1), name })
 	}
 
 	// ---------- 挂载 ----------

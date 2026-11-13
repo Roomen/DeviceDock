@@ -53,9 +53,9 @@
 	}
 	function requireLane(lane) {
 		const h = hub()
-		if (!h) throw fail('unsupported', '串口模块尚未就绪')
-		if (lane !== 'S' && lane !== 'A' && lane !== 'B') throw fail('bad_request', 'lane 只能是 S / A / B')
-		if (!h.isVisible(lane)) throw fail('not_found', '这一路当前不可见')
+		if (!h) throw fail('unsupported', I18n.t('pluginApi.theSerialModuleIsnTReady'))
+		if (lane !== 'S' && lane !== 'A' && lane !== 'B') throw fail('bad_request', I18n.t('pluginApi.laneMustBeSAB'))
+		if (!h.isVisible(lane)) throw fail('not_found', I18n.t('pluginApi.thisLaneIsnTVisibleRight'))
 		return lane
 	}
 	function bytesOf(value, max) {
@@ -115,14 +115,14 @@
 	// 双路 A/B 不能串，单路 S 也不能让插件输入污染实时会话（inLane 换入的 st 用完即丢）。
 	function inProtocolLane(sid, fn) {
 		const l = lanes()
-		if (!l || typeof l.callInIsolatedLane !== 'function') throw fail('unsupported', '宿主没有提供按路隔离的协议调用入口')
+		if (!l || typeof l.callInIsolatedLane !== 'function') throw fail('unsupported', I18n.t('pluginApi.theHostProvidesNoPerLane'))
 		return l.callInIsolatedLane(sid, fn)
 	}
 
 	const api = {
 		async 'device.listPorts'() {
 			const adapter = root.SerialAdapter
-			if (!adapter) throw fail('unsupported', '串口接入层尚未就绪')
+			if (!adapter) throw fail('unsupported', I18n.t('pluginApi.theSerialAdapterIsnTReady'))
 			const ports = adapter.canEnumerate && adapter.canEnumerate() ? await adapter.listPorts() : await adapter.getPorts()
 			const list = ports || []
 			// 预先解析身份(网页版经 USB 设备表补产品名)，返回的名字与界面一致
@@ -145,7 +145,7 @@
 		},
 		async 'device.bleScan'(params, ctx) {
 			const ble = service('computer-ble')
-			if (!ble || !ble.scan) throw fail('unsupported', '这台电脑没有 BLE 扫描能力')
+			if (!ble || !ble.scan) throw fail('unsupported', I18n.t('pluginApi.thisComputerCanTScanFor'))
 			// 扫描所有权在启动前就登记：停用发生在扫描期间也要能等到真实收尾
 			const owner = ctx.scanOwner || (ctx.scanOwner = { ble: ble, active: false, task: null, stopping: null })
 			if (params.start === false) {
@@ -193,26 +193,26 @@
 		async 'serial.write'(params) {
 			const sid = requireLane(params.lane)
 			const bytes = bytesOf(params.bytes)
-			if (!bytes.length) throw fail('bad_request', '要写的数据为空')
+			if (!bytes.length) throw fail('bad_request', I18n.t('pluginApi.nothingToWrite'))
 			const sapi = root.serialApi
-			if (!sapi || !sapi.writeRawTo) throw fail('unsupported', '串口尚未就绪')
+			if (!sapi || !sapi.writeRawTo) throw fail('unsupported', I18n.t('pluginApi.thePortIsnTReadyYet'))
 			const timing = await sapi.writeRawTo(sid, bytes, {})
 			return { lane: sid, bytes: bytes.length, durationMs: timing ? timing.durationMs : null }
 		},
 
 		async 'claim.acquire'(params, ctx) {
 			const port = portOfKey(params.portKey)
-			if (!port) throw fail('not_found', '端口不存在（端口只在本次运行内有效，请重新列出口）')
+			if (!port) throw fail('not_found', I18n.t('pluginApi.portNotFoundPortIdsAre'))
 			const claims = root.serialPortClaims
-			if (!claims) throw fail('unsupported', '当前环境没有插件占用声明')
+			if (!claims) throw fail('unsupported', I18n.t('pluginApi.portClaimsArenTAvailableHere'))
 			// 插件的串口连接只受「物理口独占」约束，不看通信页哪一路开着、主发路是否钉扎：
 			// 口正被某个会话占着(通信页各路或固件页的连接：打开 / 打开中 / 尚未确认释放 / 正在换上)时拒绝，
 			// 否则声明成功、claim.open 才失败，且会话那边也不会感知这个声明
 			const h = hub()
 			const owner = h && h.sessionOwnerOfPort ? h.sessionOwnerOfPort(port) : null
 			if (owner) {
-				const who = owner === 'F' ? '固件页的连接' : (owner === 'S' ? '单路' : owner + ' 路')
-				throw fail('bad_request', '该串口正在被' + who + '使用，请先断开后再声明')
+				const who = owner === 'F' ? I18n.t('pluginApi.whoFirmwarePage') : (owner === 'S' ? I18n.t('pluginApi.whoSingle') : I18n.t('pluginApi.whoLane', { sid: owner }))
+				throw fail('bad_request', I18n.t('pluginApi.portInUseByWho', { who }))
 			}
 			const id = claims.claim(port, ctx.id, ctx.name, params.mode)
 			const rec = ctx.claim(id)
@@ -236,7 +236,7 @@
 		},
 		async 'claim.open'(params, ctx) {
 			const rec = ctx.claimRecord(params.claimId)
-			if (!rec) throw fail('not_found', '占用声明不存在')
+			if (!rec) throw fail('not_found', I18n.t('pluginApi.claimNotFound'))
 			await openClaim(rec, params)
 			notifyClaimState(ctx)
 			return { claimId: rec.id, open: true }
@@ -258,14 +258,14 @@
 		},
 		async 'claim.write'(params, ctx) {
 			const rec = ctx.claimRecord(params.claimId)
-			if (!rec) throw fail('not_found', '占用声明不存在')
-			if (rec.cancelled) throw fail('not_found', '插件已停用')
-			if (rec.closing) throw fail('closing', '串口正在关闭，暂不能写入')
-			if (!rec.open || !rec.port.writable) throw fail('not_found', '串口未打开')
+			if (!rec) throw fail('not_found', I18n.t('pluginApi.claimNotFound'))
+			if (rec.cancelled) throw fail('not_found', I18n.t('pluginApi.thePluginIsDisabled'))
+			if (rec.closing) throw fail('closing', I18n.t('pluginApi.thePortIsClosingCanT'))
+			if (!rec.open || !rec.port.writable) throw fail('not_found', I18n.t('pluginApi.portIsNotOpen'))
 			const bytes = bytesOf(params.bytes)
 			// 写任务记在 rec 上并串行化：关闭时必须等持锁的 writer 写完、释放锁再 close
 			const run = async function () {
-				if (rec.cancelled || rec.closing || !rec.open || !rec.port.writable) throw fail(rec.closing ? 'closing' : 'not_found', rec.closing ? '串口正在关闭' : '串口已关闭')
+				if (rec.cancelled || rec.closing || !rec.open || !rec.port.writable) throw fail(rec.closing ? 'closing' : 'not_found', rec.closing ? I18n.t('pluginApi.thePortIsClosing') : I18n.t('pluginApi.thePortIsClosed'))
 				const writer = rec.port.writable.getWriter()
 				try {
 					await writer.write(bytes)
@@ -300,16 +300,16 @@
 			const sid = requireLane(params.lane)
 			const fn = String(params.fn || '')
 			const ALLOWED = ['parseFrame', 'formatFrame', 'findFrame', 'metrics', 'buildRead', 'buildWrite', 'matchResponse', 'logView', 'byteMap', 'buildDownFrame']
-			if (ALLOWED.indexOf(fn) === -1) throw fail('bad_request', '不支持调用的协议函数：' + fn)
+			if (ALLOWED.indexOf(fn) === -1) throw fail('bad_request', I18n.t('pluginApi.protocolFunctionCanTBeCalled', { fn }))
 			const l = lanes()
 			const id = l && l.protocolOf ? l.protocolOf(sid) : ''
 			const registry = root.DeviceDockProtocols
 			const def = id && registry && registry.get ? registry.get(id) : null
-			if (!def) throw fail('not_found', '这一路没有协议')
-			if (typeof def[fn] !== 'function') throw fail('unsupported', '该协议没有 ' + fn)
+			if (!def) throw fail('not_found', I18n.t('pluginApi.thisLaneHasNoProtocol'))
+			if (typeof def[fn] !== 'function') throw fail('unsupported', I18n.t('pluginApi.theProtocolHasNo', { fn }))
 			const args = Array.isArray(params.args) ? params.args : []
 			// 注册层已拒绝 async 实现；这里再挡一次，避免异步函数在隔离上下文退出后继续跑
-			if (isAsyncProtocolFn(def[fn])) throw fail('unsupported_async', '协议函数不支持异步实现：' + fn)
+			if (isAsyncProtocolFn(def[fn])) throw fail('unsupported_async', I18n.t('pluginApi.protocolFunctionsCanTBeAsync', { fn }))
 			// inLane 里只跑同步代码，不 await；结果经 JSON 克隆剔除函数与 DOM 引用
 			const value = inProtocolLane(sid, function () { return def[fn].apply(def, args) })
 			try {
@@ -320,7 +320,7 @@
 		},
 
 		async 'log.write'(params, ctx) {
-			if (!root.serialLogApi) throw fail('unsupported', '日志模块尚未就绪')
+			if (!root.serialLogApi) throw fail('unsupported', I18n.t('pluginApi.theLogModuleIsnTReady'))
 			root.serialLogApi.append(params.text, ctx.name)
 			return { ok: true }
 		},
@@ -348,34 +348,34 @@
 			}
 		},
 		async 'app.busyAcquire'(params, ctx) {
-			return { busyId: ctx.busyAcquire(String(params.label || '插件任务').slice(0, 40)) }
+			return { busyId: ctx.busyAcquire(String(params.label || I18n.t('pluginApi.pluginTask')).slice(0, 40)) }
 		},
 		async 'app.busyRelease'(params, ctx) {
 			return { released: ctx.busyRelease(params.busyId) }
 		},
 		async 'app.storageGet'(params, ctx) {
 			const svc = service('plugins')
-			if (!svc || !svc.storageGet) throw fail('unsupported', '插件服务尚未就绪')
+			if (!svc || !svc.storageGet) throw fail('unsupported', I18n.t('pluginApi.thePluginServiceIsnTReady'))
 			return { value: await svc.storageGet(ctx.id, String(params.key || '')) }
 		},
 		async 'app.storageSet'(params, ctx) {
 			const svc = service('plugins')
-			if (!svc || !svc.storageSet) throw fail('unsupported', '插件服务尚未就绪')
+			if (!svc || !svc.storageSet) throw fail('unsupported', I18n.t('pluginApi.thePluginServiceIsnTReady'))
 			// Rust 侧单值上限 64 KiB；在页面里先拦一次，别把超大对象序列化后送进 IPC
-			if (Rpc.estimateSize(params.value, 64 * 1024) > 64 * 1024) throw fail('too_large', '存储值超过 64 KiB')
+			if (Rpc.estimateSize(params.value, 64 * 1024) > 64 * 1024) throw fail('too_large', I18n.t('pluginApi.storedValueExceeds64Kib'))
 			await svc.storageSet(ctx.id, String(params.key || ''), params.value === undefined ? null : params.value)
 			return { ok: true }
 		},
 		async 'app.storageRemove'(params, ctx) {
 			const svc = service('plugins')
-			if (!svc || !svc.storageRemove) throw fail('unsupported', '插件服务尚未就绪')
+			if (!svc || !svc.storageRemove) throw fail('unsupported', I18n.t('pluginApi.thePluginServiceIsnTReady'))
 			await svc.storageRemove(ctx.id, String(params.key || ''))
 			return { ok: true }
 		},
 		async 'app.saveFile'(params) {
 			// 走页面既有的 <a download> + blob：桌面客户端由原生壳存进系统「下载」目录并提示，网页版是浏览器下载
 			if (Rpc.estimateSize(params, Rpc.LIMITS.maxExportChars) > Rpc.LIMITS.maxExportChars) {
-				throw fail('too_large', '导出内容超过 ' + Rpc.LIMITS.maxExportChars + ' 字节')
+				throw fail('too_large', I18n.t('pluginApi.exportExceedsBytes', { maxExportChars: Rpc.LIMITS.maxExportChars }))
 			}
 			const name = String(params.name || 'plugin-export.txt').replace(/[\\/:*?"<>|]/g, '_').slice(0, 120)
 			let blob
@@ -402,10 +402,10 @@
 		},
 		async 'app.dialog'(params) {
 			const dlg = root.AppDialog
-			if (!dlg) throw fail('unsupported', '对话框不可用')
+			if (!dlg) throw fail('unsupported', I18n.t('pluginApi.dialogsAreUnavailable'))
 			const kind = params.kind === 'confirm' || params.kind === 'prompt' ? params.kind : 'alert'
 			const text = String(params.text == null ? '' : params.text).slice(0, 4000)
-			const title = String(params.title || '插件').slice(0, 80)
+			const title = String(params.title || I18n.t('pluginApi.plugin')).slice(0, 80)
 			if (kind === 'confirm') return { value: !!(await dlg.confirm(text, { title: title })) }
 			if (kind === 'prompt') return { value: await dlg.prompt(text, String(params.value || ''), { title: title }) }
 			await dlg.alert(text, { title: title })
@@ -460,10 +460,10 @@
 		if (rec.open) return
 		// 控制信号先校验：端口不支持 setSignals 时明确报 unsupported，不打开、不静默忽略
 		const signals = claimSignals(params.signals)
-		if (signals && typeof rec.port.setSignals !== 'function') throw fail('unsupported', '这个串口不支持设置控制信号（DTR / RTS）')
-		if (rec.openTask) throw fail('bad_request', '正在打开，请稍候')
-		if (rec.cancelled) throw fail('not_found', '插件已停用')
-		if (rec.portOpened && !rec.portClosed) throw fail('internal', '上一次关闭未确认完成，请重试')
+		if (signals && typeof rec.port.setSignals !== 'function') throw fail('unsupported', I18n.t('pluginApi.portNoSignals'))
+		if (rec.openTask) throw fail('bad_request', I18n.t('pluginApi.openingPleaseWait'))
+		if (rec.cancelled) throw fail('not_found', I18n.t('pluginApi.thePluginIsDisabled'))
+		if (rec.portOpened && !rec.portClosed) throw fail('internal', I18n.t('pluginApi.thePreviousCloseWasnTConfirmed'))
 		// 普通 claim.close 之后可以重新打开同一声明：重置这一轮的流状态
 		rec.portOpened = false
 		rec.portClosed = false
@@ -510,10 +510,10 @@
 		rec.openTask = task
 		try {
 			const opened = await task
-			if (!opened) throw fail('not_found', '插件已停用')
+			if (!opened) throw fail('not_found', I18n.t('pluginApi.thePluginIsDisabled'))
 		} catch (e) {
 			if (e && e.code) throw e
-			throw fail('internal', '无法打开串口：' + String(e && e.message ? e.message : e))
+			throw fail('internal', I18n.t('pluginApi.canTOpenThePort', { String: String(e && e.message ? e.message : e) }))
 		} finally {
 			if (rec.openTask === task) rec.openTask = null
 		}
@@ -911,7 +911,7 @@
 		_pendingClaimGap: function (rec) { return rec && rec.rx ? rec.rx.pendingGap : null },
 		call: async function (method, params, ctx) {
 			const fn = api[method]
-			if (typeof fn !== 'function') throw fail('unknown_method', '宿主不支持这个方法：' + method)
+			if (typeof fn !== 'function') throw fail('unknown_method', I18n.t('pluginApi.theHostDoesnTSupportThis', { method }))
 			return await fn(params || {}, ctx)
 		},
 		methods: Object.keys(api),

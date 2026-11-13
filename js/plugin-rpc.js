@@ -13,12 +13,12 @@
 
 	// 人话说明：安装确认框、插件管理面板与文档共用这一份
 	const CAPABILITY_TEXT = {
-		'device.read': '读取设备与连接：串口列表（VID/PID/序列号/别名/占用者）、BLE 与经典蓝牙设备、各路连接状态与参数；接收热插拔与连接变化事件',
-		'serial.io': '按路订阅收发的原始字节（带方向与时间戳），并向某一路写数据',
-		'serial.claim': '声明独占或共享占用某个串口（宿主的选口、冲突提示与热插拔都认这个声明），并可打开被自己独占的口收发',
-		'protocol.read': '读取各路当前协议与字段目录，调用解析 / 构帧 / 应答匹配，并订阅解析帧与 metrics',
-		'log': '写日志行（带插件来源标记）、读最近日志、导出日志',
-		'app': '主题与设计令牌、平台画像与版本、busy 源、插件私有存储、保存文件、页内对话框与通知',
+		'device.read': I18n.t('pluginRpc.readDevicesAndConnectionsPortList'),
+		'serial.io': I18n.t('pluginRpc.subscribeToEachLaneSRaw'),
+		'serial.claim': I18n.t('pluginRpc.claimAPortExclusivelyOrShared'),
+		'protocol.read': I18n.t('pluginRpc.readEachLaneSProtocolAnd'),
+		'log': I18n.t('pluginRpc.writeLogLinesMarkedWithThe'),
+		'app': I18n.t('pluginRpc.themeAndDesignTokensPlatformProfile'),
 	}
 
 	// 方法表：宿主只认这里列出的名字，名字与能力一一对应
@@ -57,16 +57,16 @@
 	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'claim.gap', 'claim.state', 'app.busy', 'events.dropped']
 
 	const ERROR_TEXT = {
-		bad_request: '请求格式不正确',
-		capability_denied: '插件没有声明这项能力',
-		unknown_method: '宿主不支持这个方法',
-		not_found: '对象不存在',
-		unsupported: '当前环境不支持',
-		too_large: '数据超过上限',
-		rate_limited: '插件请求过于频繁',
-		closing: '串口正在关闭',
-		unsupported_async: '不支持异步协议函数',
-		internal: '宿主内部错误',
+		bad_request: I18n.t('pluginRpc.malformedRequest'),
+		capability_denied: I18n.t('pluginRpc.thePluginDidnTDeclareThis'),
+		unknown_method: I18n.t('pluginRpc.theHostDoesnTSupportThis'),
+		not_found: I18n.t('pluginRpc.notFound'),
+		unsupported: I18n.t('pluginRpc.notSupportedHere'),
+		too_large: I18n.t('pluginRpc.dataExceedsTheLimit'),
+		rate_limited: I18n.t('pluginRpc.tooManyPluginRequests'),
+		closing: I18n.t('pluginRpc.thePortIsClosing'),
+		unsupported_async: I18n.t('pluginRpc.asyncProtocolFunctionsArenTSupported'),
+		internal: I18n.t('pluginRpc.internalHostError'),
 	}
 
 	// 消息 / 在飞 / 速率上限：插件是第三方代码，高频调用或大消息不能拖垮宿主界面。
@@ -191,13 +191,13 @@
 		const l = limits || LIMITS
 		const s = state || newAdmissionState()
 		if (s.inflight >= l.maxInflight) {
-			return { ok: false, state: s, error: { code: 'rate_limited', message: '同时在飞的插件请求过多' } }
+			return { ok: false, state: s, error: { code: 'rate_limited', message: I18n.t('pluginRpc.tooManyConcurrentPluginRequests') } }
 		}
 		if (now - s.windowStart >= l.windowMs) {
 			return { ok: true, state: { windowStart: now, windowCount: 1, inflight: s.inflight + 1 } }
 		}
 		if (s.windowCount >= l.maxRequestsPerWindow) {
-			return { ok: false, state: s, error: { code: 'rate_limited', message: '插件请求过于频繁，请稍后再试' } }
+			return { ok: false, state: s, error: { code: 'rate_limited', message: I18n.t('pluginRpc.tooManyPluginRequestsTryAgain') } }
 		}
 		return { ok: true, state: { windowStart: s.windowStart, windowCount: s.windowCount + 1, inflight: s.inflight + 1 } }
 	}
@@ -237,14 +237,14 @@
 		const limits = (opts && opts.limits) || LIMITS
 		if (!isObject(msg) || msg.__devicedock !== PROTOCOL) return { ok: false, error: { code: 'bad_request', message: ERROR_TEXT.bad_request } }
 		if (estimateSize(msg, limits.maxMessageChars) > limits.maxMessageChars) {
-			return { ok: false, error: { code: 'too_large', message: '插件请求消息超过 ' + limits.maxMessageChars + ' 字符' } }
+			return { ok: false, error: { code: 'too_large', message: I18n.t('pluginRpc.pluginRequestExceedsCharacters', { maxMessageChars: limits.maxMessageChars }) } }
 		}
-		if (typeof msg.id !== 'string' || !msg.id || msg.id.length > 64) return { ok: false, error: { code: 'bad_request', message: '请求缺少 id' } }
-		if (typeof msg.method !== 'string' || !msg.method) return { ok: false, error: { code: 'bad_request', message: '请求缺少 method' } }
+		if (typeof msg.id !== 'string' || !msg.id || msg.id.length > 64) return { ok: false, error: { code: 'bad_request', message: I18n.t('pluginRpc.requestHasNoId') } }
+		if (typeof msg.method !== 'string' || !msg.method) return { ok: false, error: { code: 'bad_request', message: I18n.t('pluginRpc.requestHasNoMethod') } }
 		const params = msg.params === undefined ? {} : msg.params
-		if (!isObject(params)) return { ok: false, error: { code: 'bad_request', message: 'params 必须是对象' } }
+		if (!isObject(params)) return { ok: false, error: { code: 'bad_request', message: I18n.t('pluginRpc.paramsMustBeAnObject') } }
 		if (estimateSize(params, limits.maxParamsChars) > limits.maxParamsChars) {
-			return { ok: false, error: { code: 'too_large', message: '插件请求参数超过 ' + limits.maxParamsChars + ' 字符' } }
+			return { ok: false, error: { code: 'too_large', message: I18n.t('pluginRpc.pluginRequestParamsExceedCharacters', { maxParamsChars: limits.maxParamsChars }) } }
 		}
 		return { ok: true, id: msg.id, method: msg.method, params: params }
 	}
@@ -256,9 +256,9 @@
 	// 返回 null 表示可以执行，否则返回要回给插件的错误
 	function authorize(grants, method) {
 		const capability = capabilityFor(method)
-		if (!capability) return { code: 'unknown_method', message: ERROR_TEXT.unknown_method + '：' + String(method) }
+		if (!capability) return { code: 'unknown_method', message: I18n.t('pluginRpc.s', { unknown_method: ERROR_TEXT.unknown_method, String: String(method) }) }
 		if (!Array.isArray(grants) || grants.indexOf(capability) === -1) {
-			return { code: 'capability_denied', message: '插件没有声明能力 ' + capability }
+			return { code: 'capability_denied', message: I18n.t('pluginRpc.thePluginDidnTDeclareCapability', { capability }) }
 		}
 		return null
 	}
@@ -289,7 +289,7 @@
 	// 能力清单(安装确认框、管理面板)
 	function capabilitySummary(caps) {
 		return (Array.isArray(caps) ? caps : []).map(function (id) {
-			return { id: id, text: CAPABILITY_TEXT[id] || '未定义的能力：' + id }
+			return { id: id, text: CAPABILITY_TEXT[id] || I18n.t('pluginRpc.undefinedCapability', { id }) }
 		})
 	}
 	// 已加载的 iframe 是否必须整套重载：逐版本确认过的包摘要或授权集合一旦变化，
@@ -360,23 +360,23 @@
 		}
 		if (typeof value === 'string') {
 			const text = value.replace(/[\s,]/g, '')
-			if (!/^([0-9a-fA-F]{2})+$/.test(text)) return { ok: false, error: { code: 'bad_request', message: '十六进制串格式不对' } }
-			if (text.length / 2 > limit) return { ok: false, error: { code: 'too_large', message: '数据超过 ' + limit + ' 字节' } }
+			if (!/^([0-9a-fA-F]{2})+$/.test(text)) return { ok: false, error: { code: 'bad_request', message: I18n.t('pluginRpc.malformedHexString') } }
+			if (text.length / 2 > limit) return { ok: false, error: { code: 'too_large', message: I18n.t('pluginRpc.dataExceedsBytes', { limit }) } }
 			const out = []
 			for (let i = 0; i < text.length; i += 2) out.push(parseInt(text.slice(i, i + 2), 16))
 			return { ok: true, bytes: out }
 		}
 		if (Array.isArray(value)) {
-			if (value.length > limit) return { ok: false, error: { code: 'too_large', message: '数据超过 ' + limit + ' 字节' } }
+			if (value.length > limit) return { ok: false, error: { code: 'too_large', message: I18n.t('pluginRpc.dataExceedsBytes', { limit }) } }
 			const out = []
 			for (let i = 0; i < value.length; i++) {
 				const n = value[i]
-				if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 255) return { ok: false, error: { code: 'bad_request', message: '字节必须是 0..255 的整数' } }
+				if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 255) return { ok: false, error: { code: 'bad_request', message: I18n.t('pluginRpc.bytesMustBeIntegers0255') } }
 				out.push(n)
 			}
 			return { ok: true, bytes: out }
 		}
-		return { ok: false, error: { code: 'bad_request', message: '数据必须是字节数组、Uint8Array 或十六进制串' } }
+		return { ok: false, error: { code: 'bad_request', message: I18n.t('pluginRpc.dataMustBeAByteArray') } }
 	}
 
 	const lib = {

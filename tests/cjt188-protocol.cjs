@@ -1,4 +1,5 @@
 // Run: node tests/cjt188-protocol.cjs — synthetic data only, no device logs.
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

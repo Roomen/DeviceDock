@@ -1,4 +1,5 @@
 // Run: node tests/ui-resource-lifecycle.cjs — synthetic DOM only.
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

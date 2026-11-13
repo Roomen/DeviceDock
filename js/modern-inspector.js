@@ -28,7 +28,7 @@
 		const blocks = []
 		const s = m.subject
 		const meta = []
-		if (s && s.value != null && s.value !== '') meta.push([s.label || '对象', s.value])
+		if (s && s.value != null && s.value !== '') meta.push([s.label || I18n.t('inspector.object'), s.value])
 		;(m.meta || []).forEach(function (x) {
 			if (x && x[1] != null && x[1] !== '') meta.push([x[0], x[1]])
 		})
@@ -68,7 +68,7 @@
 		const parts = []
 		if (info.proto) parts.push(info.proto)
 		if (info.time) parts.push(info.time)
-		if (info.len != null) parts.push(info.len + ' 字节')
+		if (info.len != null) parts.push(I18n.t('inspector.bytes3', { len: info.len }))
 		if (info.latency) parts.push(info.latency)
 		const badges = []
 		models.forEach(function (m) {
@@ -76,13 +76,13 @@
 				if (b && b.text != null && b.text !== '') badges.push({ text: String(b.text), kind: kindOf(b.kind), title: b.title ? String(b.title) : '' })
 			})
 		})
-		return { title: first && first.title ? String(first.title) : '帧', code: first && first.code ? String(first.code) : '', parts: parts, badges: badges }
+		return { title: first && first.title ? String(first.title) : I18n.t('inspector.frame2'), code: first && first.code ? String(first.code) : '', parts: parts, badges: badges }
 	}
 
 	/** 应答耗时文本：<1000 ms 用毫秒，否则秒 */
 	function fmtLatency(ms) {
 		ms = Math.max(0, Math.round(ms))
-		return '应答耗时 ' + (ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s')
+		return I18n.t('inspector.replyIn', { v: (ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s') })
 	}
 
 	/** 字节数组按 cols 个一行切开 */
@@ -135,7 +135,7 @@
 		const nm = row.getAttribute('data-name')
 		if (nm) return nm
 		const hex = (row.getAttribute('data-hex') || '').trim()
-		return hex ? hex.split(/\s+/).length + ' 字节' : '日志'
+		return hex ? I18n.t('inspector.bytes2', { length: hex.split(/\s+/).length }) : I18n.t('inspector.log')
 	}
 
 	function exchangeInfo(frame) {
@@ -174,11 +174,11 @@
 
 	function dirTag(frame, dir) {
 		const d = frame ? frame.dir : dir
-		if (d !== 'tx' && d !== 'rx') return { cls: 'manual', text: '手动解析' }
+		if (d !== 'tx' && d !== 'rx') return { cls: 'manual', text: I18n.t('inspector.manualParse') }
 		const lane = frame ? laneLabel(frame.sid) : ''
 		const sid = frame ? frame.sid : ''
 		const base = d === 'tx' ? 'TX ↑' : 'RX ↓'
-		const tail = lane ? (d === 'tx' ? ' · 发给 ' : ' · 来自 ') + lane : ''
+		const tail = lane ? (d === 'tx' ? I18n.t('inspector.to', { lane }) : I18n.t('inspector.from', { lane })) : ''
 		return { cls: d + (sid === 'A' || sid === 'B' ? ' lane-' + sid.toLowerCase() : ''), text: base + tail }
 	}
 
@@ -186,8 +186,8 @@
 		const box = el('div', 'mi-empty')
 		const icon = el('i', 'icon icon-lg icon-search')
 		icon.setAttribute('aria-hidden', 'true')
-		box.append(icon, el('div', 'mi-empty-main', '点选日志行查看这一帧'))
-		const btn = el('button', 'btn btn-sm btn-outline-secondary mi-paste', '粘贴 HEX')
+		box.append(icon, el('div', 'mi-empty-main', I18n.t('inspector.clickALogLineToInspect')))
+		const btn = el('button', 'btn btn-sm btn-outline-secondary mi-paste', I18n.t('inspector.pasteHex'))
 		btn.type = 'button'
 		btn.addEventListener('click', function () {
 			// 驱动原 HEX 输入区的点击处理(权限判断、读剪贴板、解析)
@@ -211,7 +211,7 @@
 	function fieldsView(models) {
 		const box = el('div', 'mi-fields')
 		models.forEach(function (m, i) {
-			if (models.length > 1) box.appendChild(el('div', 'mi-frame-title', '帧 ' + (i + 1) + ' / ' + models.length + ' · ' + (m.title || '帧')))
+			if (models.length > 1) box.appendChild(el('div', 'mi-frame-title', I18n.t('inspector.frame', { v: i + 1, length: models.length, v2: m.title || I18n.t('parseView.frame') })))
 			flattenModel(m).forEach(function (b) {
 				if (b.type === 'kv') box.appendChild(kvNode(b))
 				else if (b.type === 'title') box.appendChild(el('div', 'mi-sec', b.text))
@@ -232,10 +232,10 @@
 
 	function bytesView(bytes, bm) {
 		const sec = el('section', 'mi-bytes')
-		sec.appendChild(el('div', 'mi-cap', '字节视图'))
+		sec.appendChild(el('div', 'mi-cap', I18n.t('inspector.bytes')))
 		const grid = el('div', 'mi-hex')
 		grid.setAttribute('role', 'group')
-		grid.setAttribute('aria-label', '帧字节，每行 16 个')
+		grid.setAttribute('aria-label', I18n.t('inspector.frameBytes16PerRow'))
 		// 分组底色交替，肉眼可见分段
 		const tone = {}
 		let nextTone = 0
@@ -278,7 +278,7 @@
 	function relatedView(info) {
 		if (!info || info.list.length < 2) return null
 		const sec = el('section', 'mi-rel')
-		sec.appendChild(el('div', 'mi-cap', '从这条请求到应答'))
+		sec.appendChild(el('div', 'mi-cap', I18n.t('inspector.fromThisRequestToItsReply')))
 		info.list.forEach(function (x) {
 			const row = el('div', 'mi-rel-row' + (x.self ? ' is-self' : ''))
 			const tag = el('span', 'mi-rel-tag ' + x.dir + (x.sid === 'A' || x.sid === 'B' ? ' lane-' + x.sid.toLowerCase() : ''),
@@ -347,8 +347,8 @@
 			view.appendChild(fieldsView(models))
 		} else {
 			const msg = viewErr
-				? '结构化视图出错：' + viewErr
-				: (p && typeof p.logView === 'function' ? '当前协议没有识别出这一帧，原始解析见下方「原始输出」。' : '当前协议没有结构化视图，完整解析见下方「原始输出」。')
+				? I18n.t('inspector.structuredViewFailed', { viewErr })
+				: (p && typeof p.logView === 'function' ? I18n.t('inspector.theCurrentProtocolDidnTRecognize') : I18n.t('inspector.theCurrentProtocolHasNoStructured'))
 			view.appendChild(el('div', 'mi-fallback', msg))
 			openRaw()
 		}

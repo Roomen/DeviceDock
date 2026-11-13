@@ -1,6 +1,7 @@
 // Run: node tests/serial-adapter.cjs — synthetic data only.
 // 覆盖: 串口接入适配层(js/serial-adapter.js)的后端切换与事件转发、可选的枚举能力(canEnumerate / listPorts / grantPort / change 事件)，以及 createStreamPort 包出来的端口是否守住
 // Web Serial 的契约：打开前后流的有无、读错误换新流、设备丢失置 null 并释放句柄、锁住时拒绝 close、写入与控制线
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const A = require('../js/serial-adapter.js')
 

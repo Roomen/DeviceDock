@@ -48,10 +48,10 @@
 		var el = document.getElementById('app-version')
 		if (!el) return
 		el.classList.add('rail-version--update')
-		el.title = '有新版本 v' + version + '，点击刷新'
+		el.title = I18n.t('update.vIsAvailableClickToReload2', { version })
 		el.setAttribute('role', 'button')
 		el.setAttribute('tabindex', '0')
-		el.setAttribute('aria-label', '有新版本 v' + version + '，点击刷新页面')
+		el.setAttribute('aria-label', I18n.t('update.vIsAvailableClickToReload', { version }))
 		var dot = document.createElement('span')
 		dot.className = 'rail-version-dot'
 		dot.setAttribute('aria-hidden', 'true')

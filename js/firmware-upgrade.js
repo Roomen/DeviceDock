@@ -43,7 +43,7 @@
 	const Core = window.FirmwareCore
 	const library = window.FirmwareLibrary || null
 	const diffRunner = Core.createDiffRunner(new URL('firmware-diff-worker.js', document.currentScript.src).href, {
-		onDone: function (r) { log('差分计算耗时 ' + Math.round(r.ms) + 'ms, patch ' + fmtSize(r.size), 'info') },
+		onDone: function (r) { log(I18n.t('fwUp.diffTookMsPatch', { round: Math.round(r.ms), fmtSize: fmtSize(r.size) }), 'info') },
 	})
 
 	let fw = null                 // 解析后的固件信息
@@ -111,13 +111,13 @@
 
 	function autoInfoText(f) {
 		return [
-			'文件: ' + (f.fileName || ''),
-			'类型: 原始固件 (自动升级)',
-			'内嵌版本: ' + f.version,
-			'大小: ' + f.rawData.length + ' 字节, CRC32 0x' + f.crc.toString(16).toUpperCase().padStart(8, '0'),
+			I18n.t('fwUp.file', { v: (f.fileName || '') }),
+			I18n.t('fwUp.typeRawFirmwareAutoUpgrade'),
+			I18n.t('fwUp.embeddedVersion', { version: f.version }),
+			I18n.t('fwUp.sizeBytesCrc320x', { length: f.rawData.length, crc: f.crc.toString(16).toUpperCase().padStart(8, '0') }),
 			'',
-			'开始升级时先查设备版本：本机固件库里有同版本的原固件就生成差分包，',
-			'没有(或同版本有多份不同构建)就生成压缩包；升级包只在内存里生成，不输出文件。',
+			I18n.t('fwUp.onStartTheDeviceVersionIs'),
+			I18n.t('fwUp.otherwiseOrWithSeveralDifferentBuilds'),
 		].join('\n')
 	}
 
@@ -127,26 +127,26 @@
 	function saveToLibrary(name, data) {
 		if (!library) return
 		const job = library.add(name, data).then(function (r) {
-			if (r && r.evicted) log('固件库已满，淘汰了 ' + r.evicted + ' 份最久未用的固件', 'info')
+			if (r && r.evicted) log(I18n.t('fwUp.firmwareLibraryFullEvictedLeastRecently', { evicted: r.evicted }), 'info')
 			refreshLibrarySummary()
-		}).catch(function (e) { log('存入固件库失败: ' + (e && e.message || e), 'warn') })
+		}).catch(function (e) { log(I18n.t('fwUp.failedToSaveToTheFirmware', { v: (e && e.message || e) }), 'warn') })
 		// 等全部在途的存库，不只最近一次(先导入的那份可能更慢)
 		librarySaving = Promise.all([librarySaving, job])
 	}
 
 	function refreshLibrarySummary() {
 		if (!el.librarySummary) return
-		if (!library) { el.librarySummary.textContent = '固件库不可用'; return }
+		if (!library) { el.librarySummary.textContent = I18n.t('fwUp.firmwareLibraryUnavailable'); return }
 		library.summary().then(function (s) {
-			el.librarySummary.textContent = '本机固件库：' + s.count + ' 份' + (s.count ? '（' + fmtSize(s.bytes) + '）' : '')
-		}).catch(function () { el.librarySummary.textContent = '固件库不可用' })
+			el.librarySummary.textContent = I18n.t('fwUp.localFirmwareLibrary', { count: s.count, v: (s.count ? I18n.t('fwUp.s', { fmtSize: fmtSize(s.bytes) }) : '') })
+		}).catch(function () { el.librarySummary.textContent = I18n.t('fwUp.firmwareLibraryUnavailable') })
 	}
 
 	function manualInfoText(name, size, version) {
 		return [
-			'文件: ' + (name || ''),
-			'版本: ' + (version || '(未填写)'),
-			'数据大小: ' + size + ' 字节 (不解析包头, 整文件下发)',
+			I18n.t('fwUp.file', { v: (name || '') }),
+			I18n.t('fwUp.version', { v: (version || I18n.t('fwUp.notSet')) }),
+			I18n.t('fwUp.dataSizeBytesHeaderNotParsed', { size }),
 		].join('\n')
 	}
 
@@ -159,7 +159,7 @@
 		const on = parseInfoEnabled()
 		el.versionRow.classList.toggle('d-none', on)
 		el.diagnose.disabled = !on
-		el.parse.textContent = on ? '解析固件' : '载入固件'
+		el.parse.textContent = on ? I18n.t('fwUp.inspectFirmware') : I18n.t('fwUp.loadFirmware')
 	}
 
 	function showFileCard(name, size) {
@@ -173,7 +173,7 @@
 	function hideFileCard() {
 		el.dropZone.classList.remove('d-none')
 		el.fileCard.classList.add('d-none')
-		el.fileName.textContent = '未选择固件文件'
+		el.fileName.textContent = I18n.t('fwUp.noFirmwareFileSelected')
 		el.fileSize.textContent = '--'
 		emit({ type: 'file-clear' })
 	}
@@ -186,7 +186,7 @@
 		reader.onload = function () {
 			fwFileBuffer = reader.result
 			showFileCard(file.name, file.size)
-			log('已载入固件: ' + file.name + ' (' + fmtSize(file.size) + ')', 'info')
+			log(I18n.t('fwUp.firmwareLoaded', { name: file.name, fmtSize: fmtSize(file.size) }), 'info')
 			el.parse.click()
 		}
 		reader.readAsArrayBuffer(file)
@@ -229,7 +229,7 @@
 		el.info.textContent = ''
 		el.version.value = ''
 		el.start.disabled = true
-		log('已清除固件文件', 'info')
+		log(I18n.t('fwUp.firmwareFileCleared'), 'info')
 		emit({ type: 'parsed', ok: false, error: '' })
 	})
 
@@ -255,7 +255,7 @@
 
 	el.parse.addEventListener('click', () => {
 		if (!fwFileBuffer) {
-			log('请先选择固件文件', 'error')
+			log(I18n.t('fwUp.selectAFirmwareFileFirst'), 'error')
 			return
 		}
 		if (!parseInfoEnabled()) {
@@ -269,7 +269,7 @@
 				version: el.version.value.trim(),
 			}
 			el.info.textContent = manualInfoText(name, fw.firmwareData.length, fw.version)
-			log('已载入固件(不解析包头), ' + fw.firmwareData.length + ' 字节', 'success')
+			log(I18n.t('fwUp.firmwareLoadedHeaderNotParsedBytes', { length: fw.firmwareData.length }), 'success')
 			emit({ type: 'parsed', ok: true, raw: true, version: fw.version, size: fw.firmwareData.length })
 			el.start.disabled = !linkOpen()
 			return
@@ -279,15 +279,15 @@
 		if (kind.kind === 'raw') {
 			fw = { ok: true, auto: true, fileName: el.fileName.dataset.name, rawData: bytes, version: kind.version, crc: kind.crc }
 			el.info.textContent = autoInfoText(fw)
-			log('原始固件, 内嵌版本 ' + kind.version + '；开始升级时按设备版本自动差分或压缩', 'success')
+			log(I18n.t('fwUp.rawFirmwareEmbeddedVersionOnStart', { version: kind.version }), 'success')
 			saveToLibrary(fw.fileName, bytes)
-			emit({ type: 'parsed', ok: true, raw: false, auto: true, version: kind.version, pkgType: '原始固件（自动差分 / 压缩）', size: bytes.length })
+			emit({ type: 'parsed', ok: true, raw: false, auto: true, version: kind.version, pkgType: I18n.t('fwUp.rawFirmwareAutoDiffCompressed'), size: bytes.length })
 			el.start.disabled = !linkOpen()
 			return
 		}
 		const r = FirmwareParser.parse(fwFileBuffer)
 		if (!r.ok) {
-			log('固件解析失败: ' + r.error, 'error')
+			log(I18n.t('fwUp.firmwareParseFailed', { error: r.error }), 'error')
 			emit({ type: 'parsed', ok: false, error: r.error })
 			fw = null
 			el.start.disabled = true
@@ -296,7 +296,7 @@
 		r.fileName = el.fileName.dataset.name
 		fw = r
 		el.info.textContent = FirmwareParser.diagnose(r)
-		log('固件解析成功, 版本: ' + r.version, 'success')
+		log(I18n.t('fwUp.firmwareParsedVersion', { version: r.version }), 'success')
 		emit({ type: 'parsed', ok: true, raw: false, version: r.version, pkgType: r.pkgTypeName, size: r.firmwareData.length })
 		el.start.disabled = !linkOpen()
 	})
@@ -319,13 +319,13 @@
 
 	el.query.addEventListener('click', async () => {
 		if (!linkOpen()) {
-			log(fwLink ? '请先连接固件页的设备' : '请先打开串口', 'error')
+			log(fwLink ? I18n.t('fwUp.connectFirmwareDeviceFirst') : I18n.t('fwUp.openThePortFirst'), 'error')
 			return
 		}
 		try {
 			fwTxToken = beginLink()
 		} catch (e) {
-			log('无法开始查询：' + (e.message || e), 'error')
+			log(I18n.t('fwUp.canTStartTheQuery', { v: (e.message || e) }), 'error')
 			emit({ type: 'device-version', ok: false, source: 'query', error: e.message || String(e) })
 			return
 		}
@@ -334,16 +334,16 @@
 			const resp = await sendAndWait(PCP.buildQueryVersionRequest(), PCPMessageCode.QUERY_VERSION, 5000)
 			const res = PCP.parseQueryVersionResponse(resp)
 			if (res.resultCode !== 0) {
-				log('查询版本失败, 结果码 0x' + res.resultCode.toString(16), 'error')
-				emit({ type: 'device-version', ok: false, source: 'query', error: '结果码 0x' + res.resultCode.toString(16) })
+				log(I18n.t('fwUp.versionQueryFailedResultCode0x', { resultCode: res.resultCode.toString(16) }), 'error')
+				emit({ type: 'device-version', ok: false, source: 'query', error: I18n.t('fwUp.resultCode0x', { resultCode: res.resultCode.toString(16) }) })
 			} else {
-				log('设备当前版本: ' + res.version, 'success')
+				log(I18n.t('fwUp.deviceVersion', { version: res.version }), 'success')
 				emit({ type: 'device-version', ok: true, source: 'query', version: res.version })
 			}
 		} catch (e) {
 			if (upgradeInterrupted(e)) return
-			log('查询版本超时: ' + e.message, 'error')
-			emit({ type: 'device-version', ok: false, source: 'query', error: '超时' })
+			log(I18n.t('fwUp.versionQueryTimedOut', { message: e.message }), 'error')
+			emit({ type: 'device-version', ok: false, source: 'query', error: I18n.t('fwUp.timedOut') })
 		} finally {
 			endLink(fwTxToken)
 			fwTxToken = null
@@ -380,20 +380,20 @@
 
 	el.start.addEventListener('click', async () => {
 		if (!fw) {
-			log(parseInfoEnabled() ? '请先解析固件' : '请先载入固件', 'error')
+			log(parseInfoEnabled() ? I18n.t('fwUp.inspectTheFirmwareFirst') : I18n.t('fwUp.loadFirmwareFirst'), 'error')
 			return
 		}
 		if (!linkOpen()) {
-			log(fwLink ? '请先连接固件页的设备' : '请先打开串口', 'error')
+			log(fwLink ? I18n.t('fwUp.connectFirmwareDeviceFirst') : I18n.t('fwUp.openThePortFirst'), 'error')
 			return
 		}
 		const ver = effectiveVersion()
 		if (!ver) {
-			log('请先填写升级版本号', 'error')
+			log(I18n.t('fwUp.enterTheTargetVersionFirst'), 'error')
 			return
 		}
 		if (new TextEncoder().encode(ver).length > 16) {
-			log('版本号超过 16 字节', 'error')
+			log(I18n.t('fwUp.versionExceeds16Bytes'), 'error')
 			return
 		}
 		stopFlag = false
@@ -402,7 +402,7 @@
 		try {
 			fwTxToken = beginLink()
 		} catch (e) {
-			log('无法开始升级：' + (e.message || e), 'error')
+			log(I18n.t('fwUp.canTStartTheUpgrade', { v: (e.message || e) }), 'error')
 			return
 		}
 		running = true
@@ -419,7 +419,7 @@
 		} finally {
 			diffRunner.dispose()
 			running = false
-			cancelFirmwareWaiters(new StopError('升级已结束'))
+			cancelFirmwareWaiters(new StopError(I18n.t('fwUp.upgradeEnded')))
 			endLink(fwTxToken)
 			fwTxToken = null
 			el.start.disabled = false
@@ -435,8 +435,8 @@
 		if (!running) return
 		stopFlag = true
 		clearTransferInbox()
-		cancelFirmwareWaiters(new StopError('已停止'))
-		log('正在停止升级...', 'warn')
+		cancelFirmwareWaiters(new StopError(I18n.t('fwUp.stopped')))
+		log(I18n.t('fwUp.stoppingUpgrade'), 'warn')
 		// 自动升级的准备阶段(查库、取 BLANK、算差分)不经串口，要主动打断：结束在途差分、中止 BLANK 请求、让等待立即返回
 		cancelPrepare()
 	})
@@ -448,8 +448,8 @@
 	}
 	function upgradeInterrupted(error) {
 		if (!running || (!stopFlag && !(error instanceof StopError))) return false
-		if (!stopFlag && error.disconnected) log('串口已断开，升级中止', 'error')
-		else log('已停止升级', 'info')
+		if (!stopFlag && error.disconnected) log(I18n.t('fwUp.portDisconnectedUpgradeAborted'), 'error')
+		else log(I18n.t('fwUp.upgradeStopped'), 'info')
 		return true
 	}
 	let prepAbort = null
@@ -463,12 +463,12 @@
 		prepStop = { promise: p, fire: fire, reason: null }
 		// 准备阶段不收发串口，断线不会让任何等待自己结束：盯着连接状态，断了就走同一条取消路径
 		prepWatch = setInterval(function () {
-			if (!linkOpen()) cancelPrepare(new StopError('串口已断开', true))
+			if (!linkOpen()) cancelPrepare(new StopError(I18n.t('fwUp.portDisconnected'), true))
 		}, 200)
 	}
 	// 在途差分由 buildAutoPackage 的 finally 结束 Worker(等待被这里打断后立即走到)
 	function cancelPrepare(reason) {
-		const r = reason || new StopError('已停止')
+		const r = reason || new StopError(I18n.t('fwUp.stopped'))
 		// 先记原因再 abort：被中止的请求先报错时，调用方据此认出这是取消而不是普通失败
 		if (prepStop && !prepStop.reason) prepStop.reason = r
 		if (prepAbort) prepAbort.abort()
@@ -481,12 +481,12 @@
 		prepStop = null
 	}
 	function prepInterrupted(e) {
-		if (e && e.disconnected) log('串口已断开，自动升级中止', 'error')
+		if (e && e.disconnected) log(I18n.t('fwUp.portDisconnectedAutoUpgradeAborted'), 'error')
 	}
 	// 等一个准备阶段的异步结果；停止后立即抛 StopError，迟到的结果丢弃
 	function untilStopped(promise) {
 		if (prepStop && prepStop.reason) return Promise.reject(prepStop.reason)
-		if (stopFlag) return Promise.reject(new StopError('已停止'))
+		if (stopFlag) return Promise.reject(new StopError(I18n.t('fwUp.stopped')))
 		return prepStop ? Promise.race([promise, prepStop.promise]) : promise
 	}
 
@@ -538,7 +538,7 @@
 	function dropFirmwareFrame(reason) {
 		if (!receiveDropReasons.has(reason) && receiveDropReasons.size < 10) {
 			receiveDropReasons.add(reason)
-			log('忽略升级帧: ' + reason, 'warn')
+			log(I18n.t('fwUp.ignoredUpgradeFrame', { reason }), 'warn')
 		}
 		return false
 	}
@@ -560,14 +560,14 @@
 	}
 	function validTransferMessage(parsed, frame) {
 		if (stopFlag) return false
-		if (!transferInbox || !transferInbox.accepted) return dropFirmwareFrame('尚未允许升级')
+		if (!transferInbox || !transferInbox.accepted) return dropFirmwareFrame(I18n.t('fwUp.upgradeNotYetAllowed'))
 		if (parsed.messageCode === PCPMessageCode.DOWNLOAD_RESULT) {
-			return parsed.dataLength >= 1 || dropFirmwareFrame('下载结果过短')
+			return parsed.dataLength >= 1 || dropFirmwareFrame(I18n.t('fwUp.downloadResultTooShort'))
 		}
-		if (parsed.dataLength < 18) return dropFirmwareFrame('下载请求过短')
+		if (parsed.dataLength < 18) return dropFirmwareFrame(I18n.t('fwUp.downloadRequestTooShort'))
 		const req = PCP.parseDownloadRequest(frame)
-		if (req.targetVersion !== transferInbox.version) return dropFirmwareFrame('目标版本不符')
-		if (req.chunkIndex >= transferInbox.totalChunks) return dropFirmwareFrame('分片索引越界')
+		if (req.targetVersion !== transferInbox.version) return dropFirmwareFrame(I18n.t('fwUp.targetVersionMismatch'))
+		if (req.chunkIndex >= transferInbox.totalChunks) return dropFirmwareFrame(I18n.t('fwUp.chunkIndexOutOfRange'))
 		return true
 	}
 	const onFirmwareRx = (data) => {
@@ -581,9 +581,9 @@
 			const parsed = PCP.parseMessage(frame)
 			if (!parsed) continue
 			// parseMessage 也返回校验失败的视图，升级收发只能使用完整有效的协议帧。
-			if (!parsed.checksumValid) { dropFirmwareFrame('校验错误'); continue }
-			if (parsed.version !== PCP.PROTOCOL_VERSION) { dropFirmwareFrame('协议版本不符'); continue }
-			if (parsed.messageCode === PCPMessageCode.NEW_VERSION_NOTIFY && parsed.dataLength < 1) { dropFirmwareFrame('通知应答过短'); continue }
+			if (!parsed.checksumValid) { dropFirmwareFrame(I18n.t('fwUp.checksumError')); continue }
+			if (parsed.version !== PCP.PROTOCOL_VERSION) { dropFirmwareFrame(I18n.t('fwUp.protocolVersionMismatch')); continue }
+			if (parsed.messageCode === PCPMessageCode.NEW_VERSION_NOTIFY && parsed.dataLength < 1) { dropFirmwareFrame(I18n.t('fwUp.notifyAckTooShort')); continue }
 			const transfer = parsed.messageCode === PCPMessageCode.DOWNLOAD_REQUEST || parsed.messageCode === PCPMessageCode.DOWNLOAD_RESULT
 			if (transfer && !validTransferMessage(parsed, frame)) continue
 			let delivered = false
@@ -603,7 +603,7 @@
 				const queue = transferInbox.frames
 				if (!queue.some(f => f.length === frame.length && f.every((b, i) => b === frame[i]))) {
 					if (queue.length < 16) queue.push(frame)
-					else dropFirmwareFrame('待处理消息已满')
+					else dropFirmwareFrame(I18n.t('fwUp.pendingMessageQueueFull'))
 				}
 			}
 		}
@@ -627,7 +627,7 @@
 				timer: setTimeout(() => {
 					const idx = waiters.indexOf(w)
 					if (idx !== -1) waiters.splice(idx, 1)
-					reject(new Error('等待响应超时'))
+					reject(new Error(I18n.t('fwUp.responseTimedOut')))
 				}, timeout),
 			}
 			waiters.push(w)
@@ -646,7 +646,7 @@
 				failWrite(error)
 				return
 			}
-			log('发送: ' + bytesToHex(reqBytes), 'info')
+			log(I18n.t('fwUp.sent', { bytesToHex: bytesToHex(reqBytes) }), 'info')
 		})
 	}
 
@@ -662,15 +662,15 @@
 			const resp = await sendAndWait(PCP.buildQueryVersionRequest(), PCPMessageCode.QUERY_VERSION, 5000)
 			const res = PCP.parseQueryVersionResponse(resp)
 			if (res.resultCode !== 0) {
-				log('查询版本失败: 0x' + res.resultCode.toString(16), 'error')
+				log(I18n.t('fwUp.versionQueryFailed0x', { resultCode: res.resultCode.toString(16) }), 'error')
 				return
 			}
 			deviceVersion = res.version
-			log('设备当前版本: ' + deviceVersion, 'success')
+			log(I18n.t('fwUp.deviceVersion2', { deviceVersion }), 'success')
 			emit({ type: 'device-version', ok: true, source: 'upgrade', version: deviceVersion })
 		} catch (e) {
 			if (upgradeInterrupted(e)) return
-			log('查询版本超时: ' + e.message, 'error')
+			log(I18n.t('fwUp.versionQueryTimedOut', { message: e.message }), 'error')
 			return
 		}
 		if (stopFlag) return
@@ -685,13 +685,13 @@
 					candidates = await untilStopped(library.findByVersion(deviceVersion))
 				} catch (e) {
 					if (e instanceof StopError) throw e
-					log('读取固件库失败，改用压缩包: ' + (e && e.message || e), 'warn')
+					log(I18n.t('fwUp.readingTheFirmwareLibraryFailedUsing', { v: (e && e.message || e) }), 'warn')
 				}
 			}
 			plan = Core.planUpgrade({ deviceVersion, candidates })
-			const why = { 'no-device-version': '设备没有上报版本', 'not-found': '本机固件库里没有 ' + deviceVersion + ' 的原固件', 'ambiguous': '固件库里 ' + deviceVersion + ' 有 ' + plan.count + ' 份不同构建，无法确定设备上是哪一份' }
-			if (plan.mode === 'diff') log('在固件库找到原固件 ' + (plan.base.name || deviceVersion) + '，生成差分包', 'info')
-			else log((why[plan.reason] || '') + '，生成压缩包', 'info')
+			const why = { 'no-device-version': I18n.t('fwUp.theDeviceDidnTReportA'), 'not-found': I18n.t('fwUp.noRawFirmwareForInThe', { deviceVersion }), 'ambiguous': I18n.t('fwUp.theLibraryHasDifferentBuildsOf', { deviceVersion, count: plan.count }) }
+			if (plan.mode === 'diff') log(I18n.t('fwUp.foundRawFirmwareInTheLibrary', { v: (plan.base.name || deviceVersion) }), 'info')
+			else log(I18n.t('fwUp.buildingACompressedPackage', { v: (why[plan.reason] || '') }), 'info')
 			pkg = await buildAutoPackage(plan, src)
 		} catch (e) {
 			if (!(e instanceof StopError)) throw e
@@ -703,12 +703,12 @@
 		if (!pkg || stopFlag) return
 		await runUpgrade(pkg)
 		if (!outcomeOk && !stopFlag && Core.shouldFallbackToCompress(plan.mode, lastDownloadStatus)) {
-			log('设备拒收差分包，改用压缩包重新升级', 'warn')
+			log(I18n.t('fwUp.theDeviceRejectedTheDiffPackage'), 'warn')
 			// 先应答这次失败的下载结果，设备收尾后才接新一轮通知；应答都发不出去就不再重来
 			try {
 				await writeFirmware(PCP.buildDownloadResultAck(0))
 			} catch (e) {
-				log('应答下载结果失败，不再重试: ' + (e && e.message || e), 'error')
+				log(I18n.t('fwUp.acknowledgingTheDownloadResultFailedNot', { v: (e && e.message || e) }), 'error')
 				return
 			}
 			lastError = ''
@@ -747,7 +747,7 @@
 		} catch (e) {
 			if (e instanceof StopError) throw e
 			if (prepStop && prepStop.reason) throw prepStop.reason
-			if (stopFlag) throw new StopError('已停止')
+			if (stopFlag) throw new StopError(I18n.t('fwUp.stopped'))
 			blankData = Core.BLANK_BUILTIN
 		}
 		return blankData
@@ -756,29 +756,29 @@
 	// 生成并解析一个内存里的升级包；失败记日志返回 null，停止抛 StopError。生成完立即释放差分 Worker(WASM 内存)，不留到传输结束
 	async function buildAutoPackage(plan, src) {
 		const type = plan.mode === 'diff' ? 'diff' : 'compress'
-		const label = type === 'diff' ? '差分包' : '压缩包'
+		const label = type === 'diff' ? I18n.t('fwUp.diffPackage') : I18n.t('fwUp.compressedPackage')
 		try {
 			const base = type === 'diff' ? plan.base.data : await loadBlank()
-			if (stopFlag) throw new StopError('已停止')
+			if (stopFlag) throw new StopError(I18n.t('fwUp.stopped'))
 			const data = await untilStopped(Core.buildPackage(type, src.rawData, base, diffRunner.createPatch))
-			if (stopFlag) throw new StopError('已停止')
+			if (stopFlag) throw new StopError(I18n.t('fwUp.stopped'))
 			const r = FirmwareParser.parse(data.buffer)
 			if (!r.ok) {
-				log('生成的升级包校验失败: ' + r.error, 'error')
+				log(I18n.t('fwUp.generatedPackageFailedVerification', { error: r.error }), 'error')
 				return null
 			}
 			if (r.version !== src.version) {
-				log('生成的升级包版本(' + (r.version || '空') + ')与原始固件(' + src.version + ')不一致', 'error')
+				log(I18n.t('fwUp.generatedPackageVersionDiffersFromThe', { v: (r.version || I18n.t('fwUp.empty')), version: src.version }), 'error')
 				return null
 			}
 			r.fileName = src.fileName
-			log(label + '已生成: ' + fmtSize(data.length) + '（原始固件 ' + fmtSize(src.rawData.length) + '）', 'success')
+			log(I18n.t('fwUp.builtRawFirmware', { label, fmtSize: fmtSize(data.length), fmtSize2: fmtSize(src.rawData.length) }), 'success')
 			return r
 		} catch (e) {
 			if (e instanceof StopError) throw e
 			if (prepStop && prepStop.reason) throw prepStop.reason
-			if (stopFlag) throw new StopError('已停止')
-			log(label + '生成失败: ' + (e && e.message || e), 'error')
+			if (stopFlag) throw new StopError(I18n.t('fwUp.stopped'))
+			log(I18n.t('fwUp.failed', { label, v: (e && e.message || e) }), 'error')
 			return null
 		} finally {
 			diffRunner.dispose()
@@ -797,7 +797,7 @@
 		// 手动模式(不读包头)取输入框里的版本，其余取包头里的版本
 		const version = target.raw ? el.version.value.trim() : target.version
 		lastDownloadStatus = null
-		log('开始固件升级, 版本: ' + version + ', 分片: ' + totalChunks, 'info')
+		log(I18n.t('fwUp.startingFirmwareUpgradeVersionChunks', { version, totalChunks }), 'info')
 		emit({ type: 'plan', version: version, chunkSize: chunkSize, totalChunks: totalChunks, size: firmwareData.length })
 
 		// 步骤1: 查询设备版本
@@ -807,15 +807,15 @@
 			const resp = await sendAndWait(PCP.buildQueryVersionRequest(), PCPMessageCode.QUERY_VERSION, 5000)
 			const res = PCP.parseQueryVersionResponse(resp)
 			if (res.resultCode !== 0) {
-				log('查询版本失败: 0x' + res.resultCode.toString(16), 'error')
+				log(I18n.t('fwUp.versionQueryFailed0x', { resultCode: res.resultCode.toString(16) }), 'error')
 				return
 			}
-			log('设备当前版本: ' + res.version, 'success')
+			log(I18n.t('fwUp.deviceVersion', { version: res.version }), 'success')
 			emit({ type: 'device-version', ok: true, source: 'upgrade', version: res.version })
 			setProgress(15)
 		} catch (e) {
 			if (upgradeInterrupted(e)) return
-			log('查询版本超时: ' + e.message, 'error')
+			log(I18n.t('fwUp.versionQueryTimedOut', { message: e.message }), 'error')
 			return
 		}
 
@@ -829,18 +829,18 @@
 				PCPMessageCode.NEW_VERSION_NOTIFY, 5000)
 			const res = PCP.parseNewVersionNotifyResponse(resp)
 			const errMap = {
-				0x01: '设备使用中', 0x02: '信号质量差', 0x03: '已经是最新版本',
-				0x04: '电量不足', 0x05: '剩余空间不足', 0x09: '内存不足', 0x7F: '内部异常',
+				0x01: I18n.t('fwUp.deviceBusy'), 0x02: I18n.t('fwUp.poorSignal'), 0x03: I18n.t('fwUp.alreadyUpToDate'),
+				0x04: I18n.t('fwUp.lowBattery'), 0x05: I18n.t('fwUp.notEnoughStorage'), 0x09: I18n.t('fwUp.outOfMemory'), 0x7F: I18n.t('fwUp.internalError'),
 			}
 			if (res.resultCode !== 0) {
-				log('设备拒绝升级: ' + (errMap[res.resultCode] || ('0x' + res.resultCode.toString(16))), 'error')
+				log(I18n.t('fwUp.theDeviceRefusedTheUpgrade', { v: (errMap[res.resultCode] || ('0x' + res.resultCode.toString(16))) }), 'error')
 				return
 			}
-			log('设备允许升级', 'success')
+			log(I18n.t('fwUp.theDeviceAcceptedTheUpgrade'), 'success')
 			setProgress(25)
 		} catch (e) {
 			if (upgradeInterrupted(e)) return
-			log('新版本通知超时', 'error')
+			log(I18n.t('fwUp.newVersionNoticeTimedOut'), 'error')
 			return
 		}
 
@@ -862,23 +862,23 @@
 					requestData = await waitForCode([PCPMessageCode.DOWNLOAD_REQUEST, PCPMessageCode.DOWNLOAD_RESULT], 10000)
 				}
 				if (!requestData) {
-					log('等待设备数据超时 (' + sentChunks.size + '/' + totalChunks + ')', 'error')
+					log(I18n.t('fwUp.timedOutWaitingForTheDevice', { size: sentChunks.size, totalChunks }), 'error')
 					return
 				}
 				const parsed = PCP.parseMessage(requestData)
 				if (parsed.messageCode === PCPMessageCode.DOWNLOAD_RESULT) {
-					log('设备上报下载结果', 'info')
+					log(I18n.t('fwUp.theDeviceReportedItsDownloadResult'), 'info')
 					pendingMessage = requestData
 					break
 				}
 				if (parsed.messageCode !== PCPMessageCode.DOWNLOAD_REQUEST) {
-					log('收到意外消息: ' + PCP.messageCodeName(parsed.messageCode), 'warn')
+					log(I18n.t('fwUp.unexpectedMessage', { messageCodeName: PCP.messageCodeName(parsed.messageCode) }), 'warn')
 					continue
 				}
 				const req = PCP.parseDownloadRequest(requestData)
 				const idx = req.chunkIndex
 				if (idx >= totalChunks) {
-					log('设备请求无效分片索引 ' + idx, 'warn')
+					log(I18n.t('fwUp.theDeviceRequestedAnInvalidChunk', { idx }), 'warn')
 					continue
 				}
 				emit({ type: 'request', index: idx, resend: sentChunks.has(idx), total: totalChunks })
@@ -899,19 +899,19 @@
 				if (stopFlag || !linkOpen()) return
 				const timing = await writeFirmware(resp)
 				const isResend = sentChunks.has(idx)
-				log('发送: ' + bytesToHex(resp.slice(0, 50)) + '... (分片' + idx + ', ' + chunk.length + '字节)' + (isResend ? ' [重发]' : '') + (timing ? ' [后端写完成 ' + timing.durationMs + 'ms]' : ''), 'info')
+				log(I18n.t('fwUp.sentChunkBytes', { bytesToHex: bytesToHex(resp.slice(0, 50)), idx, length: chunk.length, v: (isResend ? I18n.t('fwUp.resent') : ''), v2: (timing ? I18n.t('fwUp.backendWriteDoneMs', { durationMs: timing.durationMs }) : '') }), 'info')
 				sentChunks.add(idx)
 				const done = sentChunks.size
 				emit({ type: 'chunk', index: idx, resend: isResend, sent: done, total: totalChunks, bytes: chunk.length })
 				setProgress(25 + Math.floor(done / totalChunks * 45))
 				if (done % 10 === 0 || done === totalChunks) {
-					log('已传输 ' + done + '/' + totalChunks + ' 个分片', 'info')
+					log(I18n.t('fwUp.transferredChunks', { done, totalChunks }), 'info')
 				}
 			}
-			log('固件传输完成, 共 ' + sentChunks.size + ' 个分片', 'success')
+			log(I18n.t('fwUp.firmwareTransferCompleteChunks', { size: sentChunks.size }), 'success')
 		} catch (e) {
 			if (upgradeInterrupted(e)) return
-			log('下载过程异常: ' + e.message, 'error')
+			log(I18n.t('fwUp.downloadError', { message: e.message }), 'error')
 			return
 		}
 
@@ -922,25 +922,25 @@
 			let reportData = pendingMessage
 			if (!reportData) reportData = await waitForCode(PCPMessageCode.DOWNLOAD_RESULT, 30000)
 			if (!reportData) {
-				log('等待下载结果上报超时', 'error')
+				log(I18n.t('fwUp.timedOutWaitingForTheDownload'), 'error')
 				return
 			}
 			const res = PCP.parseDownloadResultReport(reportData)
 			lastDownloadStatus = res.downloadStatus
 			const errMap = {
-				0x05: '剩余空间不足', 0x06: '下载超时', 0x07: '升级包校验失败',
-				0x08: '升级包类型不支持（设备可能不支持差分包，请使用原始包）',
+				0x05: I18n.t('fwUp.notEnoughStorage'), 0x06: I18n.t('fwUp.downloadTimedOut'), 0x07: I18n.t('fwUp.packageVerificationFailed'),
+				0x08: I18n.t('fwUp.packageTypeNotSupportedTheDevice'),
 			}
 			if (res.downloadStatus !== 0) {
-				log('设备下载失败: ' + (errMap[res.downloadStatus] || ('0x' + res.downloadStatus.toString(16))), 'error')
+				log(I18n.t('fwUp.deviceDownloadFailed', { v: (errMap[res.downloadStatus] || ('0x' + res.downloadStatus.toString(16))) }), 'error')
 				return
 			}
 			await writeFirmware(PCP.buildDownloadResultAck(0))
-			log('设备下载成功', 'success')
+			log(I18n.t('fwUp.deviceDownloadSucceeded'), 'success')
 			setProgress(80)
 		} catch (e) {
 			if (upgradeInterrupted(e)) return
-			log('下载结果处理异常: ' + e.message, 'error')
+			log(I18n.t('fwUp.errorHandlingTheDownloadResult', { message: e.message }), 'error')
 			return
 		}
 
@@ -951,13 +951,13 @@
 			await sleep(500)
 			if (stopFlag || !linkOpen()) return
 			await writeFirmware(PCP.buildExecuteUpgradeRequest())
-			log('已发送升级命令, 设备开始升级...', 'success')
+			log(I18n.t('fwUp.upgradeCommandSentTheDeviceIs'), 'success')
 			setProgress(100)
-			log('升级完成!', 'success')
+			log(I18n.t('fwUp.upgradeComplete'), 'success')
 			outcomeOk = true
 		} catch (e) {
 			if (upgradeInterrupted(e)) return
-			log('执行升级异常: ' + e.message, 'error')
+			log(I18n.t('fwUp.upgradeExecutionError', { message: e.message }), 'error')
 		}
 	}
 
@@ -999,18 +999,18 @@
 		el.fileName.dataset.name = fileName || 'packed_fw.bin'
 		el.version.value = defaultVersionFromName(fileName || 'packed_fw.bin')
 		showFileCard(fileName || 'packed_fw.bin', arrayBuffer.byteLength)
-		log('已载入固件(来自打包): ' + (fileName || 'packed_fw.bin') + ' (' + fmtSize(arrayBuffer.byteLength) + ')', 'info')
+		log(I18n.t('fwUp.firmwareLoadedFromPackaging', { v: (fileName || 'packed_fw.bin'), fmtSize: fmtSize(arrayBuffer.byteLength) }), 'info')
 		var parseBtn = document.getElementById('fw-parse')
 		if (parseBtn) parseBtn.click()
 	}
 	if (el.libraryClear) {
 		el.libraryClear.addEventListener('click', async function () {
 			if (!library) return
-			if (!await window.AppDialog.confirm('清空本机固件库？之后找不到原固件时只能用压缩包升级。', { title: '清空固件库', okText: '清空', danger: true })) return
+			if (!await window.AppDialog.confirm(I18n.t('fwUp.clearTheLocalFirmwareLibraryWithout'), { title: I18n.t('fwUp.clearFirmwareLibrary'), okText: I18n.t('fwUp.clear'), danger: true })) return
 			library.clear().then(function () {
-				log('已清空本机固件库', 'info')
+				log(I18n.t('fwUp.localFirmwareLibraryCleared'), 'info')
 				refreshLibrarySummary()
-			}).catch(function (e) { log('清空固件库失败: ' + (e && e.message || e), 'error') })
+			}).catch(function (e) { log(I18n.t('fwUp.clearingTheFirmwareLibraryFailed', { v: (e && e.message || e) }), 'error') })
 		})
 	}
 	refreshLibrarySummary()
@@ -1029,7 +1029,7 @@
 			syncStartBtn()
 			if (!open && running) {
 				clearTransferInbox()
-				cancelFirmwareWaiters(new StopError('串口已断开', true))
+				cancelFirmwareWaiters(new StopError(I18n.t('fwUp.portDisconnected'), true))
 			}
 		}
 	}, 500)

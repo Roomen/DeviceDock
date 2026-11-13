@@ -3,6 +3,7 @@
 // 切换 paramsTarget 忙碌态跟随该路；结束恢复；原本因别的原因禁用的字段不被解开；
 // 单路未打开时 change 不落盘（既有语义）。执行的是真实 SerialHub.setOpening / applySerialParamsToUI /
 // setParamsTarget / refreshParamsBusyUI / 参数卡 change handler / reopenWithNewParams，不是 mock。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

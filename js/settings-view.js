@@ -75,8 +75,8 @@
 	function refreshMcp() {
 		const el = $('settings-mcp-state'), svc = root.McpServiceStatus
 		if (!el || !svc || typeof svc.state !== 'function') return
-		const text = { running: '运行中 · 端口 ' + svc.port(), error: '服务异常', waiting: '已启用，等待启动', off: '未启用' }[svc.state()]
-		el.textContent = text || '未启用'
+		const text = { running: I18n.t('settings.runningPort', { port: svc.port() }), error: I18n.t('settings.serviceError'), waiting: I18n.t('settings.enabledWaitingToStart'), off: I18n.t('settings.off') }[svc.state()]
+		el.textContent = text || I18n.t('settings.off')
 	}
 
 	root.SettingsView = {
@@ -143,7 +143,7 @@
 		if (!svc || !svc.tokenStatus || !input) return
 		let busy = false, set = false, note = '', isError = false
 		function paint() {
-			badge.textContent = set ? '已设置' : '未设置'
+			badge.textContent = set ? I18n.t('settings.set') : I18n.t('settings.notSet')
 			badge.classList.toggle('is-set', set)
 			input.disabled = busy
 			save.disabled = busy
@@ -179,16 +179,16 @@
 			if (busy) return
 			const value = input.value.trim()
 			if (!value) {
-				note = '请输入要保存的 GitHub 令牌'
+				note = I18n.t('settings.enterTheGithubTokenToSave')
 				isError = true
 				paint()
 				return
 			}
-			run(svc.tokenSet(value), '令牌已写入系统钥匙串')
+			run(svc.tokenSet(value), I18n.t('settings.tokenSavedToTheSystemKeychain'))
 		})
 		clear.addEventListener('click', function () {
 			if (busy) return
-			run(svc.tokenClear(), '已清除系统钥匙串中的令牌')
+			run(svc.tokenClear(), I18n.t('settings.tokenRemovedFromTheSystemKeychain'))
 		})
 		input.addEventListener('keydown', function (e) {
 			if (e.key === 'Enter' && !e.isComposing) {

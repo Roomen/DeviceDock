@@ -149,7 +149,7 @@
 		const icon = document.createElement('i')
 		icon.className = 'icon icon-circle-arrow-right'
 		const buttonText = document.createElement('span')
-		buttonText.textContent = '使用此固件进行串口升级'
+		buttonText.textContent = I18n.t('fwPack.upgradeOverSerialWithThisFirmware')
 		button.append(icon, buttonText)
 
 		const fileName = document.createElement('span')
@@ -169,7 +169,7 @@
 		el.log.querySelectorAll('.fw-log-upgrade-btn').forEach(function (b) {
 			b.disabled = true
 			delete b.dataset.fwIdx
-			b.title = '已开始新一轮生成，这份产物已释放'
+			b.title = I18n.t('fwPack.aNewBuildHasStartedThis')
 		})
 	}
 
@@ -205,7 +205,7 @@
 	let packRunning = false
 	// 按需创建差分 Worker，整轮生成结束即释放其 WASM 内存；不在串口页预载
 	const diffRunner = C.createDiffRunner(new URL('firmware-diff-worker.js', document.currentScript.src).href, {
-		onDone: function (r) { log('hdiffi 差分耗时: ' + Math.round(r.ms) + 'ms, patch: ' + fmtSize(r.size), 'info') },
+		onDone: function (r) { log(I18n.t('fwPack.hdiffiDiffTookMsPatch', { round: Math.round(r.ms), fmtSize: fmtSize(r.size) }), 'info') },
 	})
 	const wasmCreatePatch = diffRunner.createPatch
 	const disposeDiffWorker = diffRunner.dispose
@@ -244,7 +244,7 @@
 			fileNameHolder.val = file.name
 			showFileInfo(zoneEl, infoEl, nameEl, sizeEl, reader.result.byteLength)
 			emit({ type: 'file', which: bufferHolder === oldFw ? 'old' : (bufferHolder === newFw ? 'new' : 'blank'), name: file.name, size: reader.result.byteLength, data: bufferHolder.val })
-			log('已载入 ' + file.name + ' (' + fmtSize(reader.result.byteLength) + ')', 'info')
+			log(I18n.t('fwPack.loaded', { name: file.name, fmtSize: fmtSize(reader.result.byteLength) }), 'info')
 		}
 		reader.readAsArrayBuffer(file)
 	}
@@ -298,7 +298,7 @@
 		oldFwName.val = ''
 		hideFileInfo(el.oldZone, el.oldInfo, el.oldName, el.oldSize)
 		el.oldFile.value = ''
-		log('已清除旧固件', 'info')
+		log(I18n.t('fwPack.oldFirmwareCleared'), 'info')
 		emit({ type: 'file', which: 'old', name: '', size: 0, data: null })
 	})
 	el.newClear.addEventListener('click', function (e) {
@@ -307,7 +307,7 @@
 		newFwName.val = ''
 		hideFileInfo(el.newZone, el.newInfo, el.newName, el.newSize)
 		el.newFile.value = ''
-		log('已清除新固件', 'info')
+		log(I18n.t('fwPack.newFirmwareCleared'), 'info')
 		emit({ type: 'file', which: 'new', name: '', size: 0, data: null })
 	})
 
@@ -364,7 +364,7 @@
 	el.start.addEventListener('click', async function () {
 		if (packRunning) return
 		if (!newFw.val) {
-			log('请先选择新固件', 'error')
+			log(I18n.t('fwPack.selectTheNewFirmwareFirst'), 'error')
 			return
 		}
 
@@ -373,7 +373,7 @@
 		const genDiff = el.genDiff.checked
 
 		if (!genOrigin && !genCompress && !genDiff) {
-			log('请至少选择一种输出类型', 'error')
+			log(I18n.t('fwPack.selectAtLeastOneOutputType'), 'error')
 			return
 		}
 
@@ -398,14 +398,14 @@
 			if (fsSaveSupported) {
 				try {
 					dirHandle = await ensureDirHandle()
-					log('输出目录: ' + dirHandle.name + '/', 'info')
+					log(I18n.t('fwPack.outputFolder', { name: dirHandle.name }), 'info')
 				} catch (e) {
 					if (e && e.name === 'AbortError') {
-						log('未选择输出目录, 已取消生成', 'warn')
+						log(I18n.t('fwPack.noOutputFolderSelectedBuildCanceled'), 'warn')
 						emit({ type: 'end', aborted: true })
 						return
 					}
-					log('输出目录不可用, 将使用浏览器下载: ' + e.message, 'warn')
+					log(I18n.t('fwPack.outputFolderUnavailableUsingBrowserDownload', { message: e.message }), 'warn')
 				}
 			}
 
@@ -415,10 +415,10 @@
 				} else if (dirHandle) {
 					try {
 						await writeToDir(dirHandle, name, data)
-						logMsg += ' | 已保存到 ' + dirHandle.name + '/'
+						logMsg += I18n.t('fwPack.savedTo', { name: dirHandle.name })
 					} catch (e) {
 						downloadBlob(data, name)
-						logMsg += ' | 目录写入失败, 已转为浏览器下载'
+						logMsg += I18n.t('fwPack.folderWriteFailedDownloadedInstead')
 						level = 'warn'
 					}
 				} else {
@@ -439,13 +439,13 @@
 					full.set(newData, header.length)
 					const outName = newInfo.version + '_' + newInfo.timestamp + '_Origin.bin'
 					await outputFile(outName, full,
-						'原始包: ' + outName + ' | 大小: ' + fmtSize(full.length) + ' | 固件CRC32: ' + newFwCRC32, 'success')
+						I18n.t('fwPack.rawSizeFirmwareCrc32', { outName, fmtSize: fmtSize(full.length), newFwCRC32 }), 'success')
 					navToFwUpgrade(full, outName, 'origin')
 				}
 
 				if (genCompress) {
 					if (!blankData) {
-						log('压缩包需要 BLANK.bin, 请选择 BLANK 文件', 'error')
+						log(I18n.t('fwPack.compressedPackagesNeedBlankBinSelect'), 'error')
 					} else {
 						try {
 							const patch = await wasmCreatePatch(blankData, newData)
@@ -461,17 +461,17 @@
 							full.set(patch, header.length)
 							const outName = newInfo.version + '_' + newInfo.timestamp + '_comp.bin'
 							await outputFile(outName, full,
-								'压缩包: ' + outName + ' | 大小: ' + fmtSize(full.length) + ' (patch: ' + fmtSize(patch.length) + ')', 'success')
+								I18n.t('fwPack.compressedSizePatch', { outName, fmtSize: fmtSize(full.length), fmtSize2: fmtSize(patch.length) }), 'success')
 							navToFwUpgrade(full, outName, 'compress')
 						} catch (e) {
-							log('压缩包生成失败: ' + e.message, 'error')
+							log(I18n.t('fwPack.compressedPackageFailed', { message: e.message }), 'error')
 						}
 					}
 				}
 
 				if (genDiff) {
 					if (!oldData) {
-						log('差分包需要旧固件, 请先选择旧固件', 'error')
+						log(I18n.t('fwPack.diffPackagesNeedTheOldFirmware'), 'error')
 					} else {
 						const oldInfo = parseFirmwareName(oldName)
 
@@ -489,10 +489,10 @@
 							fullA.set(patchA, headerA.length)
 							const outA = oldInfo.version + '_' + oldInfo.timestamp + '_to_' + newInfo.version + '_' + newInfo.timestamp + '.bin'
 							await outputFile(outA, fullA,
-								'差分包(旧→新): ' + outA + ' | 大小: ' + fmtSize(fullA.length) + ' | patch: ' + fmtSize(patchA.length), 'success')
+								I18n.t('fwPack.diffOldNewSizePatch', { outA, fmtSize: fmtSize(fullA.length), fmtSize2: fmtSize(patchA.length) }), 'success')
 							navToFwUpgrade(fullA, outA, 'diff-fwd')
 						} catch (e) {
-							log('差分包(旧→新)失败: ' + e.message, 'error')
+							log(I18n.t('fwPack.diffOldNewFailed', { message: e.message }), 'error')
 						}
 
 						try {
@@ -509,10 +509,10 @@
 							fullB.set(patchB, headerB.length)
 							const outB = newInfo.version + '_' + newInfo.timestamp + '_to_' + oldInfo.version + '_' + oldInfo.timestamp + '.bin'
 							await outputFile(outB, fullB,
-								'差分包(新→旧): ' + outB + ' | 大小: ' + fmtSize(fullB.length) + ' | patch: ' + fmtSize(patchB.length), 'success')
+								I18n.t('fwPack.diffNewOldSizePatch', { outB, fmtSize: fmtSize(fullB.length), fmtSize2: fmtSize(patchB.length) }), 'success')
 							navToFwUpgrade(fullB, outB, 'diff-rev')
 						} catch (e) {
-							log('差分包(新→旧)失败: ' + e.message, 'error')
+							log(I18n.t('fwPack.diffNewOldFailed', { message: e.message }), 'error')
 						}
 					}
 				}
@@ -527,21 +527,21 @@
 					if (dirHandle) {
 						try {
 							await writeToDir(dirHandle, zipName, blob)
-							log('打包保存: ' + dirHandle.name + '/' + zipName + ' (' + fmtSize(blob.size) + ', 含 ' + zipFiles.length + ' 个文件)', 'success')
+							log(I18n.t('fwPack.bundleSavedFiles', { name: dirHandle.name, zipName, fmtSize: fmtSize(blob.size), length: zipFiles.length }), 'success')
 							emit({ type: 'zip', name: zipName, size: blob.size, count: zipFiles.length })
 						} catch (e) {
 							downloadBlob(blob, zipName)
-							log('打包下载: ' + zipName + ' (目录写入失败, 已转为浏览器下载)', 'warn')
+							log(I18n.t('fwPack.bundleDownloadFolderWriteFailedDownloaded', { zipName }), 'warn')
 							emit({ type: 'zip', name: zipName, size: blob.size, count: zipFiles.length })
 						}
 					} else {
 						downloadBlob(blob, zipName)
-						log('打包下载: ' + zipName + ' (' + fmtSize(blob.size) + ', 含 ' + zipFiles.length + ' 个文件)', 'success')
+						log(I18n.t('fwPack.bundleDownloadFiles', { zipName, fmtSize: fmtSize(blob.size), length: zipFiles.length }), 'success')
 						emit({ type: 'zip', name: zipName, size: blob.size, count: zipFiles.length })
 					}
 				}
 			} catch (e) {
-				log('打包异常: ' + e.message, 'error')
+				log(I18n.t('fwPack.bundlingFailed', { message: e.message }), 'error')
 			}
 			emit({ type: 'end' })
 		} finally {
@@ -564,8 +564,8 @@
 		})
 		.then(function (buf) {
 			blank.val = new Uint8Array(buf)
-			if (el.blankName) el.blankName.textContent = '内置 BLANK.BIN (' + fmtSize(buf.byteLength) + ')'
-			log('已加载 BLANK.BIN (' + fmtSize(buf.byteLength) + ')', 'info')
+			if (el.blankName) el.blankName.textContent = I18n.t('fwPack.builtInBlankBin', { fmtSize: fmtSize(buf.byteLength) })
+			log(I18n.t('fwPack.loadedBlankBin', { fmtSize: fmtSize(buf.byteLength) }), 'info')
 		})
 		.catch(function () {})
 })()

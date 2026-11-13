@@ -1,6 +1,7 @@
 // Run: node tests/mcp-service.cjs — synthetic data only.
 // 覆盖 js/mcp-service.js：只在桌面服务存在时挂菜单入口、面板状态文案、端口与启停控制、
 // 令牌只在显式显示后出现(关面板后迟到的令牌不再写回)、复制的是干净 JSON、重新生成走面板内两步确认(不嵌套 AppDialog)。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

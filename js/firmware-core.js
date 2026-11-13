@@ -177,9 +177,9 @@
 	 * createPatch(old, new) → Promise<Uint8Array>，由差分 Worker 提供
 	 */
 	async function buildPackage(type, newData, baseData, createPatch, userDefine) {
-		if (type !== 'compress' && type !== 'diff') throw new Error('未知的升级包类型: ' + type)
-		if (!newData || !newData.length) throw new Error('缺少新固件')
-		if (!baseData || !baseData.length) throw new Error(type === 'diff' ? '缺少差分基准固件' : '缺少 BLANK 基准')
+		if (type !== 'compress' && type !== 'diff') throw new Error(I18n.t('fwcore.unknownPackageType', { type }))
+		if (!newData || !newData.length) throw new Error(I18n.t('fwcore.newFirmwareMissing'))
+		if (!baseData || !baseData.length) throw new Error(type === 'diff' ? I18n.t('fwcore.diffBaseFirmwareMissing') : I18n.t('fwcore.blankBaseMissing'))
 		const patch = await createPatch(baseData, newData)
 		const header = packFirmware({
 			firmwareData: patch,
@@ -208,13 +208,13 @@
 				clearTimeout(job.timer)
 				const j = job
 				job = null
-				j.reject(error || new Error('差分任务已结束'))
+				j.reject(error || new Error(I18n.t('fwcore.diffTaskHasEnded')))
 			}
 		}
 
 		function createPatch(oldData, newData) {
 			return new Promise(function (resolve, reject) {
-				if (job) { reject(new Error('差分任务正在执行')); return }
+				if (job) { reject(new Error(I18n.t('fwcore.aDiffTaskIsAlreadyRunning'))); return }
 				try {
 					if (!worker) {
 						const WorkerCtor = opts.Worker || root.Worker
@@ -231,14 +231,14 @@
 								j.resolve(patch)
 							}
 						}
-						worker.onerror = function () { dispose(new Error('差分 Worker 加载或执行失败')) }
-						worker.onmessageerror = function () { dispose(new Error('差分 Worker 数据传输失败')) }
+						worker.onerror = function () { dispose(new Error(I18n.t('fwcore.diffWorkerFailedToLoadOr'))) }
+						worker.onmessageerror = function () { dispose(new Error(I18n.t('fwcore.diffWorkerDataTransferFailed'))) }
 					}
 					// 输入还要留给组包 CRC，只转移本任务的副本
 					const oldCopy = oldData.slice()
 					const newCopy = newData.slice()
 					job = { resolve: resolve, reject: reject, timer: setTimeout(function () {
-						dispose(new Error('差分生成超时'))
+						dispose(new Error(I18n.t('fwcore.diffGenerationTimedOut')))
 					}, timeoutMs) }
 					worker.postMessage({ old: oldCopy.buffer, nw: newCopy.buffer }, [oldCopy.buffer, newCopy.buffer])
 				} catch (e) {

@@ -1,6 +1,7 @@
 // Run: node tests/curves-core.cjs — synthetic data only.
 // 曲线纯逻辑回归（js/curves-core.js）：环形序列与按路隔离、实时帧抽取、单位分轴、时间对齐、CSV、
 // 数值格式化、时间换算（毫秒存储 / uPlot 秒轴 / 24 小时制本地显示）。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const C = require('../js/curves-core.js')
 

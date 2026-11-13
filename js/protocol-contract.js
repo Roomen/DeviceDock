@@ -49,7 +49,7 @@
 	// ---------- SemVer / 摘要 ----------
 	function normalizeVersion(value) {
 		const s = String(value == null ? '' : value).trim()
-		if (!VERSION_RE.test(s)) fail('版本号必须是精确 SemVer（MAJOR.MINOR.PATCH，不带预发布与构建后缀）：' + (s || '(空)'))
+		if (!VERSION_RE.test(s)) fail(I18n.t('contract.versionMustBeExactSemverMajor', { v: (s || I18n.t('contract.empty')) }))
 		return s
 	}
 	function compareVersions(a, b) {
@@ -70,7 +70,7 @@
 	}
 	async function digestHex(bytes) {
 		const subtle = (root.crypto && root.crypto.subtle) || (typeof crypto !== 'undefined' ? crypto.subtle : null)
-		if (!subtle) fail('当前环境不支持 SHA-256 校验（需要 HTTPS 或 localhost）', 'no-subtle-crypto')
+		if (!subtle) fail(I18n.t('contract.sha256VerificationIsnTAvailable'), 'no-subtle-crypto')
 		const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
 		const out = await subtle.digest('SHA-256', buf)
 		return Array.prototype.map.call(new Uint8Array(out), function (b) { return b.toString(16).padStart(2, '0') }).join('')
@@ -90,7 +90,7 @@
 		})
 	}
 	function safePath(value, what) {
-		if (!isSafePath(value)) fail((what || '包内路径') + '不合法：' + String(value))
+		if (!isSafePath(value)) fail(I18n.t('contract.isInvalid', { v: (what || I18n.t('contract.packagePath')), String: String(value) }))
 		return value
 	}
 	// 把包内相对路径接到某个绝对 URL 的目录后面。rel 已经排除 ..，所以不会逃出该目录
@@ -98,7 +98,7 @@
 		safePath(rel)
 		const base = String(baseUrl || '').replace(/[?#].*$/, '')
 		const cut = base.lastIndexOf('/')
-		if (cut < 0) fail('基准地址不合法：' + base)
+		if (cut < 0) fail(I18n.t('contract.invalidBaseUrl', { base }))
 		return base.slice(0, cut + 1) + rel
 	}
 	// 包入口一律相对 manifest 文件解析（GitHub 上 manifest 常在子目录里，相对仓库根会 404）
@@ -114,64 +114,64 @@
 	// ---------- 清单 ----------
 	function normalizePlatforms(value) {
 		if (value == null) return null
-		if (!Array.isArray(value) || !value.length) fail('platforms 必须是非空数组')
+		if (!Array.isArray(value) || !value.length) fail(I18n.t('contract.platformsMustBeANonEmpty'))
 		const out = []
 		value.forEach(function (p) {
-			if (PLATFORM_TAGS.indexOf(p) === -1) fail('platforms 含未知平台：' + String(p) + '（只接受 web / desktop / mobile）')
+			if (PLATFORM_TAGS.indexOf(p) === -1) fail(I18n.t('contract.platformsHasAnUnknownPlatformOnly', { String: String(p) }))
 			if (out.indexOf(p) === -1) out.push(p)
 		})
 		return out
 	}
 	function normalizeProvides(value) {
-		if (!Array.isArray(value) || !value.length) fail('manifest.provides 必须是非空数组')
-		if (value.length > MAX_PROVIDES) fail('provides 超过 ' + MAX_PROVIDES + ' 项')
+		if (!Array.isArray(value) || !value.length) fail(I18n.t('contract.manifestProvidesMustBeANon'))
+		if (value.length > MAX_PROVIDES) fail(I18n.t('contract.providesHasMoreThanEntries', { MAX_PROVIDES }))
 		const seen = {}
 		return value.map(function (p) {
-			if (!isObject(p)) fail('provides 项必须是对象')
+			if (!isObject(p)) fail(I18n.t('contract.providesEntriesMustBeObjects'))
 			const id = String(p.id == null ? '' : p.id)
-			if (!ID_RE.test(id)) fail('provides 里的协议 id 不合法：' + (id || '(空)'))
-			if (seen[id]) fail('provides 里的协议 id 重复：' + id)
+			if (!ID_RE.test(id)) fail(I18n.t('contract.invalidProtocolIdInProvides', { v: (id || I18n.t('contract.empty')) }))
+			if (seen[id]) fail(I18n.t('contract.duplicateProtocolIdInProvides', { id }))
 			seen[id] = true
 			const name = str(p.name, 80)
-			if (!name) fail('provides 里的协议 ' + id + ' 缺少名称')
+			if (!name) fail(I18n.t('contract.protocolInProvidesHasNoName', { id }))
 			const out = { id: id, name: name }
 			if (p.description != null) out.description = str(p.description, 200)
 			return out
 		})
 	}
 	function normalizeIntegrity(value, entry) {
-		if (!isObject(value)) fail('manifest.integrity 必须是对象')
+		if (!isObject(value)) fail(I18n.t('contract.manifestIntegrityMustBeAnObject'))
 		const keys = Object.keys(value)
-		if (!keys.length) fail('manifest.integrity 不能为空')
-		if (keys.length > 200) fail('manifest.integrity 条目过多')
+		if (!keys.length) fail(I18n.t('contract.manifestIntegrityMustNotBeEmpty'))
+		if (keys.length > 200) fail(I18n.t('contract.manifestIntegrityHasTooManyEntries'))
 		const out = {}
 		keys.forEach(function (k) {
-			safePath(k, 'integrity 路径')
-			if (!INTEGRITY_RE.test(String(value[k]))) fail('integrity 摘要格式不对（应为 sha256-<64 位小写十六进制>）：' + k)
+			safePath(k, I18n.t('contract.integrityPath'))
+			if (!INTEGRITY_RE.test(String(value[k]))) fail(I18n.t('contract.malformedIntegrityDigestExpectedSha25664', { k }))
 			out[k] = value[k]
 		})
-		if (!Object.prototype.hasOwnProperty.call(out, entry)) fail('manifest.integrity 没有声明入口文件：' + entry)
+		if (!Object.prototype.hasOwnProperty.call(out, entry)) fail(I18n.t('contract.manifestIntegrityDoesnTListThe', { entry }))
 		return out
 	}
 	// 只校验、不改写函数体；返回规范化副本（未知顶层键丢弃，避免清单偷偷塞运行参数）
 	function validateManifest(raw) {
-		if (!isObject(raw)) fail('协议清单不是对象')
-		if (raw.schemaVersion !== SCHEMA_VERSION) fail('不支持的清单 schemaVersion：' + String(raw.schemaVersion) + '（v1 只支持 1）')
-		if (raw.kind !== 'protocol') fail('清单 kind 必须是 protocol，实际：' + String(raw.kind))
+		if (!isObject(raw)) fail(I18n.t('contract.theProtocolManifestIsnTAn'))
+		if (raw.schemaVersion !== SCHEMA_VERSION) fail(I18n.t('contract.unsupportedManifestSchemaversionV1OnlySupports', { String: String(raw.schemaVersion) }))
+		if (raw.kind !== 'protocol') fail(I18n.t('contract.manifestKindMustBeProtocolGot', { String: String(raw.kind) }))
 		const runtime = String(raw.runtime == null ? '' : raw.runtime)
-		if (RUNTIMES.indexOf(runtime) === -1) fail('不支持的 runtime：' + (runtime || '(空)') + '（v1 只支持 js）', 'runtime')
-		if (raw.apiVersion !== API_VERSION) fail('不支持的 apiVersion：' + String(raw.apiVersion) + '（v1 只支持 1）', 'apiVersion')
+		if (RUNTIMES.indexOf(runtime) === -1) fail(I18n.t('contract.unsupportedRuntimeV1OnlySupportsJs', { v: (runtime || I18n.t('contract.empty')) }), 'runtime')
+		if (raw.apiVersion !== API_VERSION) fail(I18n.t('contract.unsupportedApiversionV1OnlySupports1', { String: String(raw.apiVersion) }), 'apiVersion')
 		const id = String(raw.id == null ? '' : raw.id)
-		if (!ID_RE.test(id)) fail('包 id 不合法：' + (id || '(空)'))
+		if (!ID_RE.test(id)) fail(I18n.t('contract.invalidPackageId', { v: (id || I18n.t('contract.empty')) }))
 		const name = str(raw.name, 80)
-		if (!name) fail('清单缺少名称')
+		if (!name) fail(I18n.t('contract.theManifestHasNoName'))
 		const version = normalizeVersion(raw.version)
-		const entry = safePath(raw.entry, '入口路径')
-		if (!/\.m?js$/.test(entry)) fail('入口必须是 .js / .mjs 文件：' + entry)
+		const entry = safePath(raw.entry, I18n.t('contract.entryPath'))
+		if (!/\.m?js$/.test(entry)) fail(I18n.t('contract.theEntryMustBeAJs', { entry }))
 		const integrity = normalizeIntegrity(raw.integrity, entry)
 		const provides = normalizeProvides(raw.provides)
 		const license = str(raw.license, 120)
-		if (!license) fail('清单缺少 license')
+		if (!license) fail(I18n.t('contract.theManifestHasNoLicense'))
 		const platforms = normalizePlatforms(raw.platforms)
 		return {
 			schemaVersion: SCHEMA_VERSION,
@@ -194,21 +194,21 @@
 
 	// ---------- 目录 ----------
 	function validateCatalog(raw) {
-		if (!isObject(raw)) fail('目录不是对象')
-		if (raw.schemaVersion !== SCHEMA_VERSION) fail('不支持的目录 schemaVersion：' + String(raw.schemaVersion) + '（v1 只支持 1）')
+		if (!isObject(raw)) fail(I18n.t('contract.theCatalogIsnTAnObject'))
+		if (raw.schemaVersion !== SCHEMA_VERSION) fail(I18n.t('contract.unsupportedCatalogSchemaversionV1OnlySupports', { String: String(raw.schemaVersion) }))
 		const name = str(raw.name, 80)
-		if (!name) fail('目录缺少名称')
-		if (!Array.isArray(raw.packages) || !raw.packages.length) fail('目录 packages 必须是非空数组')
-		if (raw.packages.length > MAX_CATALOG_PACKAGES) fail('目录包数量超过 ' + MAX_CATALOG_PACKAGES)
+		if (!name) fail(I18n.t('contract.theCatalogHasNoName'))
+		if (!Array.isArray(raw.packages) || !raw.packages.length) fail(I18n.t('contract.catalogPackagesMustBeANon'))
+		if (raw.packages.length > MAX_CATALOG_PACKAGES) fail(I18n.t('contract.theCatalogHasMoreThanPackages', { MAX_CATALOG_PACKAGES }))
 		const seen = {}
 		const packages = raw.packages.map(function (p) {
-			if (!isObject(p)) fail('目录包项必须是对象')
-			const manifest = safePath(p.manifest, '清单路径')
-			if (!/manifest\.json$/.test(manifest)) fail('目录里的 manifest 必须指向 manifest.json：' + manifest)
-			if (seen[manifest]) fail('目录里有重复的清单路径：' + manifest)
+			if (!isObject(p)) fail(I18n.t('contract.catalogPackageEntriesMustBeObjects'))
+			const manifest = safePath(p.manifest, I18n.t('contract.manifestPath'))
+			if (!/manifest\.json$/.test(manifest)) fail(I18n.t('contract.catalogManifestMustPointToManifest', { manifest }))
+			if (seen[manifest]) fail(I18n.t('contract.duplicateManifestPathInTheCatalog', { manifest }))
 			seen[manifest] = true
 			const sha256 = String(p.sha256 == null ? '' : p.sha256)
-			if (!isHex64(sha256)) fail('目录里的清单摘要必须是 64 位小写十六进制：' + manifest)
+			if (!isHex64(sha256)) fail(I18n.t('contract.catalogManifestDigestsMustBe64', { manifest }))
 			return { manifest: manifest, sha256: sha256 }
 		})
 		return { schemaVersion: SCHEMA_VERSION, name: name, packages: packages }
@@ -219,32 +219,32 @@
 		return LOCAL_HOSTS.indexOf(String(host || '').toLowerCase()) !== -1
 	}
 	function checkRemoteUrl(u, what) {
-		if (u.username || u.password) fail((what || '地址') + '不能带用户名或密码')
-		if (u.search || u.hash) fail((what || '地址') + '不能带查询串或锚点')
+		if (u.username || u.password) fail(I18n.t('contract.mustNotIncludeAUsernameOr', { v: (what || I18n.t('contract.url')) }))
+		if (u.search || u.hash) fail(I18n.t('contract.mustNotIncludeAQueryOr', { v: (what || I18n.t('contract.url')) }))
 		if (u.protocol === 'https:') return
 		// 只给本地开发放行 http：示例仓库用 python3 -m http.server 托管
 		if (u.protocol === 'http:' && isLocalHost(u.hostname)) return
-		fail((what || '地址') + '必须是 HTTPS（本机 localhost 可用 http）')
+		fail(I18n.t('contract.mustUseHttpsHttpIsAllowed', { v: (what || I18n.t('contract.url')) }))
 	}
 	function segOk(s) { return /^[A-Za-z0-9_.-]+$/.test(s) && s !== '.' && s !== '..' }
 	// 支持：github 仓库地址（可带 @ref 或 /tree/<ref>[/<子目录>]）、catalog.json 或 manifest.json 的直连 URL
 	function resolveSourceUrl(input) {
 		const text = String(input == null ? '' : input).trim()
-		if (!text) fail('请输入协议来源地址')
+		if (!text) fail(I18n.t('contract.enterAProtocolSourceUrl'))
 		let u
-		try { u = new URL(text) } catch (e) { fail('地址格式不对：' + text) }
+		try { u = new URL(text) } catch (e) { fail(I18n.t('contract.malformedUrl', { text })) }
 		checkRemoteUrl(u)
 		const host = u.hostname.toLowerCase()
 		if (host === 'github.com' || host === 'www.github.com') {
 			const parts = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
-			if (parts.length < 2) fail('GitHub 地址需要 组织/仓库：' + text)
+			if (parts.length < 2) fail(I18n.t('contract.aGithubUrlNeedsOrgRepo', { text }))
 			let owner = parts[0]
 			let repo = parts[1]
 			if (/\.git$/.test(repo)) repo = repo.slice(0, -4)
 			let ref = ''
 			let subpath = ''
 			if (parts.length > 2) {
-				if (parts[2] !== 'tree' || parts.length < 4) fail('GitHub 地址只支持 /tree/<ref> 形式：' + text)
+				if (parts[2] !== 'tree' || parts.length < 4) fail(I18n.t('contract.githubUrlsOnlySupportTheTree', { text }))
 				ref = parts[3]
 				if (parts.length > 4) subpath = parts.slice(4).join('/')
 			} else if (repo.indexOf('@') !== -1) {
@@ -252,9 +252,9 @@
 				ref = repo.slice(at + 1)
 				repo = repo.slice(0, at)
 			}
-			if (!segOk(owner) || !segOk(repo)) fail('GitHub 组织或仓库名不合法：' + text)
-			if (ref && !/^[A-Za-z0-9._-]{1,100}$/.test(ref)) fail('GitHub 的 ref 只接受字母、数字、点、下划线与连字符（含斜杠的分支请先换成提交 SHA）：' + ref)
-			if (subpath) safePath(subpath, '仓库子目录')
+			if (!segOk(owner) || !segOk(repo)) fail(I18n.t('contract.invalidGithubOrgOrRepositoryName', { text }))
+			if (ref && !/^[A-Za-z0-9._-]{1,100}$/.test(ref)) fail(I18n.t('contract.aGithubRefMayOnlyContain', { ref }))
+			if (subpath) safePath(subpath, I18n.t('contract.repositorySubdirectory'))
 			return {
 				kind: 'github',
 				owner: owner,
@@ -266,7 +266,7 @@
 			}
 		}
 		const path = u.pathname
-		if (!/\/(catalog|manifest)\.json$/.test(path)) fail('直连地址必须指向 catalog.json 或 manifest.json：' + text)
+		if (!/\/(catalog|manifest)\.json$/.test(path)) fail(I18n.t('contract.aDirectUrlMustPointTo', { text }))
 		const form = /\/catalog\.json$/.test(path) ? 'catalog' : 'manifest'
 		const baseUrl = u.origin + path.slice(0, path.lastIndexOf('/') + 1)
 		return {
@@ -282,11 +282,11 @@
 		return 'https://api.github.com/repos/' + desc.owner + '/' + desc.repo + '/commits/' + encodeURIComponent(r || 'HEAD')
 	}
 	function githubRawBase(desc, sha) {
-		if (!isSha40(sha)) fail('GitHub 提交 SHA 必须是 40 位小写十六进制')
+		if (!isSha40(sha)) fail(I18n.t('contract.aGithubCommitShaMustBe'))
 		return 'https://raw.githubusercontent.com/' + desc.owner + '/' + desc.repo + '/' + sha + '/' + (desc.subpath ? desc.subpath + '/' : '')
 	}
 	function catalogUrlFor(desc, sha) {
-		if (!desc) fail('缺少来源描述')
+		if (!desc) fail(I18n.t('contract.missingSourceDescriptor'))
 		if (desc.kind === 'github') return githubRawBase(desc, sha) + 'catalog.json'
 		return desc.url
 	}
@@ -294,8 +294,8 @@
 	// ---------- 命名空间 / provides / 信任 ----------
 	function namespaceId(sourceKey, protocolId) {
 		const key = String(sourceKey == null ? '' : sourceKey).trim()
-		if (!key || /[\s\u0000-\u001f]/.test(key)) fail('来源键不合法：' + key)
-		if (!ID_RE.test(String(protocolId || ''))) fail('协议 id 不合法：' + String(protocolId))
+		if (!key || /[\s\u0000-\u001f]/.test(key)) fail(I18n.t('contract.invalidSourceKey', { key }))
+		if (!ID_RE.test(String(protocolId || ''))) fail(I18n.t('contract.invalidProtocolId', { String: String(protocolId) }))
 		return key + '/' + protocolId
 	}
 	function splitNamespaced(id) {
@@ -313,14 +313,14 @@
 		return { ok: !missing.length && !extra.length, declared: declared, actual: actual, missing: missing, extra: extra }
 	}
 	function trustKey(record) {
-		if (!isObject(record)) fail('信任记录无效')
+		if (!isObject(record)) fail(I18n.t('contract.invalidTrustRecord'))
 		const source = String(record.source == null ? '' : record.source)
-		if (!source) fail('信任记录缺少来源')
+		if (!source) fail(I18n.t('contract.trustRecordHasNoSource'))
 		const id = String(record.id == null ? '' : record.id)
-		if (!ID_RE.test(id)) fail('信任记录里的包 id 不合法')
+		if (!ID_RE.test(id)) fail(I18n.t('contract.invalidPackageIdInTrustRecord'))
 		const version = normalizeVersion(record.version)
 		const hash = String(record.hash == null ? '' : record.hash)
-		if (!isHex64(hash)) fail('信任记录里的入口摘要必须是 64 位小写十六进制')
+		if (!isHex64(hash)) fail(I18n.t('contract.theEntryDigestInATrust'))
 		return JSON.stringify([source, id, version, hash])
 	}
 	function platformTags(ctx) {
@@ -337,7 +337,7 @@
 	// ---------- 协议对象规范化 ----------
 	function normalizeEnum(value) {
 		if (value == null) return null
-		if (!Array.isArray(value) || !value.length) fail('enum 必须是非空数组')
+		if (!Array.isArray(value) || !value.length) fail(I18n.t('contract.enumMustBeANonEmpty'))
 		const seen = {}
 		return value.map(function (item) {
 			let v
@@ -349,28 +349,28 @@
 				v = item
 				label = item
 			}
-			if (typeof v !== 'number' && typeof v !== 'string') fail('enum 值只能是数字或字符串')
+			if (typeof v !== 'number' && typeof v !== 'string') fail(I18n.t('contract.enumValuesMustBeNumbersOr'))
 			const k = String(v)
-			if (seen[k]) fail('enum 值重复：' + k)
+			if (seen[k]) fail(I18n.t('contract.duplicateEnumValue', { k }))
 			seen[k] = true
 			return { value: v, label: label == null ? k : String(label) }
 		})
 	}
 	function normalizeFields(value) {
 		if (value == null) return []
-		if (!Array.isArray(value)) fail('fields 必须是数组')
-		if (value.length > MAX_FIELDS) fail('字段目录超过 ' + MAX_FIELDS + ' 项')
+		if (!Array.isArray(value)) fail(I18n.t('contract.fieldsMustBeAnArray'))
+		if (value.length > MAX_FIELDS) fail(I18n.t('contract.theFieldCatalogHasMoreThan', { MAX_FIELDS }))
 		const seen = {}
 		return value.map(function (raw) {
-			if (!isObject(raw)) fail('字段定义必须是对象')
+			if (!isObject(raw)) fail(I18n.t('contract.fieldDefinitionsMustBeObjects'))
 			const key = String(raw.key == null ? '' : raw.key)
-			if (!FIELD_KEY_RE.test(key)) fail('字段 key 不合法：' + (key || '(空)'))
-			if (seen[key]) fail('字段 key 重复：' + key)
+			if (!FIELD_KEY_RE.test(key)) fail(I18n.t('contract.invalidFieldKey', { v: (key || I18n.t('contract.empty')) }))
+			if (seen[key]) fail(I18n.t('contract.duplicateFieldKey', { key }))
 			seen[key] = true
 			const name = str(raw.name, 80)
-			if (!name) fail('字段 ' + key + ' 缺少名称')
+			if (!name) fail(I18n.t('contract.fieldHasNoName', { key }))
 			const type = String(raw.type == null ? '' : raw.type)
-			if (FIELD_TYPES.indexOf(type) === -1) fail('字段 ' + key + ' 的类型不支持：' + (type || '(空)'))
+			if (FIELD_TYPES.indexOf(type) === -1) fail(I18n.t('contract.fieldHasAnUnsupportedType', { key, v: (type || I18n.t('contract.empty')) }))
 			// 保留协议自己的附加属性（例如 SEK 的 tag / fid / step），宿主只认下面这些
 			const out = Object.assign({}, raw)
 			out.key = key
@@ -380,65 +380,65 @@
 			out.write = raw.write !== false
 			// random 是随机读写的**显式许可**：只有 true 才进随机，缺省 / 任何非布尔值都不进（危险字段靠协议目录自己排除）；
 			// 批量配置不受影响。非布尔值直接拒绝注册，避免 'false' / 0 这类 truthy 误用
-			if (raw.random != null && typeof raw.random !== 'boolean') fail('字段 ' + key + ' 的 random 必须是布尔')
+			if (raw.random != null && typeof raw.random !== 'boolean') fail(I18n.t('contract.fieldRandomMustBeABoolean', { key }))
 			out.random = raw.random === true
 			if (raw.unit != null) out.unit = str(raw.unit, 16)
 			if (raw.group != null) out.group = str(raw.group, 60)
 			;['min', 'max', 'step'].forEach(function (k) {
 				if (raw[k] == null) { delete out[k]; return }
-				if (typeof raw[k] !== 'number' || !isFinite(raw[k])) fail('字段 ' + key + ' 的 ' + k + ' 必须是数字')
+				if (typeof raw[k] !== 'number' || !isFinite(raw[k])) fail(I18n.t('contract.fieldMustBeANumber', { key, k }))
 			})
-			if (raw.min != null && raw.max != null && raw.min > raw.max) fail('字段 ' + key + ' 的 min 大于 max')
-			if (raw.step != null && !(raw.step > 0)) fail('字段 ' + key + ' 的 step 必须大于 0')
+			if (raw.min != null && raw.max != null && raw.min > raw.max) fail(I18n.t('contract.fieldMinIsGreaterThanMax', { key }))
+			if (raw.step != null && !(raw.step > 0)) fail(I18n.t('contract.fieldStepMustBeGreaterThan', { key }))
 			out.enum = normalizeEnum(raw.enum)
 			return out
 		})
 	}
 	function normalizeQueries(value) {
 		if (value == null) return []
-		if (!Array.isArray(value)) fail('queries 必须是数组')
-		if (value.length > MAX_FIELDS) fail('查询目录超过 ' + MAX_FIELDS + ' 项')
+		if (!Array.isArray(value)) fail(I18n.t('contract.queriesMustBeAnArray'))
+		if (value.length > MAX_FIELDS) fail(I18n.t('contract.theQueryCatalogHasMoreThan', { MAX_FIELDS }))
 		const seen = {}
 		return value.map(function (raw) {
-			if (!isObject(raw)) fail('查询用例必须是对象')
+			if (!isObject(raw)) fail(I18n.t('contract.queriesMustBeObjects'))
 			const key = String(raw.key == null ? '' : raw.key)
-			if (!FIELD_KEY_RE.test(key)) fail('查询用例 key 不合法：' + (key || '(空)'))
-			if (seen[key]) fail('查询用例 key 重复：' + key)
+			if (!FIELD_KEY_RE.test(key)) fail(I18n.t('contract.invalidQueryKey', { v: (key || I18n.t('contract.empty')) }))
+			if (seen[key]) fail(I18n.t('contract.duplicateQueryKey', { key }))
 			seen[key] = true
 			const name = str(raw.name, 80)
-			if (!name) fail('查询用例 ' + key + ' 缺少名称')
+			if (!name) fail(I18n.t('contract.queryHasNoName', { key }))
 			return Object.assign({}, raw, { key: key, name: name })
 		})
 	}
 	function normalizeSession(value) {
 		if (value == null) return null
-		if (!isObject(value)) fail('session 必须是对象')
+		if (!isObject(value)) fail(I18n.t('contract.sessionMustBeAnObject'))
 		const out = {}
 		SESSION_HOOKS.forEach(function (k) {
 			const v = value[k]
 			if (v == null) return
-			if (!isFunction(v)) fail('session.' + k + ' 必须是函数')
+			if (!isFunction(v)) fail(I18n.t('contract.sessionMustBeAFunction', { k }))
 			out[k] = v
 		})
 		;['idleMs', 'keepaliveTimeoutMs'].forEach(function (k) {
 			if (value[k] == null) return
-			if (typeof value[k] !== 'number' || !isFinite(value[k]) || value[k] <= 0) fail('session.' + k + ' 必须是正数')
+			if (typeof value[k] !== 'number' || !isFinite(value[k]) || value[k] <= 0) fail(I18n.t('contract.sessionMustBeAPositiveNumber', { k }))
 			out[k] = value[k]
 		})
 		return out
 	}
 	function normalizeProtocolDef(def) {
-		if (!isObject(def)) fail('协议对象无效')
+		if (!isObject(def)) fail(I18n.t('contract.invalidProtocolObject'))
 		const name = str(def.name, 80)
-		if (!name) fail('协议缺少名称')
-		if (!isFunction(def.parseFrame)) fail('协议缺少 parseFrame')
-		if (isAsyncFunction(def.parseFrame)) fail('协议 parseFrame 不能是 async 函数（宿主按同步契约调用）')
+		if (!name) fail(I18n.t('contract.theProtocolHasNoName'))
+		if (!isFunction(def.parseFrame)) fail(I18n.t('contract.theProtocolHasNoParseframe'))
+		if (isAsyncFunction(def.parseFrame)) fail(I18n.t('contract.protocolParseframeCanTBeAsync'))
 		const out = { name: name, parseFrame: def.parseFrame }
 		;['formatFrame', 'logView', 'findFrame', 'byteMap', 'buildDownFrame', 'metrics', 'buildRead', 'buildWrite', 'buildQuery', 'matchResponse', 'readField', 'mountPanel'].forEach(function (k) {
 			const v = def[k]
 			if (v == null) { out[k] = null; return }
-			if (!isFunction(v)) fail('协议 ' + name + ' 的 ' + k + ' 必须是函数')
-			if (isAsyncFunction(v)) fail('协议 ' + name + ' 的 ' + k + ' 不能是 async 函数（宿主按同步契约调用）')
+			if (!isFunction(v)) fail(I18n.t('contract.protocolMustBeAFunction', { name, k }))
+			if (isAsyncFunction(v)) fail(I18n.t('contract.protocolCanTBeAsyncThe', { name, k }))
 			out[k] = v
 		})
 		out.presets = Array.isArray(def.presets) ? def.presets.slice() : []

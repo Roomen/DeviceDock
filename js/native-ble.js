@@ -8,14 +8,14 @@
 	}
 	function filterDevices(devices, name, service) {
 		const query = String(name || '').trim().toLowerCase(), u = service ? uuid(service) : null
-		if (service && !u) throw fail('广播服务筛选须为完整 128-bit UUID')
+		if (service && !u) throw fail(I18n.t('nativeBle.theAdvertisedServiceFilterMustBe'))
 		return devices.filter(d => (!query || d.name.toLowerCase().includes(query)) && (!u || d.services.includes(u)))
 	}
 	// Quick filters use advertisement metadata only; partial UUIDs are intentional here.
 	function visibleDevices(devices, query = '', minimum = '', sort = 'signal') {
 		const q = String(query).trim().toLowerCase(), min = String(minimum).trim()
 		const threshold = min === '' ? null : Number(min)
-		if (threshold !== null && (!Number.isFinite(threshold) || threshold < -127 || threshold > 20)) throw fail('最低 RSSI 须为 -127 到 20 dBm')
+		if (threshold !== null && (!Number.isFinite(threshold) || threshold < -127 || threshold > 20)) throw fail(I18n.t('nativeBle.minimumRssiMustBeBetween127'))
 		return devices.filter(d => (!q || [d.name, d.alias, ...(d.services || [])].some(v => String(v || '').toLowerCase().includes(q))) &&
 			(threshold === null || Number.isFinite(d.rssi) && d.rssi >= threshold)).sort((a, b) => {
 			const byName = String(a.alias || a.name).localeCompare(String(b.alias || b.name))
@@ -25,16 +25,16 @@
 	function selector(c) { return { service: c.service, characteristic: c.characteristic, props: c.props } }
 	function mapping(chars, txId, rxId, response) {
 		const tx = chars.find(c => String(c.id) === String(txId)), rx = chars.find(c => String(c.id) === String(rxId))
-		if (!tx || !rx || !(tx.props & (response ? 8 : 4)) || !(rx.props & 48)) throw fail('请选择支持当前写模式的 TX 和支持通知 / 指示的 RX')
+		if (!tx || !rx || !(tx.props & (response ? 8 : 4)) || !(rx.props & 48)) throw fail(I18n.t('nativeBle.chooseATxThatSupportsThe'))
 		return { tx: selector(tx), rx: selector(rx), response: !!response }
 	}
 	function match(chars, saved) {
 		const find = s => {
 			const list = s && chars.filter(c => c.service === s.service && c.characteristic === s.characteristic && c.props === s.props)
-			if (!list || list.length !== 1) throw fail('保存的 UUID / 属性不匹配或实例不唯一，请重新选择 TX/RX')
+			if (!list || list.length !== 1) throw fail(I18n.t('nativeBle.theSavedUuidsPropertiesDonT'))
 			return list[0].id
 		}
-		if (!saved || typeof saved.response !== 'boolean') throw fail('没有有效的已保存映射')
+		if (!saved || typeof saved.response !== 'boolean') throw fail(I18n.t('nativeBle.noValidSavedMapping'))
 		const tx = find(saved.tx), rx = find(saved.rx)
 		mapping(chars, tx, rx, saved.response)
 		return { tx, rx }
@@ -55,13 +55,13 @@
 		}
 		let ready = deps.invoke('ble_release_owned').then(g => { generation = g }).finally(() => { initializing = false })
 		ready.catch(() => { releaseFailed = true })
-		function check(token) { if (token !== epoch || deps.blocked()) throw fail('BLE 操作已取消或应用不可用') }
+		function check(token) { if (token !== epoch || deps.blocked()) throw fail(I18n.t('nativeBle.bleOperationCanceledOrTheApp')) }
 		async function call(fn) { busy++; try { return await fn() } finally { busy-- } }
 		async function release() {
 			if (releasing) return releasing
 			epoch++
 			if (scanning) scanning.accepting = false
-			if (selected && selected.sink) selected.sink.lost(fail('BLE 会话已释放'))
+			if (selected && selected.sink) selected.sink.lost(fail(I18n.t('nativeBle.bleSessionReleased')))
 			if (selected) selected.alive = false
 			if (pending) pending.alive = false
 			releasing = (async () => {
@@ -91,8 +91,8 @@
 			return call(async () => {
 				await ready; check(token)
 				await stopScan(); check(token)
-				if (abort && abort.aborted) throw fail('BLE 连接已取消')
-				if (selected || pending || releaseFailed) throw fail('请先关闭现有 BLE 连接，或重试释放')
+				if (abort && abort.aborted) throw fail(I18n.t('nativeBle.bleConnectionCanceled'))
+				if (selected || pending || releaseFailed) throw fail(I18n.t('nativeBle.closeTheCurrentBleConnectionFirst'))
 				const record = { device, handle: null, alive: true, sink: null, chars: [], token, lost: false }
 				pending = record
 				if (abort) abort.record = record
@@ -106,14 +106,14 @@
 					}
 					if (!record.alive || token !== epoch || e.type !== 'lost') return
 					record.lost = true
-					if (record.sink) record.sink.lost(fail('BLE 连接已断开'))
+					if (record.sink) record.sink.lost(fail(I18n.t('nativeBle.bleConnectionLost')))
 				}
 				try {
 					const result = await deps.invoke('ble_open', { deviceId: device.deviceId, ownerGeneration: generation, onData, onEvent })
 					record.handle = result.handle; record.chars = result.characteristics
 					check(token)
-					if (abort && abort.aborted) throw fail('BLE 连接已取消')
-					if (record.lost) throw fail('BLE 在发现服务期间断开')
+					if (abort && abort.aborted) throw fail(I18n.t('nativeBle.bleConnectionCanceled'))
+					if (record.lost) throw fail(I18n.t('nativeBle.bleDisconnectedDuringServiceDiscovery'))
 					return record
 				} catch (e) { await close(record); throw e }
 			})
@@ -125,7 +125,7 @@
 			const keyOf = s => [s.service, s.characteristic, s.props]
 			const key = JSON.stringify([device.deviceId, keyOf(saved.tx), keyOf(saved.rx), saved.response])
 			check(record.token)
-			if (record !== pending || !record.alive || record.lost || record.handle == null) throw fail('BLE 发现连接已失效，请重新选择')
+			if (record !== pending || !record.alive || record.lost || record.handle == null) throw fail(I18n.t('nativeBle.theBleDiscoveryConnectionIsNo'))
 			// Reuse only an unbound, fully closed stream and a unique mapping. Ambiguous first-use
 			// instance choices must get a fresh stream instead of mutating an older choice.
 			let unique = false
@@ -149,13 +149,13 @@
 						const initial = first; first = false
 						live.sink = sink
 						try {
-							if (abort.aborted) throw fail('BLE 连接已取消')
-							if (!live.alive || live.lost || live.handle == null) throw fail('BLE 连接已失效，请重新选择')
+							if (abort.aborted) throw fail(I18n.t('nativeBle.bleConnectionCanceled'))
+							if (!live.alive || live.lost || live.handle == null) throw fail(I18n.t('nativeBle.theBleConnectionIsNoLonger'))
 							const ids = initial ? initialIds : match(live.chars, saved)
 							await deps.invoke('ble_start', { handle: live.handle, profile: saved, txId: ids.tx, rxId: ids.rx })
 							check(record.token)
-							if (abort.aborted) throw fail('BLE 连接已取消')
-							if (live.lost) throw fail('BLE 订阅期间断开')
+							if (abort.aborted) throw fail(I18n.t('nativeBle.bleConnectionCanceled'))
+							if (live.lost) throw fail(I18n.t('nativeBle.bleDisconnectedWhileSubscribing'))
 							selected = live; if (pending === live) pending = null
 							ports.add(port); choices.set(port, entry); prunePorts()
 						} catch (e) { await close(live); throw e }
@@ -172,7 +172,7 @@
 				},
 				write(bytes) {
 					check(record.token)
-					if (!live || !live.alive || live.lost) return Promise.reject(fail('BLE 已断开'))
+					if (!live || !live.alive || live.lost) return Promise.reject(fail(I18n.t('nativeBle.bleDisconnected')))
 					return call(() => deps.invoke('ble_write', { handle: live.handle, data: Array.from(bytes) }))
 				},
 				close() { return close(live) },
@@ -204,7 +204,7 @@
 			return { port, discard: () => entry.discard(record) }
 		}
 		function scan(onDevice = () => {}) {
-			if (scanning || selected || pending || releaseFailed) return Promise.reject(fail('请先停止扫描或关闭现有 BLE 连接'))
+			if (scanning || selected || pending || releaseFailed) return Promise.reject(fail(I18n.t('nativeBle.stopScanningOrCloseTheCurrent')))
 			const token = epoch, onEvent = new deps.Channel()
 			let started, failed
 			const state = { token, accepting: true, started: new Promise((resolve, reject) => { started = resolve; failed = reject }) }
@@ -216,7 +216,7 @@
 				if (!state.accepting || token !== epoch || deps.blocked() || event.type !== 'device') return
 				const d = event.device, old = devices.get(d.deviceId)
 				if (!old && devices.size >= 256) return
-				const next = { ...old, ...d, name: d.name || old && old.name || '未命名 BLE 设备',
+				const next = { ...old, ...d, name: d.name || old && old.name || I18n.t('nativeBle.unnamedBleDevice'),
 					services: Array.from(new Set([...(old && old.services || []), ...(d.services || [])])).slice(0, 64), seen: Date.now() }
 				devices.set(d.deviceId, next); onDevice({ ...next, ...preferences.get(d.deviceId) })
 			}
@@ -246,7 +246,7 @@
 			remember(id, value) { if (devices.has(id)) preferences.set(id, { ...preferences.get(id), ...value }) },
 			canSelect: () => !selected && !pending && !releaseFailed,
 			canRetryRelease: () => releaseFailed && !selected,
-			releasePicker() { if (selected) return Promise.reject(fail('请使用本路断开关闭已连接设备')); return release() },
+			releasePicker() { if (selected) return Promise.reject(fail(I18n.t('nativeBle.useThisLaneSDisconnectTo'))); return release() },
 			inspect, createPort, close, release, ports: () => { prunePorts(); return Array.from(ports) },
 			isBusyForUpdate: () => !!(initializing || scanning || busy || pending || releasing || releaseFailed),
 		}
