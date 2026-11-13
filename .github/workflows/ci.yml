@@ -49,9 +49,10 @@ jobs:
       - run: node desktop/scripts/stage-web.mjs
       - uses: dtolnay/rust-toolchain@stable
       # 缓存 ~/.cargo 与各 workspace 的 target 依赖产物（工作区自身产物不入缓存，增量构建已被 action 关掉）。
-      # shared-key 按 OS 分平台、key 按 profile 区分：debug/test 与 release 的依赖产物不同，
-      # 同一条缓存键被先写入者占住后另一 profile 就再也存不进去，所以两者各留一条条目；
-      # ~/.cargo 的 registry 与下载缓存随条目一起保存，因此两条条目都免重复下载。
+      # 设了 shared-key 时 action 只用 prefix-key + shared-key + 运行环境/锁文件哈希拼缓存键，
+      # key 输入完全不参与（见 src/config.ts 的 CacheConfig.new），所以区分 debug 与 release
+      # 只能写进 shared-key：这里用 -debug，desktop-release 的 build 作业用 -release-<target>。
+      # 两条条目各自保存 ~/.cargo 的 registry 与下载缓存，都不会被另一 profile 抢走。
       # 只有主干 push 才写缓存，PR 与功能分支只读恢复，避免分支缓存挤掉主干。
       - uses: Swatinem/rust-cache@v2
         with:
@@ -59,8 +60,7 @@ jobs:
             desktop/src-tauri
             desktop/portable-update-common
             desktop/portable-updater
-          shared-key: cargo-${{ runner.os }}
-          key: debug
+          shared-key: cargo-${{ runner.os }}-debug
           cache-on-failure: true
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
