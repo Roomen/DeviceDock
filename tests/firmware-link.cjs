@@ -4,6 +4,7 @@
 // 升级占用期间拒绝换口与准备应用更新、重连意图存 sessionStorage。
 // 按锚点截取 js/common.js(与 tests/port-select-guard.cjs 相同的锚点，外加 `// 固件连接的占用者` 到 `var ansi_up`、
 // `const SERIAL_WANT_OPEN_KEY = ` 到 `// reload 自动重连已整体移到`)，这些注释是锚点，别删。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')
