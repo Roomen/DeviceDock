@@ -8,7 +8,7 @@
 	function blockers(env) {
 		const reasons = env.Workbench && env.Workbench.updateBlockers ? env.Workbench.updateBlockers().slice() : []
 		if (env.serialApi && env.serialApi.isPinned()) reasons.push('协议事务')
-		for (const [name, label] of [['ble', 'BLE 桥操作'], ['classic', '经典蓝牙操作'], ['computer-ble', 'BLE 操作'], ['connection-source', '连接选择'], ['plugin-host', '插件后台任务']]) {
+		for (const [name, label] of [['classic', '经典蓝牙操作'], ['computer-ble', 'BLE 操作'], ['connection-source', '连接选择'], ['plugin-host', '插件后台任务']]) {
 			const transport = env.AppPlatform && env.AppPlatform.service(name)
 			if (transport && transport.isBusyForUpdate && transport.isBusyForUpdate()) {
 				const labels = transport.busyLabels && transport.busyLabels()
@@ -88,8 +88,6 @@
 						emit({ state: 'blocked', reasons: reasons })
 					} else {
 						freeze(true)
-						const ble = env.AppPlatform && env.AppPlatform.service('ble')
-						if (ble) await ble.release()
 						const classic = env.AppPlatform && env.AppPlatform.service('classic')
 						if (classic) await classic.release()
 						const computerBle = env.AppPlatform && env.AppPlatform.service('computer-ble')

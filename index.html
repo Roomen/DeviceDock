@@ -86,7 +86,6 @@
                     <i class="icon icon-lg icon-package"></i>
                     <span class="rail-label">固件打包</span>
                 </button>
-                <button class="rail-item" data-view="view-ble" data-feature="view.ble" title="USB BLE 桥 · 外置桥连接与 GATT 配置"><i class="icon icon-lg icon-bluetooth"></i><span class="rail-label">USB BLE 桥</span></button>
             </div>
             <div class="rail-bottom">
                 <div class="dropend rail-config">
@@ -861,9 +860,6 @@
                 <div id="serial-statusbar" role="status" aria-live="off"></div>
             </div>
 
-            <!--USB BLE 桥视图-->
-            <div id="view-ble" class="app-view" data-feature="view.ble"><div id="ble-workbench"></div></div>
-
             <!--固件打包视图（独立工具，与串口无关）-->
             <div id="view-fw-pack" class="app-view">
                 <!--顶栏：与通信调试的连接条同高同样式；生成动作放右侧-->
@@ -1073,8 +1069,6 @@
     <script src="js/transport-ble.js"></script>
     <script src="js/transport-native-serial.js"></script>
     <script src="js/platform-boot.js"></script>
-    <script src="js/ble-bridge.js"></script>
-    <script src="js/native-ble-bridge.js"></script>
     <script src="js/native-classic.js"></script>
     <script src="js/native-ble.js"></script>
     <script src="js/native-shell.js"></script>
@@ -1111,7 +1105,6 @@
     <script src="js/modern-firmware.js"></script>
     <script src="js/app-update.js"></script>
     <script src="js/mcp-ring.js"></script>
-    <script src="js/ble-panel.js"></script>
     <script src="js/mcp-bridge.js"></script>
     <script src="js/mcp-service.js"></script>
     <script src="js/plugin-rpc.js"></script>
