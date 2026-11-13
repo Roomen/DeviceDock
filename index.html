@@ -224,7 +224,7 @@
                     <div class="connect-bar-section connect-bar-dual" id="serial-dual-ctrl" style="display:none">
                         <!-- 会话 A -->
                         <div class="dual-session-row">
-                            <input data-i18n-title="html.laneALabelEditable" class="dual-session-label" id="serial-session-a-label" data-session="A" value="A路" maxlength="8" title="A路 标签（可编辑）">
+                            <input data-i18n-title="html.laneALabelEditable" class="dual-session-label" id="serial-session-a-label" data-i18n-value="common.laneA" data-session="A" value="A路" maxlength="8" title="A路 标签（可编辑）">
                             <div class="serial-device-chip is-empty" id="serial-chip-a">
                                 <div class="dual-status" id="serial-status-a">
                                     <div class="serial-status-indicator disconnected">
@@ -242,7 +242,7 @@
                         </div>
                         <!-- 会话 B -->
                         <div class="dual-session-row">
-                            <input data-i18n-title="html.laneBLabelEditable" class="dual-session-label" id="serial-session-b-label" data-session="B" value="B路" maxlength="8" title="B路 标签（可编辑）">
+                            <input data-i18n-title="html.laneBLabelEditable" class="dual-session-label" id="serial-session-b-label" data-i18n-value="common.laneB" data-session="B" value="B路" maxlength="8" title="B路 标签（可编辑）">
                             <div class="serial-device-chip is-empty" id="serial-chip-b">
                                 <div class="dual-status" id="serial-status-b">
                                     <div class="serial-status-indicator disconnected">
@@ -854,6 +854,7 @@
                 <div class="settings-layout">
                     <nav data-i18n-aria-label="html.settingsGroups" class="settings-nav" role="tablist" aria-label="配置分组" aria-orientation="vertical">
                         <button data-i18n="html.appearance" class="settings-nav-item" type="button" role="tab" aria-selected="true" data-settings-group="appearance">外观</button>
+                        <button data-i18n="html.language" class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="language">语言</button>
                         <button data-i18n="html.parametersBackup" class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="backup">参数与备份</button>
                         <button data-i18n="html.clientServices" class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="services">客户端服务</button>
                         <button data-i18n="html.protocolSources" class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="protocols" data-feature="panel.protocol-sources">协议来源</button>
@@ -874,6 +875,24 @@
                                         <button type="button" role="radio" data-theme-choice="auto"><i class="icon icon-contrast"></i><span data-i18n="html.followSystem">跟随系统</span><i class="icon icon-check theme-check"></i></button>
                                         <button type="button" role="radio" data-theme-choice="light"><i class="icon icon-sun"></i><span data-i18n="html.light">浅色</span><i class="icon icon-check theme-check"></i></button>
                                         <button type="button" role="radio" data-theme-choice="dark"><i class="icon icon-moon-star"></i><span data-i18n="html.dark">深色</span><i class="icon icon-check theme-check"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section data-i18n-aria-label="html.language" class="settings-group" data-settings-group="language" role="tabpanel" aria-label="语言">
+                            <h2 data-i18n="html.language" class="settings-group-title">语言</h2>
+                            <p data-i18n="html.languageNote" class="settings-group-note">跟随系统时按系统语言选择中文或英文；切换后页面会重新加载，已连接的串口与日志会恢复。插件跟随这里的语言。</p>
+                            <div class="settings-card">
+                                <div class="settings-row">
+                                    <div class="settings-row-main">
+                                        <div data-i18n="html.interfaceLanguage" class="settings-row-label">界面语言</div>
+                                        <div data-i18n="html.interfaceLanguageNote" class="settings-row-note">协议字段名与解析结果保持协议原文，设备数据永不翻译。</div>
+                                    </div>
+                                    <div data-i18n-aria-label="html.interfaceLanguage" id="language-switch" role="radiogroup" aria-label="界面语言" class="settings-theme">
+                                        <button type="button" role="radio" data-locale-choice="system"><i class="icon icon-monitor"></i><span data-i18n="html.followSystem">跟随系统</span><i class="icon icon-check theme-check"></i></button>
+                                        <button type="button" role="radio" data-locale-choice="zh-CN"><i class="icon icon-languages"></i><span lang="zh-CN">中文</span><i class="icon icon-check theme-check"></i></button>
+                                        <button type="button" role="radio" data-locale-choice="en"><i class="icon icon-languages"></i><span lang="en">English</span><i class="icon icon-check theme-check"></i></button>
                                     </div>
                                 </div>
                             </div>
@@ -1216,6 +1235,7 @@
     <script src="js/sek-test-profile.js"></script>
     <!-- 配置视图先于管理面板加载：协议来源与插件的面板内容渲染进配置页的分组里 -->
     <script src="js/settings-view.js"></script>
+    <script src="js/language-switch.js"></script>
     <script src="js/protocol-sources-panel.js"></script>
     <script src="js/test-flow.js"></script>
     <script src="js/test-flow-panel.js"></script>

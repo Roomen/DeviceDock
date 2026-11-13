@@ -110,6 +110,15 @@
 	function themeState() {
 		return Rpc.themePayload(doc.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light', readTokens())
 	}
+	function localeState() {
+		return Rpc.localePayload(root.I18n ? root.I18n.locale : 'zh-CN')
+	}
+	function pushLocale() {
+		const payload = localeState()
+		views.forEach(function (view) {
+			if (view.ready) postEvent(view, Rpc.eventEnvelope('app.locale', payload))
+		})
+	}
 	function pushTheme() {
 		const payload = themeState()
 		views.forEach(function (view) {
@@ -150,6 +159,8 @@
 				plugin: { id: plugin.id, name: plugin.name, version: plugin.version },
 				platform: platformInfo(),
 			}, themeState())))
+			// 界面语言是状态事件：每次 load 都推一份（切换语言会整页重载，插件随之重新 load 并收到新值）
+			postEvent(view, Rpc.eventEnvelope('app.locale', localeState()))
 		})
 		// 自定义协议加载失败（包被停用、文件校验失败）时不弹浏览器错误页：换成宿主自己的提示
 		iframe.addEventListener('error', function () { failView(view, I18n.t('pluginHost.pluginPageFailedToLoad')) })
@@ -694,6 +705,8 @@
 		failedResources: failedResources,
 		list: function () { return plugins.slice() },
 		order: function () { return order.slice() },
+		// 语言变化目前靠整页重载送达；页内改语言的入口出现时调用它把新值推给所有已加载的插件
+		pushLocale: pushLocale,
 	}
 	P.provide('plugin-host', {
 		isBusyForUpdate: isBusyForUpdate,

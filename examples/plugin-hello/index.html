@@ -141,7 +141,7 @@
 <body>
 	<header class="plg-head">
 		<div>
-			<h1 class="plg-title">Hello 插件示例</h1>
+			<h1 class="plg-title" data-t="title">Hello 插件示例</h1>
 			<div class="plg-muted" id="host-summary">正在连接 DeviceDock 宿主…</div>
 		</div>
 		<div class="plg-badges">
@@ -153,19 +153,19 @@
 	<main class="plg-grid">
 		<section class="plg-card">
 			<div class="plg-card-head">
-				<h2 class="plg-card-title">设备与连接 (device.read)</h2>
-				<button type="button" class="plg-btn" id="btn-refresh-devices">刷新</button>
+				<h2 class="plg-card-title" data-t="devicesTitle">设备与连接 (device.read)</h2>
+				<button type="button" class="plg-btn" id="btn-refresh-devices" data-t="refresh">刷新</button>
 			</div>
-			<div class="plg-muted" id="lanes-summary">各路状态加载中…</div>
+			<div class="plg-muted" id="lanes-summary" data-t="lanesLoading">各路状态加载中…</div>
 			<ul class="plg-list" id="ports-list">
-				<li class="plg-item">尚未读取串口列表</li>
+				<li class="plg-item" data-t="portsNotRead">尚未读取串口列表</li>
 			</ul>
 		</section>
 
 		<section class="plg-card">
 			<div class="plg-card-head">
-				<h2 class="plg-card-title">串口 RX 计数 (serial.io)</h2>
-				<button type="button" class="plg-btn" id="btn-reset-rx">清零</button>
+				<h2 class="plg-card-title" data-t="rxTitle">串口 RX 计数 (serial.io)</h2>
+				<button type="button" class="plg-btn" id="btn-reset-rx" data-t="reset">清零</button>
 			</div>
 			<div class="plg-figure" id="rx-total">0 B</div>
 			<div class="plg-muted" id="rx-lanes">S: 0 B · A: 0 B · B: 0 B</div>
@@ -174,12 +174,12 @@
 
 		<section class="plg-card">
 			<div class="plg-card-head">
-				<h2 class="plg-card-title">后台任务与日志 (app / log)</h2>
+				<h2 class="plg-card-title" data-t="busyTitle">后台任务与日志 (app / log)</h2>
 			</div>
 			<div class="plg-muted" id="busy-status">当前未持有 busy 源（应用可正常更新）</div>
 			<div class="plg-actions">
 				<button type="button" class="plg-btn plg-btn--primary" id="btn-toggle-busy">申请 busy 源</button>
-				<button type="button" class="plg-btn" id="btn-write-log">写入宿主日志</button>
+				<button type="button" class="plg-btn" id="btn-write-log" data-t="writeLog">写入宿主日志</button>
 			</div>
 		</section>
 	</main>

@@ -54,7 +54,7 @@
 	}
 
 	// 宿主 → 插件的事件名(插件端订阅前不需要授权，内容本身来自已授权的方法)
-	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'claim.gap', 'claim.state', 'app.busy', 'events.dropped']
+	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'claim.gap', 'claim.state', 'app.busy', 'app.locale', 'events.dropped']
 
 	const ERROR_TEXT = {
 		bad_request: I18n.t('pluginRpc.malformedRequest'),
@@ -75,7 +75,7 @@
 	// 并保证送达；数据流事件（串口字节、解析帧、BLE 广播）按配额限流，超额丢弃并报 events.dropped。
 	const STATE_EVENTS = [
 		'ready', 'theme', 'theme-change', 'device.ports', 'device.lane',
-		'device.ble-error', 'claim.state', 'app.busy',
+		'device.ble-error', 'claim.state', 'app.busy', 'app.locale',
 	]
 	const DATA_EVENTS = ['serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'device.ble']
 	// 直发事件（DIRECT_EVENTS）：宿主合批 / 缺口通知本身就是可靠通道，不经过任何配额——
@@ -286,6 +286,11 @@
 		return { theme: theme === 'dark' ? 'dark' : 'light', tokens: isObject(tokens) ? tokens : {} }
 	}
 
+	// 界面语言载荷：宿主只有 zh-CN / en 两种，别的值一律归成 en（与 I18n 的跟随系统规则一致）
+	function localePayload(locale) {
+		return { locale: locale === 'zh-CN' ? 'zh-CN' : 'en' }
+	}
+
 	// 能力清单(安装确认框、管理面板)
 	function capabilitySummary(caps) {
 		return (Array.isArray(caps) ? caps : []).map(function (id) {
@@ -387,7 +392,7 @@
 		estimateSize, newEventState, eventAdmission, newStateEventState, stateEventPlan,
 		newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,
-		resultEnvelope, errorEnvelope, eventEnvelope, themePayload, capabilitySummary,
+		resultEnvelope, errorEnvelope, eventEnvelope, themePayload, localePayload, capabilitySummary,
 		pluginChanged, changedCapabilities, orderPlugins, movePlugin, movePluginTo, lanesForMode, toBytes,
 	}
 

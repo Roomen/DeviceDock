@@ -10260,18 +10260,18 @@ html[data-layout='modern'] #activity-rail .rail-item { flex-shrink: 0; }
 	html[data-layout='modern'] #activity-rail .rail-item { padding: 5px 0; gap: 2px; }
 	html[data-layout='modern'] #activity-rail .rail-bottom { gap: 2px; }
 }
-#theme-switch { display: flex; flex-direction: column; gap: 3px; }
-#theme-switch button {
+#theme-switch, #language-switch { display: flex; flex-direction: column; gap: 3px; }
+#theme-switch button, #language-switch button {
 	display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px;
 	padding: 8px 10px; border: 0; border-radius: 6px; background: transparent;
 	color: var(--text-primary); font: inherit; text-align: left;
 }
-#theme-switch button > i { width: 18px; text-align: center; }
-#theme-switch button .theme-check { margin-left: auto; visibility: hidden; }
-#theme-switch button.active .theme-check { visibility: visible; }
-#theme-switch button:hover { background: var(--bg-surface-hover); }
-#theme-switch button.active { background: var(--accent-light); color: var(--accent); }
-#theme-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#theme-switch button > i, #language-switch button > i { width: 18px; text-align: center; }
+#theme-switch button .theme-check, #language-switch button .theme-check { margin-left: auto; visibility: hidden; }
+#theme-switch button.active .theme-check, #language-switch button.active .theme-check { visibility: visible; }
+#theme-switch button:hover, #language-switch button:hover { background: var(--bg-surface-hover); }
+#theme-switch button.active, #language-switch button.active { background: var(--accent-light); color: var(--accent); }
+#theme-switch button:focus-visible, #language-switch button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rail-mcp { position: relative; }
 .rail-status-dot {
 	position: absolute; top: 6px; right: 9px; width: 8px; height: 8px;

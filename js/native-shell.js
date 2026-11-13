@@ -295,6 +295,8 @@
 			connected: !!(h && h.isOpen(mainSid())),
 			autoScroll: !!(auto && auto.getAttribute('aria-pressed') === 'true'),
 			theme: root.getThemeChoice ? root.getThemeChoice() : 'auto',
+			// 原生菜单按这一路报来的界面语言重建（只认聚焦窗口）
+			locale: root.I18n ? root.I18n.locale : 'zh-CN',
 		}
 		const sig = JSON.stringify(state)
 		if (!force && sig === lastSync) return
