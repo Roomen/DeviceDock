@@ -36,6 +36,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      # generate_context! 要求 frontendDist（desktop/dist）存在，cargo 之前先按发布流程复制一份网页文件。
+      # stage-web 只用 node 内置模块，不需要 npm 依赖，也不读签名密钥。
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node desktop/scripts/stage-web.mjs
       - uses: dtolnay/rust-toolchain@stable
       # 缓存 ~/.cargo 与各 workspace 的 target 依赖产物（工作区自身产物不入缓存，增量构建已被 action 关掉）。
       # shared-key 按 OS 分平台、key 按 profile 区分：debug/test 与 release 的依赖产物不同，
