@@ -8172,6 +8172,32 @@ html[data-layout='modern'] #activity-rail .rail-item i {
 	font-size: var(--fs-figure);
 }
 
+/* 左栏每一项：图标盒与短标签都落在同一中轴上。图标盒宽度由 css/icons.css 的三档决定(主题键由 js 重写
+   class，盒可能比字形窄)，盒内字形再居中一次，免得各行图标的视觉中线各不相同 */
+html[data-layout='modern'] #activity-rail .rail-item > i,
+html[data-layout='modern'] #activity-rail .rail-item > .rail-plugin-img {
+	flex: 0 0 auto;
+	margin-inline: auto;
+	text-align: center;
+}
+
+html[data-layout='modern'] #activity-rail .rail-item > .rail-label {
+	display: block;
+	flex: 0 0 auto;
+	width: 100%;
+	text-align: center;
+}
+
+/* 状态点(如 MCP 服务状态)绝对定位叠在图标右上角：不占 flex 排版，不会把图标与标签挤偏 */
+html[data-layout='modern'] #activity-rail .rail-item > .rail-status-dot {
+	position: absolute;
+	top: 4px;
+	left: calc(50% + 4px);
+	width: 8px;
+	height: 8px;
+	margin: 0;
+}
+
 /* 短标签：原文保留为无障碍名称，视觉上换成两字(不改 DOM) */
 html[data-layout='modern'] #activity-rail .rail-item[data-view] .rail-label {
 	font-size: 0;
