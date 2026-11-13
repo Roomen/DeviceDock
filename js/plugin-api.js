@@ -205,15 +205,14 @@
 			if (!port) throw fail('not_found', '端口不存在（端口只在本次运行内有效，请重新列出口）')
 			const claims = root.serialPortClaims
 			if (!claims) throw fail('unsupported', '当前环境没有插件占用声明')
-			// 口正被某路会话占着（打开 / 打开中）时先拒绝：声明要落在空闲的口上，
+			// 插件的串口连接只受「物理口独占」约束，不看通信页哪一路开着、主发路是否钉扎：
+			// 口正被某个会话占着(通信页各路或固件页的连接：打开 / 打开中 / 尚未确认释放 / 正在换上)时拒绝，
 			// 否则声明成功、claim.open 才失败，且会话那边也不会感知这个声明
 			const h = hub()
-			if (h) {
-				for (const sid of h.allPhys()) {
-					if (h.getPort(sid) === port && (h.isOpen(sid) || h.isOpening(sid))) {
-						throw fail('bad_request', '该串口正在被 ' + sid + ' 路使用，请先在对应路断开后再声明')
-					}
-				}
+			const owner = h && h.sessionOwnerOfPort ? h.sessionOwnerOfPort(port) : null
+			if (owner) {
+				const who = owner === 'F' ? '固件页的连接' : (owner === 'S' ? '单路' : owner + ' 路')
+				throw fail('bad_request', '该串口正在被' + who + '使用，请先断开后再声明')
 			}
 			const id = claims.claim(port, ctx.id, ctx.name, params.mode)
 			const rec = ctx.claim(id)
