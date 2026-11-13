@@ -1,7 +1,7 @@
-// 插件管理面板（仅桌面客户端）：左栏「配置 → 插件…」。
-// 与协议来源面板共用 AppDialog.panel 模态外壳和 .mdn-src-* 卡片视觉，面板内不嵌套第二个 AppDialog：
-// 安装 / 更新确认与卸载确认都在面板内完成，列出能力（人话描述）、来源仓库、版本差异与 sha256 前 12 位。
-// GitHub 令牌只写进系统钥匙串，面板永远不回显明文，只显示「已设置 / 未设置」。
+// 插件管理（仅桌面客户端）：配置页「插件」分组的内容。
+// 与协议来源面板共用 .mdn-src-* 卡片视觉，内容原样构建进配置页的分组容器，面板内不嵌套 AppDialog：
+// 安装 / 更新确认与卸载确认都在分组内完成，列出能力（人话描述）、来源仓库、版本差异与 sha256 前 12 位。
+// GitHub 令牌在配置页「账号与令牌」分组里设置（与协议来源共用同一个钥匙串条目），这里不再重复。
 ;(function (root) {
 	'use strict'
 
@@ -14,7 +14,6 @@
 
 	const doc = root.document
 	let session = null
-	let opening = false
 
 	function mk(tag, cls, text) {
 		const el = doc.createElement(tag)
@@ -74,37 +73,7 @@
 		s.confirmBox.hidden = true
 		body.appendChild(s.confirmBox)
 
-		// 2. GitHub 令牌（系统钥匙串）
-		const tokenCard = mk('div', 'mdn-plg-token')
-		const tokenHead = mk('div', 'mdn-plg-token-head')
-		const tokenTitle = mk('div', 'mdn-plg-token-title')
-		tokenTitle.appendChild(mk('i', 'icon icon-sm icon-lock'))
-		tokenTitle.appendChild(mk('span', '', 'GitHub 令牌'))
-		s.tokenBadge = mk('span', 'mdn-src-ver', '未设置')
-		tokenTitle.appendChild(s.tokenBadge)
-		tokenHead.appendChild(tokenTitle)
-		tokenCard.appendChild(tokenHead)
-
-		const tokenRow = mk('div', 'mdn-plg-token-row')
-		s.tokenInput = mk('input', 'form-control form-control-sm')
-		s.tokenInput.type = 'password'
-		s.tokenInput.placeholder = '公开仓库免填；私有仓库或遇 API 限额时填写 Personal Access Token'
-		s.tokenInput.setAttribute('aria-label', 'GitHub 令牌')
-		s.tokenInput.setAttribute('autocomplete', 'off')
-		s.tokenSaveBtn = mk('button', 'btn btn-sm btn-outline-primary', '保存令牌')
-		s.tokenSaveBtn.type = 'button'
-		s.tokenClearBtn = mk('button', 'btn btn-sm btn-outline-secondary', '清除')
-		s.tokenClearBtn.type = 'button'
-		tokenRow.appendChild(s.tokenInput)
-		tokenRow.appendChild(s.tokenSaveBtn)
-		tokenRow.appendChild(s.tokenClearBtn)
-		tokenCard.appendChild(tokenRow)
-		s.tokenMsg = mk('div', 'mdn-src-note')
-		s.tokenMsg.hidden = true
-		tokenCard.appendChild(s.tokenMsg)
-		body.appendChild(tokenCard)
-
-		// 3. 已安装插件列表
+		// 2. 已安装插件列表
 		s.listEl = mk('div', 'mdn-src-list')
 		body.appendChild(s.listEl)
 
@@ -115,8 +84,6 @@
 				inspectRepo(s)
 			}
 		})
-		s.tokenSaveBtn.addEventListener('click', function () { saveToken(s) })
-		s.tokenClearBtn.addEventListener('click', function () { clearToken(s) })
 	}
 
 	function inspectRepo(s) {
@@ -132,15 +99,13 @@
 		s.pendingConfirm = null
 		render(s)
 		Promise.resolve(svc.inspect(raw)).then(function (info) {
-			if (s.closed) return
 			s.pendingConfirm = {
 				mode: info.currentVersion ? 'update' : 'install',
 				info: info,
 			}
 		}, function (e) {
-			if (!s.closed) s.addError = String((e && e.message) || e)
+			s.addError = String((e && e.message) || e)
 		}).then(function () {
-			if (s.closed) return
 			s.inspecting = false
 			render(s)
 		})
@@ -156,68 +121,13 @@
 			info.repo, info.tag || null, info.packageSha256,
 			info.currentVersion || null, info.currentPackageSha256 || null
 		)).then(function () {
-			if (s.closed) return
 			s.pendingConfirm = null
 			s.repoInput.value = ''
 			return refreshList(s)
 		}, function (e) {
-			if (!s.closed) s.addError = String((e && e.message) || e)
+			s.addError = String((e && e.message) || e)
 		}).then(function () {
-			if (s.closed) return
 			s.installing = false
-			render(s)
-		})
-	}
-
-	function saveToken(s) {
-		if (s.tokenBusy) return
-		const val = s.tokenInput.value.trim()
-		if (!val) {
-			s.tokenNote = '请输入要保存的 GitHub 令牌'
-			s.tokenErr = true
-			render(s)
-			return
-		}
-		s.tokenBusy = true
-		s.tokenNote = ''
-		render(s)
-		Promise.resolve(svc.tokenSet(val)).then(function (st) {
-			if (s.closed) return
-			s.tokenInput.value = ''
-			s.tokenSet = !!(st && st.set)
-			s.tokenNote = '令牌已写入系统钥匙串'
-			s.tokenErr = false
-		}, function (e) {
-			if (!s.closed) {
-				s.tokenNote = String((e && e.message) || e)
-				s.tokenErr = true
-			}
-		}).then(function () {
-			if (s.closed) return
-			s.tokenBusy = false
-			render(s)
-		})
-	}
-
-	function clearToken(s) {
-		if (s.tokenBusy) return
-		s.tokenBusy = true
-		s.tokenNote = ''
-		render(s)
-		Promise.resolve(svc.tokenClear()).then(function (st) {
-			if (s.closed) return
-			s.tokenInput.value = ''
-			s.tokenSet = !!(st && st.set)
-			s.tokenNote = '已清除系统钥匙串中的令牌'
-			s.tokenErr = false
-		}, function (e) {
-			if (!s.closed) {
-				s.tokenNote = String((e && e.message) || e)
-				s.tokenErr = true
-			}
-		}).then(function () {
-			if (s.closed) return
-			s.tokenBusy = false
 			render(s)
 		})
 	}
@@ -311,7 +221,7 @@
 			s.errors[key] = String((e && e.message) || e)
 		}).then(function () {
 			delete s.busy[key]
-			if (!s.closed) render(s)
+			render(s)
 		})
 	}
 
@@ -339,8 +249,7 @@
 			s.notes[p.id] = ''
 			runPluginAction(s, 'check:' + p.id, function () {
 				return Promise.resolve(svc.checkUpdate(p.id)).then(function (upd) {
-					if (s.closed) return
-					if (!upd) {
+							if (!upd) {
 						s.notes[p.id] = '已是最新版本（v' + p.version + '）'
 						return
 					}
@@ -356,8 +265,7 @@
 				s.confirmRemove = p.id
 				clearTimeout(s.confirmTimer)
 				s.confirmTimer = setTimeout(function () {
-					if (s.closed) return
-					s.confirmRemove = ''
+							s.confirmRemove = ''
 					render(s)
 				}, 5000)
 				render(s)
@@ -513,7 +421,7 @@
 	}
 
 	function render(s) {
-		if (!s || s.closed) return
+		if (!s) return
 		s.inspectBtn.disabled = !!s.inspecting || !!s.installing
 		s.inspectBtn.querySelector('span').textContent = s.inspecting ? '正在检查…' : '从仓库安装…'
 		s.repoInput.disabled = !!s.inspecting || !!s.installing
@@ -525,13 +433,6 @@
 		const st = s.status || {}
 		s.statusEl.hidden = st.available !== false
 		s.statusEl.textContent = st.available === false ? ('插件子系统不可用：' + (st.reason || '未知原因') + '。客户端其它功能不受影响。') : ''
-
-		s.tokenBadge.textContent = s.tokenSet ? '已设置' : '未设置'
-		s.tokenSaveBtn.disabled = !!s.tokenBusy
-		s.tokenClearBtn.disabled = !!s.tokenBusy || !s.tokenSet
-		s.tokenMsg.hidden = !s.tokenNote
-		s.tokenMsg.className = s.tokenErr ? 'mdn-src-err' : 'mdn-src-note'
-		s.tokenMsg.textContent = s.tokenNote || ''
 
 		const list = s.plugins || []
 		s.listEl.textContent = ''
@@ -549,34 +450,26 @@
 	function refreshList(s) {
 		return Promise.all([
 			Promise.resolve(svc.list ? svc.list() : []).catch(function () { return [] }),
-			Promise.resolve(svc.tokenStatus ? svc.tokenStatus() : { set: false }).catch(function () { return { set: false } }),
 			Promise.resolve(svc.repairList ? svc.repairList() : []).catch(function () { return [] }),
 			Promise.resolve(root.PluginHost && root.PluginHost.failedResources ? root.PluginHost.failedResources() : []).catch(function () { return [] }),
 			Promise.resolve(svc.status ? svc.status() : { available: true }).catch(function () { return { available: true } }),
 		]).then(function (res) {
-			if (s.closed) return
 			s.plugins = Array.isArray(res[0]) ? res[0] : []
-			s.tokenSet = !!(res[1] && res[1].set)
-			s.issues = { repairs: Array.isArray(res[2]) ? res[2] : [], resources: Array.isArray(res[3]) ? res[3] : [] }
-			s.status = res[4] || { available: true }
+			s.issues = { repairs: Array.isArray(res[1]) ? res[1] : [], resources: Array.isArray(res[2]) ? res[2] : [] }
+			s.status = res[3] || { available: true }
 			s.failedReleases = root.PluginHost && root.PluginHost.failedReleases ? root.PluginHost.failedReleases() : []
 			if (root.PluginHost && root.PluginHost.reload) root.PluginHost.reload()
 			render(s)
 		})
 	}
 
-	function openPanel() {
-		if (opening || session) return
-		opening = true
+	// 内容只建一次，之后常驻配置页：插件列表由 plugins-changed 与操作结果驱动重画
+	function mount(host) {
+		if (session || !host) return
 		const s = {
-			closed: false,
 			inspecting: false,
 			installing: false,
 			pendingConfirm: null,
-			tokenSet: false,
-			tokenBusy: false,
-			tokenNote: '',
-			tokenErr: false,
 			plugins: [],
 			busy: {},
 			errors: {},
@@ -589,37 +482,18 @@
 			status: { available: true },
 		}
 		session = s
-		opening = false
-		let unlisten = null
 		if (svc.listen) {
-			Promise.resolve(svc.listen('plugins-changed', function () { refreshList(s) })).then(function (fn) {
-				if (typeof fn === 'function') unlisten = fn
-			}).catch(function () {})
+			Promise.resolve(svc.listen('plugins-changed', function () { refreshList(s) })).catch(function () {})
 		}
-		root.AppDialog.panel({
-			title: '插件管理',
-			wide: true,
-			closeText: '关闭',
-			build: function (body) { build(body, s) },
-		}).then(function () {
-			s.closed = true
-			clearTimeout(s.confirmTimer)
-			if (unlisten) try { unlisten() } catch (e) {}
-			if (session === s) session = null
-		})
+		build(host, s)
 		refreshList(s)
 	}
 
-	function mount() {
-		const btn = doc.getElementById('serial-plugins-manage')
-		if (!btn) return
-		btn.addEventListener('click', function (e) {
-			e.preventDefault()
-			openPanel()
-		})
+	function openPanel() {
+		if (root.SettingsView) root.SettingsView.plugins()
 	}
 
 	root.PluginManagePanel = { open: openPanel }
-	if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', mount)
-	else mount()
+	// settings-view.js 在本文件之前加载：分组第一次显示时把内容建进它的容器
+	if (root.SettingsView) root.SettingsView.onMount('plugins', mount)
 })(typeof window !== 'undefined' ? window : globalThis)

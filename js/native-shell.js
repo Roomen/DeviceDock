@@ -211,11 +211,12 @@
 		const p = o && o.openUrl ? o.openUrl(url) : T.core.invoke('plugin:opener|open_url', { url: url })
 		Promise.resolve(p).catch(function (e) { console.warn('打开链接失败', e) })
 	}
+	// 偏好设置：配置是独立视图(不再是下拉菜单)，没有页面实现时退回点左栏入口
 	function openPrefs() {
 		const b = $('rail-config-btn')
 		if (!b || !shown(b)) return
-		if (root.bootstrap && root.bootstrap.Dropdown) root.bootstrap.Dropdown.getOrCreateInstance(b).show()
-		else b.click()
+		if (root.SettingsView && root.SettingsView.open) root.SettingsView.open()
+		else if (!b.classList.contains('active')) b.click()
 	}
 
 	const ACTIONS = {
