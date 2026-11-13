@@ -1,6 +1,6 @@
-// 协议来源管理面板：配置菜单 →「协议来源…」。
-// 放在配置菜单的理由：来源是应用级设置（和导入 / 导出 / 重置同一类），不属于某一路串口，
-// 也不该占一个主视图；面板用 AppDialog.panel，与 MCP 服务面板同一套模态外壳。
+// 协议来源管理：配置页「协议来源」分组的内容。
+// 来源是应用级设置（和导入 / 导出 / 重置同一类），不属于某一路串口，所以放在配置页里而不是独立视图；
+// 内容原样构建进配置页的分组容器（构建、事件、状态与两步确认都不变，只是宿主从 AppDialog.panel 换成页内容器）。
 // 移动端只提供内置 SEK，本文件在移动画像下不挂载（功能 id panel.protocol-sources 目录外默认桌面开）。
 ;(function (root) {
 	'use strict'
@@ -11,7 +11,6 @@
 	if (typeof P.has === 'function' && !P.has('panel.protocol-sources')) return
 	const doc = root.document
 	let session = null
-	let opening = false
 
 	function mk(tag, cls, text) {
 		const el = doc.createElement(tag)
@@ -134,7 +133,6 @@
 				s.confirmRemove = src.key
 				clearTimeout(s.confirmTimer)
 				s.confirmTimer = setTimeout(function () {
-					if (s.closed) return
 					s.confirmRemove = ''
 					render(s)
 				}, 5000)
@@ -239,7 +237,7 @@
 	}
 
 	function render(s) {
-		if (!s || s.closed) return
+		if (!s) return
 		s.addBtn.disabled = !!s.adding
 		s.addBtn.querySelector('span').textContent = s.adding ? '读取中…' : '添加来源'
 		s.urlInput.disabled = !!s.adding
@@ -259,11 +257,10 @@
 		list.forEach(function (src) { s.listEl.appendChild(sourceCard(s, src)) })
 	}
 
-	function openPanel() {
-		if (opening || session) return
-		opening = true
+	// 内容只建一次，之后常驻配置页：来源变化时按订阅重画，不再有打开 / 关闭的生命周期
+	function mount(host) {
+		if (session || !host) return
 		const s = {
-			closed: false,
 			adding: false,
 			busy: {},
 			errors: {},
@@ -272,30 +269,16 @@
 			confirmTimer: 0,
 		}
 		session = s
-		opening = false
-		const off = S.onChange(function () { render(s) })
-		root.AppDialog.panel({
-			title: '协议来源',
-			wide: true,
-			closeText: '关闭',
-			build: function (body) { build(body, s) },
-		}).then(function () {
-			s.closed = true
-			clearTimeout(s.confirmTimer)
-			off()
-			if (session === s) session = null
-		})
+		S.onChange(function () { render(s) })
+		build(host, s)
 		render(s)
 	}
 
-	function mount() {
-		const btn = doc.getElementById('serial-protocol-sources')
-		if (!btn) return
-		btn.addEventListener('click', function (e) {
-			e.preventDefault()
-			openPanel()
-		})
+	function openPanel() {
+		if (root.SettingsView) root.SettingsView.protocols()
 	}
-	if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', mount)
-	else mount()
+
+	root.ProtocolSourcesPanel = { open: openPanel }
+	// settings-view.js 在本文件之前加载：分组第一次显示时把内容建进它的容器
+	if (root.SettingsView) root.SettingsView.onMount('protocols', mount)
 })(typeof window !== 'undefined' ? window : globalThis)

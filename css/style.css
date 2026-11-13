@@ -305,32 +305,6 @@ body {
 .rail-bottom .rail-item i {
 }
 
-.rail-config {
-  width: 100%;
-}
-
-.rail-config-menu,
-.rail-theme-menu {
-  min-width: 170px;
-  font-size: var(--fs-body);
-  --bs-dropdown-bg: var(--bg-surface);
-  --bs-dropdown-color: var(--text-primary);
-  --bs-dropdown-border-color: var(--border-color);
-  --bs-dropdown-divider-bg: var(--border-color);
-  --bs-dropdown-link-color: var(--text-primary);
-  --bs-dropdown-link-hover-color: var(--text-primary);
-  --bs-dropdown-link-hover-bg: var(--bg-surface-hover);
-  --bs-dropdown-link-active-color: var(--text-primary);
-  --bs-dropdown-link-active-bg: var(--bg-surface-hover);
-  box-shadow: var(--shadow-lg);
-}
-
-.rail-config-menu .dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .rail-item {
   position: relative;
   display: flex;
@@ -6159,22 +6133,6 @@ summary {
    覆盖前面各段的基础样式。index.html 里的节点是来源，启动时由各 js 搬进新宿主(见各段说明)
    ============================================= */
 
-/* 菜单内标题与分段控件 */
-.rail-config-layout {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	padding: 4px 12px 6px;
-}
-
-.rail-config-layout-title {
-	font-size: var(--fs-small);
-	font-weight: 600;
-	color: var(--text-secondary);
-	white-space: nowrap;
-}
-
 /* 视图切换(列表 / 聊天)：默认不占位，行日志时由日志工具条的规则打开(单双路都有) */
 #serial-dual-view-seg {
 	display: none;
@@ -8172,6 +8130,32 @@ html[data-layout='modern'] #activity-rail .rail-item i {
 	font-size: var(--fs-figure);
 }
 
+/* 左栏每一项：图标盒与短标签都落在同一中轴上。图标盒宽度由 css/icons.css 的三档决定(主题键由 js 重写
+   class，盒可能比字形窄)，盒内字形再居中一次，免得各行图标的视觉中线各不相同 */
+html[data-layout='modern'] #activity-rail .rail-item > i,
+html[data-layout='modern'] #activity-rail .rail-item > .rail-plugin-img {
+	flex: 0 0 auto;
+	margin-inline: auto;
+	text-align: center;
+}
+
+html[data-layout='modern'] #activity-rail .rail-item > .rail-label {
+	display: block;
+	flex: 0 0 auto;
+	width: 100%;
+	text-align: center;
+}
+
+/* 状态点(如 MCP 服务状态)绝对定位叠在图标右上角：不占 flex 排版，不会把图标与标签挤偏 */
+html[data-layout='modern'] #activity-rail .rail-item > .rail-status-dot {
+	position: absolute;
+	top: 4px;
+	left: calc(50% + 4px);
+	width: 8px;
+	height: 8px;
+	margin: 0;
+}
+
 /* 短标签：原文保留为无障碍名称，视觉上换成两字(不改 DOM) */
 html[data-layout='modern'] #activity-rail .rail-item[data-view] .rail-label {
 	font-size: 0;
@@ -8191,8 +8175,9 @@ html[data-layout='modern'] #activity-rail .rail-item[data-view='view-fw-pack'] .
 	content: '固件';
 }
 
-html[data-layout='modern'] #activity-rail .rail-item[data-view='view-ble'] .rail-label::after {
-	content: 'BLE 桥';
+/* 配置是 data-view 的视图入口(不再是下拉)，短标签同样要有一条：漏了这条，选中时只剩图标 */
+html[data-layout='modern'] #activity-rail .rail-item[data-view='view-settings'] .rail-label::after {
+	content: '配置';
 }
 
 html[data-layout='modern'] #activity-rail .rail-version {
@@ -8200,8 +8185,216 @@ html[data-layout='modern'] #activity-rail .rail-version {
 	font-size: var(--fs-micro);
 }
 
-html[data-layout='modern'] .rail-config-menu {
-	min-width: 240px;
+/* ---------- 配置视图(左栏「配置」) ----------
+   分组导航在左、内容在右：每一屏只让分组标题与选中项带颜色，其余是中性面与分隔线 */
+html[data-layout='modern'] #view-settings .settings-layout {
+	display: grid;
+	grid-template-columns: 186px minmax(0, 1fr);
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+html[data-layout='modern'] .settings-nav {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 12px 8px;
+	overflow: auto;
+	border-right: 1px solid var(--border-color);
+	background: var(--bg-surface);
+}
+
+html[data-layout='modern'] .settings-nav-item {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	min-height: var(--ctl-h-sm);
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--text-secondary);
+	font-family: var(--font-sans);
+	font-size: var(--fs-small);
+	text-align: left;
+}
+
+html[data-layout='modern'] .settings-nav-item:hover {
+	background: var(--bg-surface-hover);
+	color: var(--text-primary);
+}
+
+html[data-layout='modern'] .settings-nav-item.active {
+	background: var(--accent-light);
+	color: var(--accent);
+}
+
+html[data-layout='modern'] .settings-nav-item:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+html[data-layout='modern'] .settings-panes {
+	overflow: auto;
+	padding: 16px 20px 32px;
+	min-width: 0;
+}
+
+html[data-layout='modern'] .settings-group {
+	display: none;
+	flex-direction: column;
+	gap: 12px;
+	max-width: 760px;
+}
+
+html[data-layout='modern'] .settings-group.active {
+	display: flex;
+}
+
+html[data-layout='modern'] .settings-group-title {
+	margin: 0;
+	font-size: var(--fs-title);
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+html[data-layout='modern'] .settings-group-note {
+	margin: 0;
+	font-size: var(--fs-small);
+	line-height: 1.6;
+	color: var(--text-secondary);
+}
+
+/* 一组设置项共用一张卡：行间只用分隔线，左侧名称与说明、右侧控件 */
+html[data-layout='modern'] .settings-card {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--border-color);
+	border-radius: var(--radius-lg);
+	background: var(--bg-surface);
+	overflow: hidden;
+}
+
+html[data-layout='modern'] .settings-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 12px 14px;
+	border-top: 1px solid var(--border-light);
+}
+
+html[data-layout='modern'] .settings-row:first-child {
+	border-top: 0;
+}
+
+html[data-layout='modern'] .settings-row-main {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+html[data-layout='modern'] .settings-row-label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--fs-body);
+	color: var(--text-primary);
+}
+
+html[data-layout='modern'] .settings-row-note {
+	font-size: var(--fs-small);
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+
+html[data-layout='modern'] .settings-row-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+
+html[data-layout='modern'] .settings-row-actions .btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+}
+
+html[data-layout='modern'] .settings-theme {
+	flex: 0 0 auto;
+	min-width: 172px;
+}
+
+html[data-layout='modern'] .settings-token {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+html[data-layout='modern'] .settings-token .form-control {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+html[data-layout='modern'] .settings-badge {
+	padding: 1px 6px;
+	border: 1px solid var(--border-color);
+	border-radius: var(--radius-md);
+	font-size: var(--fs-micro);
+	font-weight: 400;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+html[data-layout='modern'] .settings-badge.is-set {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+html[data-layout='modern'] .settings-host {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+}
+
+/* 窄屏：导航横排成一条标签带，内容占满整宽(仍是同一套节点) */
+@media (max-width: 768px) {
+	html[data-layout='modern'] #view-settings .settings-layout {
+		grid-template-columns: minmax(0, 1fr);
+		/* 标签带只占内容高度，多余空间全给内容区(否则两行都会按 align-content 撑开) */
+		grid-template-rows: auto minmax(0, 1fr);
+	}
+
+	html[data-layout='modern'] .settings-nav {
+		flex-direction: row;
+		overflow-x: auto;
+		border-right: 0;
+		border-bottom: 1px solid var(--border-color);
+	}
+
+	html[data-layout='modern'] .settings-nav-item {
+		width: auto;
+		white-space: nowrap;
+	}
+
+	/* 窄屏一行放不下「说明 + 动作」：动作换到下一行，按钮可换行，避免横向溢出 */
+	html[data-layout='modern'] .settings-row {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 10px;
+	}
+
+	html[data-layout='modern'] .settings-row-actions {
+		flex-wrap: wrap;
+		width: 100%;
+	}
+
+	html[data-layout='modern'] .settings-theme {
+		width: 100%;
+	}
 }
 
 /* ---------- 全局连接栏 ---------- */
@@ -10013,8 +10206,7 @@ html[data-layout='modern'] .mdn-mcp-hint {
 	opacity: .8;
 }
 
-/* 独立工具入口：主题、MCP、更新与配置并列，不随窗口高度收进配置菜单。 */
-html[data-layout='modern'] #activity-rail .rail-theme { width: 100%; }
+/* 独立工具入口：主题、MCP、更新与配置并列，各自都是一级入口。 */
 html[data-layout='modern'] #activity-rail .rail-top { min-height: 0; flex-shrink: 0; }
 html[data-layout='modern'] #activity-rail .rail-bottom { min-height: 0; }
 html[data-layout='modern'] #activity-rail .rail-item { flex-shrink: 0; }
@@ -10023,7 +10215,6 @@ html[data-layout='modern'] #activity-rail .rail-item { flex-shrink: 0; }
 	html[data-layout='modern'] #activity-rail .rail-item { padding: 5px 0; gap: 2px; }
 	html[data-layout='modern'] #activity-rail .rail-bottom { gap: 2px; }
 }
-.rail-theme-menu { min-width: 172px; padding: 6px; }
 #theme-switch { display: flex; flex-direction: column; gap: 3px; }
 #theme-switch button {
 	display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px;
@@ -10124,14 +10315,6 @@ html[data-layout='modern'] .mdn-mcp-port:disabled {
 .mdn-mcp-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 /* Desktop USB BLE bridge workbench */
-#ble-workbench { padding: 20px; overflow: auto; height: 100%; color: var(--text-primary); }
-#ble-workbench h2 { font-size: var(--fs-figure); }
-#ble-workbench h3 { font-size: var(--fs-title); margin-top: 16px; }
-.ble-controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
-.ble-columns { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(340px, 2fr); gap: 20px; }
-#ble-workbench select, #ble-workbench input { color: inherit; background: var(--bg-body); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px; max-width: 100%; }
-.ble-columns select[size] { display: block; width: 100%; margin-bottom: 8px; }
-.ble-log { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-body); padding: 12px; }
 
 /* 独立 Classic SPP 工具页 */
 

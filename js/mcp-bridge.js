@@ -505,19 +505,6 @@
 		}
 	}
 
-	async function bleCall(id, p, action) {
-		const ble = P.service('ble')
-		if (!ble) return fail('ble_unavailable', '当前窗口不支持 USB BLE 桥')
-		try {
-			if (action === 'state') { const state = ble.state(); delete state.challenge; return pass(state) }
-			if (action === 'ports') return pass({ ports: await ble.ports() })
-			if (action === 'devices') return pass({ devices: ble.devices(p) })
-			if (action === 'gatt') return pass(ble.gatt())
-			if (action === 'events') return pass(ble.logs())
-			return pass(await ble.run(action, p, makeGuard(id)))
-		} catch (e) { return fail(e.code || 'ble_error', e.message || String(e)) }
-	}
-
 	async function classicCall(id, p, action) {
 		const classic = P.service('classic')
 		if (!classic) return fail('classic_unavailable', '当前窗口不支持原生 Classic SPP')
@@ -538,10 +525,6 @@
 		serial_close: serialClose,
 		serial_write: serialWrite,
 		serial_read: serialRead,
-	}
-
-	for (const action of ['state', 'ports', 'devices', 'gatt', 'events', 'open', 'close', 'scan_start', 'scan_stop', 'connect', 'disconnect', 'read', 'write', 'subscribe', 'pair', 'passkey']) {
-		HANDLERS['ble_' + action] = function (id, p) { return bleCall(id, p, action) }
 	}
 
 	// ---------- 请求分发 ----------

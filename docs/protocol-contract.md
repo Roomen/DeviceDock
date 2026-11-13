@@ -91,7 +91,7 @@
 
 ## 平台
 
-- 外部协议只在桌面画像可用；移动画像沿用 `platformAllowsProtocol`（只有 `sek`），管理入口（配置 →「协议来源…」）在移动端隐藏，不要在移动端加载或列出外部协议。
+- 外部协议只在桌面画像可用；移动画像沿用 `platformAllowsProtocol`（只有 `sek`），管理入口（配置页「协议来源」分组）在移动端隐藏，不要在移动端加载或列出外部协议。
 
 ## 内置协议
 
@@ -107,7 +107,7 @@
 
 ## 管理界面
 
-- 入口在左栏「配置」菜单 →「协议来源…」：来源是应用级设置（和导入 / 导出 / 重置同类），不属于某一路串口，也不该占主视图；面板用 `AppDialog.panel`，与 MCP 服务面板同一套模态外壳。
+- 入口在配置页（左栏「配置」）的「协议来源」分组：来源是应用级设置（和导入 / 导出 / 重置同类），不属于某一路串口，也不该占主视图；分组内容由本模块经 `SettingsView.onMount('protocols', fn)` 建进分组的 `.settings-host`，用页内容器而不是 `AppDialog.panel`。
 - 面板内容：添加 URL、刷新、删除（面板内两步确认，不嵌套 `AppDialog.confirm`）、每个来源列出包 / provides / 版本 / 摘要前 12 位 / 来源 sha、每包「信任此版本」与「启用」开关、错误就地显示。
 - 界面遵守 AGENTS.md 的令牌、7 档字号、无裸 hex、无 `transition: all`、lucide 图标与亮 / 暗一致；外部文本一律 `textContent`。
 
@@ -119,7 +119,7 @@
 ## 示例仓库与本地验证
 
 - `examples/protocol-repo/` 是一个可直接托管的仓库：`catalog.json` + 一个包含两个协议的包（`demo.a5frame` / `demo.modbus-rtu`）。
-- 本地验证：在仓库根目录运行 `python3 -m http.server 8000`，页面「配置 → 协议来源…」添加 `http://localhost:8000/examples/protocol-repo/catalog.json`，信任并启用后下拉出现「DeviceDock 示例协议」组。
+- 本地验证：在仓库根目录运行 `python3 -m http.server 8000`，页面「配置 → 协议来源」分组里添加 `http://localhost:8000/examples/protocol-repo/catalog.json`，信任并启用后下拉出现「DeviceDock 示例协议」组。
 - 示例帧：`A5 03 01 0A 0B 0C AA`（A5 帧）、`01 03 04 00 0A 00 0B 9B F6`（Modbus 应答），粘到协议解析的 HEX 输入区并把日志格式勾上「解析」。
 - 改过示例的入口或清单后重算摘要：`node examples/protocol-repo/tools/refresh-integrity.mjs`（无依赖）。
 - 回归：`node tests/protocol-contract.cjs` 覆盖清单 / 目录校验、路径穿越、SemVer、URL 解析、命名空间、provides 一致、信任键与示例仓库摘要自洽。

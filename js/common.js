@@ -459,7 +459,7 @@
 	}
 	function laneParams(sid) {
 		const transport = laneTransport(sid)
-		if (transport !== 'serial') return { lane: sid, transport, options: null, summary: transport === 'bt-classic' ? 'SPP' : transport === 'ble-bridge' ? 'USB BLE 桥' : 'BLE', open: SerialHub.isOpen(sid), opening: SerialHub.isOpening(sid) }
+		if (transport !== 'serial') return { lane: sid, transport, options: null, summary: transport === 'bt-classic' ? 'SPP' : 'BLE', open: SerialHub.isOpen(sid), opening: SerialHub.isOpening(sid) }
 		const opts = sid === 'S' ? readSerialOptions(SERIAL_OPTIONS_KEY) : laneOptions[sid]
 		const norm = DualCfg.normalizeOptions(opts)
 		return { lane: sid, options: norm, summary: DualCfg.paramsSummary(norm), open: SerialHub.isOpen(sid), opening: SerialHub.isOpening(sid) }

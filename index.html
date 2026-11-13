@@ -86,38 +86,16 @@
                     <i class="icon icon-lg icon-package"></i>
                     <span class="rail-label">固件打包</span>
                 </button>
-                <button class="rail-item" data-view="view-ble" data-feature="view.ble" title="USB BLE 桥 · 外置桥连接与 GATT 配置"><i class="icon icon-lg icon-bluetooth"></i><span class="rail-label">USB BLE 桥</span></button>
             </div>
             <div class="rail-bottom">
-                <div class="dropend rail-config">
-                    <button class="rail-item" id="rail-config-btn" type="button" title="配置：导入 / 导出 / 重置"
-                        data-bs-toggle="dropdown" aria-expanded="false">
-                        <i class="icon icon-lg icon-sliders"></i>
-                        <span class="rail-label">配置</span>
-                    </button>
-                    <ul class="dropdown-menu rail-config-menu" aria-labelledby="rail-config-btn">
-                        <li><button class="dropdown-item" type="button" id="serial-import"><i class="icon icon-folder-plus"></i> 导入配置…</button></li>
-                        <li><button class="dropdown-item" type="button" id="serial-export"><i class="icon icon-folder-symlink"></i> 导出配置</button></li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li><button class="dropdown-item" type="button" id="serial-protocol-sources" data-feature="panel.protocol-sources"><i class="icon icon-plug"></i> 协议来源…</button></li>
-                        <li data-feature="plugins"><button class="dropdown-item" type="button" id="serial-plugins-manage" data-feature="plugins"><i class="icon icon-layout-grid"></i> 插件…</button></li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li><button class="dropdown-item text-danger" type="button" id="serial-reset"><i class="icon icon-rotate-ccw"></i> 重置所有参数…</button></li>
-                    </ul>
-                </div>
-                <div class="dropend rail-theme">
-                    <button class="rail-item" id="rail-theme-btn" type="button" title="主题：跟随系统"
-                        data-bs-toggle="dropdown" aria-expanded="false">
-                        <i class="icon icon-lg icon-contrast"></i><span class="rail-label">主题</span>
-                    </button>
-                    <div class="dropdown-menu rail-theme-menu" aria-labelledby="rail-theme-btn">
-                        <div id="theme-switch" role="radiogroup" aria-label="主题">
-                            <button type="button" role="radio" data-theme-choice="auto"><i class="icon icon-contrast"></i><span>跟随系统</span><i class="icon icon-check theme-check"></i></button>
-                            <button type="button" role="radio" data-theme-choice="light"><i class="icon icon-sun"></i><span>浅色</span><i class="icon icon-check theme-check"></i></button>
-                            <button type="button" role="radio" data-theme-choice="dark"><i class="icon icon-moon-star"></i><span>深色</span><i class="icon icon-check theme-check"></i></button>
-                        </div>
-                    </div>
-                </div>
+                <button class="rail-item" id="rail-config-btn" type="button" data-view="view-settings"
+                    title="配置：外观 / 参数与备份 / 客户端服务">
+                    <i class="icon icon-lg icon-sliders"></i>
+                    <span class="rail-label">配置</span>
+                </button>
+                <button class="rail-item" id="rail-theme-btn" type="button" data-settings-target="appearance" title="主题：跟随系统">
+                    <i class="icon icon-lg icon-contrast"></i><span class="rail-label">主题</span>
+                </button>
                 <a href="https://github.com/Roomen/DeviceDock/issues/new" target="_blank" rel="noopener" class="rail-item" data-feature="shell.browser" title="提交建议 / Bug">
                     <i class="icon icon-lg icon-message-circle-more"></i>
                     <span class="rail-label">反馈</span>
@@ -861,8 +839,149 @@
                 <div id="serial-statusbar" role="status" aria-live="off"></div>
             </div>
 
-            <!--USB BLE 桥视图-->
-            <div id="view-ble" class="app-view" data-feature="view.ble"><div id="ble-workbench"></div></div>
+            <!--配置视图（与通信调试 / 固件打包同级）：左侧分组导航 + 右侧内容-->
+            <div id="view-settings" class="app-view">
+                <div class="view-bar">
+                    <div class="view-bar-title">
+                        <i class="icon icon-lg icon-sliders"></i>
+                        <span>配置</span>
+                        <span class="view-bar-sub">外观 · 参数与备份 · 服务 · 来源 · 插件 · 令牌</span>
+                    </div>
+                </div>
+                <div class="settings-layout">
+                    <nav class="settings-nav" role="tablist" aria-label="配置分组" aria-orientation="vertical">
+                        <button class="settings-nav-item" type="button" role="tab" aria-selected="true" data-settings-group="appearance">外观</button>
+                        <button class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="backup">参数与备份</button>
+                        <button class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="services">客户端服务</button>
+                        <button class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="protocols" data-feature="panel.protocol-sources">协议来源</button>
+                        <button class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="plugins" data-feature="plugins">插件</button>
+                        <button class="settings-nav-item" type="button" role="tab" aria-selected="false" data-settings-group="account" data-feature="plugins">账号与令牌</button>
+                    </nav>
+                    <div class="settings-panes">
+                        <section class="settings-group active" data-settings-group="appearance" role="tabpanel" aria-label="外观">
+                            <h2 class="settings-group-title">外观</h2>
+                            <p class="settings-group-note">跟随系统时按系统的浅色 / 深色自动切换；选中项立即生效并保存在本机。</p>
+                            <div class="settings-card">
+                                <div class="settings-row">
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">主题</div>
+                                        <div class="settings-row-note">浅色 / 深色只影响界面，不改变设备行为。</div>
+                                    </div>
+                                    <div id="theme-switch" role="radiogroup" aria-label="主题" class="settings-theme">
+                                        <button type="button" role="radio" data-theme-choice="auto"><i class="icon icon-contrast"></i><span>跟随系统</span><i class="icon icon-check theme-check"></i></button>
+                                        <button type="button" role="radio" data-theme-choice="light"><i class="icon icon-sun"></i><span>浅色</span><i class="icon icon-check theme-check"></i></button>
+                                        <button type="button" role="radio" data-theme-choice="dark"><i class="icon icon-moon-star"></i><span>深色</span><i class="icon icon-check theme-check"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-group" data-settings-group="backup" role="tabpanel" aria-label="参数与备份">
+                            <h2 class="settings-group-title">参数与备份</h2>
+                            <p class="settings-group-note">导出的文件包含串口参数、协议、日志格式与快捷发送；导入与重置后页面会重新加载。</p>
+                            <div class="settings-card">
+                                <div class="settings-row">
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">导入配置</div>
+                                        <div class="settings-row-note">从导出的 JSON 文件恢复参数，覆盖当前设置。</div>
+                                    </div>
+                                    <div class="settings-row-actions">
+                                        <button class="btn btn-sm btn-outline-primary" type="button" id="serial-import"><i class="icon icon-folder-plus"></i> 导入配置…</button>
+                                    </div>
+                                </div>
+                                <div class="settings-row">
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">导出配置</div>
+                                        <div class="settings-row-note">把当前参数与快捷发送存成 devicedock-config.json。</div>
+                                    </div>
+                                    <div class="settings-row-actions">
+                                        <button class="btn btn-sm btn-outline-secondary" type="button" id="serial-export"><i class="icon icon-folder-symlink"></i> 导出配置</button>
+                                    </div>
+                                </div>
+                                <div class="settings-row">
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">重置所有参数</div>
+                                        <div class="settings-row-note">清掉串口参数、协议、日志格式与快捷发送，主题与日志内容不受影响。</div>
+                                    </div>
+                                    <div class="settings-row-actions">
+                                        <button class="btn btn-sm btn-outline-danger" type="button" id="serial-reset"><i class="icon icon-rotate-ccw"></i> 重置所有参数…</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-group" data-settings-group="services" role="tabpanel" aria-label="客户端服务">
+                            <h2 class="settings-group-title">客户端服务</h2>
+                            <p class="settings-group-note">这些服务只在本机运行，端口与令牌都在本机保存。</p>
+                            <div class="settings-card">
+                                <div class="settings-row" id="settings-mcp-row" data-feature="service.mcp">
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">本地 MCP 服务</div>
+                                        <div class="settings-row-note" id="settings-mcp-state">未启用</div>
+                                    </div>
+                                    <div class="settings-row-actions">
+                                        <button class="btn btn-sm btn-outline-primary" type="button" id="settings-mcp-open">打开 MCP 设置…</button>
+                                    </div>
+                                </div>
+                                <div class="settings-row" id="settings-update-row" hidden>
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">应用更新</div>
+                                        <div class="settings-row-note" id="settings-update-state">检查发布版更新；安装后应用会自动重启。</div>
+                                    </div>
+                                    <div class="settings-row-actions">
+                                        <button class="btn btn-sm btn-outline-primary" type="button" id="settings-update-check">检查更新…</button>
+                                    </div>
+                                </div>
+                                <div class="settings-row" data-feature="shell.browser">
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">链接</div>
+                                        <div class="settings-row-note">反馈问题、查看源码或下载桌面客户端。</div>
+                                    </div>
+                                    <div class="settings-row-actions">
+                                        <a class="btn btn-sm btn-outline-secondary" id="settings-link-feedback" href="https://github.com/Roomen/DeviceDock/issues/new" target="_blank" rel="noopener"><i class="icon icon-message-circle-more"></i> 反馈</a>
+                                        <a class="btn btn-sm btn-outline-secondary" id="settings-link-homepage" href="https://github.com/Roomen/DeviceDock" target="_blank" rel="noopener"><i class="icon icon-globe"></i> GitHub</a>
+                                        <a class="btn btn-sm btn-outline-secondary" href="https://github.com/Roomen/DeviceDock/releases" target="_blank" rel="noopener"><i class="icon icon-download"></i> 客户端</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-group" data-settings-group="protocols" role="tabpanel" aria-label="协议来源" data-feature="panel.protocol-sources">
+                            <h2 class="settings-group-title">协议来源</h2>
+                            <div class="settings-host" id="settings-protocol-sources"></div>
+                        </section>
+
+                        <section class="settings-group" data-settings-group="plugins" role="tabpanel" aria-label="插件" data-feature="plugins">
+                            <h2 class="settings-group-title">插件</h2>
+                            <div class="settings-host" id="settings-plugins"></div>
+                        </section>
+
+                        <section class="settings-group" data-settings-group="account" role="tabpanel" aria-label="账号与令牌" data-feature="plugins">
+                            <h2 class="settings-group-title">账号与令牌</h2>
+                            <p class="settings-group-note">插件安装与协议来源共用这一个 GitHub 令牌，保存在系统钥匙串里（service DeviceDock），界面不回显明文。公开仓库免填；私有仓库或遇到 API 限额时填写 Personal Access Token。</p>
+                            <div class="settings-card">
+                                <div class="settings-row">
+                                    <div class="settings-row-main">
+                                        <div class="settings-row-label">GitHub 令牌 <span class="settings-badge" id="settings-token-badge">未设置</span></div>
+                                        <div class="settings-row-note">保存后只写入系统钥匙串，页面不会再次显示令牌内容。</div>
+                                    </div>
+                                </div>
+                                <div class="settings-row">
+                                    <div class="settings-row-actions settings-token">
+                                        <input class="form-control form-control-sm" type="password" id="settings-token-input" autocomplete="off" spellcheck="false" aria-label="GitHub 令牌" placeholder="Personal Access Token">
+                                        <button class="btn btn-sm btn-outline-primary" type="button" id="settings-token-save">保存令牌</button>
+                                        <button class="btn btn-sm btn-outline-secondary" type="button" id="settings-token-clear">清除</button>
+                                    </div>
+                                </div>
+                                <div class="settings-row" id="settings-token-msg-row" hidden>
+                                    <div class="settings-row-note" id="settings-token-msg" role="status"></div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
+
 
             <!--固件打包视图（独立工具，与串口无关）-->
             <div id="view-fw-pack" class="app-view">
@@ -1073,8 +1192,6 @@
     <script src="js/transport-ble.js"></script>
     <script src="js/transport-native-serial.js"></script>
     <script src="js/platform-boot.js"></script>
-    <script src="js/ble-bridge.js"></script>
-    <script src="js/native-ble-bridge.js"></script>
     <script src="js/native-classic.js"></script>
     <script src="js/native-ble.js"></script>
     <script src="js/native-shell.js"></script>
@@ -1090,6 +1207,8 @@
     <script src="js/cjt188-protocol.js"></script>
     <script src="js/sek-transaction.js"></script>
     <script src="js/sek-test-profile.js"></script>
+    <!-- 配置视图先于管理面板加载：协议来源与插件的面板内容渲染进配置页的分组里 -->
+    <script src="js/settings-view.js"></script>
     <script src="js/protocol-sources-panel.js"></script>
     <script src="js/test-flow.js"></script>
     <script src="js/test-flow-panel.js"></script>
@@ -1111,7 +1230,6 @@
     <script src="js/modern-firmware.js"></script>
     <script src="js/app-update.js"></script>
     <script src="js/mcp-ring.js"></script>
-    <script src="js/ble-panel.js"></script>
     <script src="js/mcp-bridge.js"></script>
     <script src="js/mcp-service.js"></script>
     <script src="js/plugin-rpc.js"></script>

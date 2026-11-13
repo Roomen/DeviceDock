@@ -12,6 +12,13 @@
 
 	const doc = document
 	const $ = function (id) { return doc.getElementById(id) }
+	// 原生后端推来的字节：Channel 可能给 Uint8Array / ArrayBuffer / 数组，统一成 Uint8Array
+	function toBytes(value) {
+		if (value instanceof Uint8Array) return value
+		if (value instanceof ArrayBuffer) return new Uint8Array(value)
+		if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+		return Array.isArray(value) ? Uint8Array.from(value) : new Uint8Array(0)
+	}
 	const win = T.window && T.window.getCurrentWindow ? T.window.getCurrentWindow() : null
 	// 页面只认平台服务，更新插件与原生事件都封装在桌面组装点。
 	// Windows 便携版也走同一套检查/下载/安装：Rust 端下载并验签后交给便携 helper 退出替换 EXE。
@@ -27,9 +34,9 @@
 		setPreparing: function (value) { updatePreparing = !!value },
 	})
 
-	if (P.has('view.classic') && root.NativeClassic) {
+	if (P.has('service.classic') && root.NativeClassic) {
 		const classic = root.NativeClassic.create({ invoke: T.core.invoke, Channel: T.core.Channel,
-			createStreamPort: root.SerialAdapter.createStreamPort, toBytes: root.NativeBleBridge.toBytes,
+			createStreamPort: root.SerialAdapter.createStreamPort, toBytes: toBytes,
 			isPinned: () => !!(root.serialApi && root.serialApi.isPinned()),
 			blocked: () => updatePreparing,
 		})
@@ -37,28 +44,14 @@
 		root.addEventListener('pagehide', () => { classic.release().catch(() => {}) })
 	}
 
-	if (P.has('view.ble') && root.NativeBle) {
+	if (P.has('service.computer-ble') && root.NativeBle) {
 		const computerBle = root.NativeBle.create({ invoke: T.core.invoke, Channel: T.core.Channel,
-			createStreamPort: root.SerialAdapter.createStreamPort, toBytes: root.NativeBleBridge.toBytes,
+			createStreamPort: root.SerialAdapter.createStreamPort, toBytes: toBytes,
 			boundPorts: () => root.SerialHub ? ['S', 'A', 'B'].map(sid => root.SerialHub.getPort(sid)) : [],
 			blocked: () => updatePreparing,
 		})
 		P.provide('computer-ble', computerBle)
 		root.addEventListener('pagehide', () => { computerBle.release().catch(() => {}) })
-	}
-
-	if (P.has('view.ble') && root.NativeBleBridge) {
-		const ble = root.NativeBleBridge.create({
-			BleBridge: root.BleBridge,
-			isPinned: () => !!(root.serialApi && root.serialApi.isPinned()),
-			createStreamPort: root.SerialAdapter.createStreamPort,
-			invoke: T.core.invoke,
-			Channel: T.core.Channel,
-			ready: function () { return P.service('native-serial-ready').wait() },
-			blocked: function () { return updatePreparing },
-		})
-		P.provide('ble', ble)
-		root.addEventListener('pagehide', function () { ble.release().catch(function () {}) })
 	}
 
 	// 本地 MCP 服务：只把 Tauri 命令/事件包成平台服务，业务与界面在 js/mcp-bridge.js / js/mcp-service.js。
@@ -218,11 +211,12 @@
 		const p = o && o.openUrl ? o.openUrl(url) : T.core.invoke('plugin:opener|open_url', { url: url })
 		Promise.resolve(p).catch(function (e) { console.warn('打开链接失败', e) })
 	}
+	// 偏好设置：配置是独立视图(不再是下拉菜单)，没有页面实现时退回点左栏入口
 	function openPrefs() {
 		const b = $('rail-config-btn')
 		if (!b || !shown(b)) return
-		if (root.bootstrap && root.bootstrap.Dropdown) root.bootstrap.Dropdown.getOrCreateInstance(b).show()
-		else b.click()
+		if (root.SettingsView && root.SettingsView.open) root.SettingsView.open()
+		else if (!b.classList.contains('active')) b.click()
 	}
 
 	const ACTIONS = {

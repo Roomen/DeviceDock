@@ -11,8 +11,8 @@
 	const FEATURES = [
 		'view.serial', // 串口调试视图(日志、发送；移动端承载协议与固件面板)
 		'view.firmware-pack', // 固件打包视图(原始包 / 压缩包 / 双向差分)
-		'view.classic',
-		'view.ble', // USB BLE 桥仅 Windows/macOS 客户端
+		'service.classic', // 经典蓝牙 SPP(桌面客户端的 Windows / macOS)
+		'service.computer-ble', // 电脑 BLE(桌面客户端的 Windows / macOS)
 		'lane.dual', // 双路 A/B(由画像的 lanes 推出)
 		'panel.quick-send',
 		'panel.protocol', // 协议设置与下发
@@ -90,7 +90,7 @@
 		FEATURES.forEach(function (f) {
 			if (f.indexOf('transport.') === 0) enabled[f] = transports.indexOf(f.slice(10)) !== -1
 			else if (f === 'lane.dual') enabled[f] = prof.lanes > 1
-			else if ((f === 'view.ble' || f === 'view.classic')) enabled[f] = runtime === 'tauri' && ['windows', 'macos'].indexOf(os) !== -1
+			else if (f === 'service.classic' || f === 'service.computer-ble') enabled[f] = runtime === 'tauri' && ['windows', 'macos'].indexOf(os) !== -1
 			else if (f === 'shell.browser') enabled[f] = runtime !== 'tauri'
 			else if (f === 'plugins') enabled[f] = runtime === 'tauri' && profileId === 'desktop'
 			else enabled[f] = prof.features === '*' || prof.features.indexOf(f) !== -1
