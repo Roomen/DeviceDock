@@ -442,13 +442,13 @@
 	const SIGNAL_KEYS = ['dataTerminalReady', 'requestToSend']
 	function claimSignals(raw) {
 		if (raw === undefined || raw === null) return null
-		if (typeof raw !== 'object' || Array.isArray(raw)) throw fail('bad_request', 'signals 必须是对象，如 { dataTerminalReady: true }')
+		if (typeof raw !== 'object' || Array.isArray(raw)) throw fail('bad_request', I18n.t('pluginApi.signalsMustBeObject'))
 		const out = {}
 		let n = 0
 		for (const k in raw) {
 			if (!Object.prototype.hasOwnProperty.call(raw, k)) continue
-			if (SIGNAL_KEYS.indexOf(k) === -1) throw fail('bad_request', 'signals 只支持 dataTerminalReady / requestToSend')
-			if (typeof raw[k] !== 'boolean') throw fail('bad_request', 'signals.' + k + ' 必须是 true / false')
+			if (SIGNAL_KEYS.indexOf(k) === -1) throw fail('bad_request', I18n.t('pluginApi.signalsKeys'))
+			if (typeof raw[k] !== 'boolean') throw fail('bad_request', I18n.t('pluginApi.signalsBool', { key: k }))
 			out[k] = raw[k]
 			n++
 		}
@@ -489,7 +489,7 @@
 				} catch (e) {
 					// 信号没设上就不算打开成功：把刚打开的口关掉(关不掉保持 portOpened，下次 open 先报未确认关闭)
 					try { await rec.port.close(); rec.portClosed = true } catch (closeErr) { /* 见上 */ }
-					throw fail('internal', '设置控制信号失败：' + String(e && e.message ? e.message : e))
+					throw fail('internal', I18n.t('pluginApi.setSignalsFailed', { message: String(e && e.message ? e.message : e) }))
 				}
 				if (rec.cancelled) return false
 			}

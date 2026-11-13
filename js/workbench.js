@@ -566,7 +566,7 @@
 	// 对注册定义的覆盖：解析变成右栏第一个标签「检查器」，固件升级并进固件打包页
 	const PROFILE = {
 		parse: function () {
-			return { el: inspectorEl(), title: I18n.t('workbench.inspector'), label: I18n.t('workbench.inspector'), icon: 'icon-search', order: -1, docks: ['right'], defDock: 'right', fixed: false }
+			return { el: inspectorEl(), title: I18n.t('workbench.inspector'), label: I18n.t('workbench.inspectorShort'), icon: 'icon-search', order: -1, docks: ['right'], defDock: 'right', fixed: false }
 		},
 		firmware: function () {
 			return fwInPackView() ? { hidden: true, view: 'view-fw-pack' } : null

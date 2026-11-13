@@ -22,7 +22,7 @@
 	}
 	// 占用连接：固件连接记占用者(升级期间不换口、不改参数、不准备应用更新)，主发路走事务钉扎；失败抛错
 	function beginLink() {
-		if (fwLink) return fwLink.begin('固件升级')
+		if (fwLink) return fwLink.begin(I18n.t('common.fwUpgradeOwner'))
 		window.serialApi.suppressParse = true
 		try {
 			return serialApi.pinSession(serialApi.getActiveSendSid(), 'firmware')

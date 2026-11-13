@@ -5699,9 +5699,9 @@
 			transport: function () { return laneTransport('F') },
 			// 占用固件连接(升级 / 查询)：返回令牌；已被占用或正在准备应用更新时抛错
 			begin: function (owner) {
-				if (window.serialApi.updatePreparing) throw new Error('正在安装应用更新，暂不能开始')
-				if (fwLinkOwner) throw new Error('固件连接正被「' + fwLinkOwner + '」使用')
-				fwLinkOwner = owner || '固件升级'
+				if (window.serialApi.updatePreparing) throw new Error(I18n.t('common.updateInstallingCantStart'))
+				if (fwLinkOwner) throw new Error(I18n.t('common.fwLinkInUseBy', { owner: fwLinkOwner }))
+				fwLinkOwner = owner || I18n.t('common.fwUpgradeOwner')
 				fwLinkToken = 'fw-' + (++fwLinkSeq)
 				notifyFirmwareConn()
 				return fwLinkToken
@@ -7773,10 +7773,10 @@
 
 	// 固件页参数菜单：归一化 → 落盘 → 已打开就按「关闭 → 100ms → 按新参数打开」重连(与各路改参数同一条老路)
 	async function configureFirmware(patch) {
-		if (!platformHasSid('F')) return { ok: false, code: 'lane_not_visible', message: '固件连接当前不可用' }
-		if (laneTransport('F') !== 'serial') return { ok: false, code: 'unsupported_transport', message: '无线透传不使用本地串口参数' }
-		if (fwLinkOwner) return { ok: false, code: 'firmware_busy', message: '固件升级进行中，暂不能修改串口参数' }
-		if (SerialHub.isOpening('F')) return { ok: false, code: 'lane_busy', message: '固件连接正在连接或关闭' }
+		if (!platformHasSid('F')) return { ok: false, code: 'lane_not_visible', message: I18n.t('common.fwLinkUnavailable') }
+		if (laneTransport('F') !== 'serial') return { ok: false, code: 'unsupported_transport', message: I18n.t('common.wirelessNoLocalParams') }
+		if (fwLinkOwner) return { ok: false, code: 'firmware_busy', message: I18n.t('common.fwBusyCantChangeParams') }
+		if (SerialHub.isOpening('F')) return { ok: false, code: 'lane_busy', message: I18n.t('common.fwLinkOpeningOrClosing') }
 		const next = DualCfg.normalizeOptions(patch, firmwareOptions)
 		if (DualCfg.sameOptions(next, firmwareOptions)) return { ok: true, changed: false, options: next }
 		firmwareOptions = next
@@ -7784,7 +7784,7 @@
 		notifyFirmwareConn()
 		if (SerialHub.isOpen('F') && !SerialHub.isOpening('F')) {
 			const ok = await reopenWithNewParams('F')
-			return ok ? { ok: true, changed: true, options: next, reopened: true } : { ok: false, code: 'reopen_failed', message: '参数已保存，但按新参数重新打开失败', options: next }
+			return ok ? { ok: true, changed: true, options: next, reopened: true } : { ok: false, code: 'reopen_failed', message: I18n.t('common.settingsSavedButReopeningWithThem'), options: next }
 		}
 		return { ok: true, changed: true, options: next, reopened: false }
 	}

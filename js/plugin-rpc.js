@@ -359,7 +359,7 @@
 	function toBytes(value, maxBytes) {
 		const limit = maxBytes || 65536
 		if (isByteBuffer(value)) {
-			if (value.byteLength > limit) return { ok: false, error: { code: 'too_large', message: '数据超过 ' + limit + ' 字节' } }
+			if (value.byteLength > limit) return { ok: false, error: { code: 'too_large', message: I18n.t('pluginRpc.dataExceedsBytes', { limit }) } }
 			const u8 = isArrayBuffer(value) ? new Uint8Array(value) : new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
 			return { ok: true, bytes: Array.prototype.slice.call(u8) }
 		}

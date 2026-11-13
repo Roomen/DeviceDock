@@ -792,11 +792,11 @@
 	// 与通信页连接栏同在 #app-topbar 里，按当前视图(html[data-view])只显示其中一条；视觉与每路连接组同款(电源 · 设备 · 设置)，
 	// 设备下拉复用同一个串口列表(makePortList)，选用、连接、改名一律经 window.serialLanes 走 common.js 的同一套路径
 	const FW_FIELDS = [
-		{ key: 'baudRate', label: '波特率', icon: 'icon-gauge', list: [2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] },
-		{ key: 'dataBits', label: '数据位', icon: 'icon-hash', options: [['8', '8'], ['7', '7']] },
-		{ key: 'stopBits', label: '停止位', icon: 'icon-circle-stop', options: [['1', '1'], ['2', '2']] },
-		{ key: 'parity', label: '校验位', icon: 'icon-shield-check', options: [['none', '无'], ['even', '偶校验'], ['odd', '奇校验']] },
-		{ key: 'flowControl', label: '流控制', icon: 'icon-arrow-left-right', options: [['none', '无'], ['hardware', '硬件']] },
+		{ key: 'baudRate', label: I18n.t('html.baudRate'), icon: 'icon-gauge', list: [2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] },
+		{ key: 'dataBits', label: I18n.t('html.dataBits'), icon: 'icon-hash', options: [['8', '8'], ['7', '7']] },
+		{ key: 'stopBits', label: I18n.t('html.stopBits'), icon: 'icon-circle-stop', options: [['1', '1'], ['2', '2']] },
+		{ key: 'parity', label: I18n.t('html.parity'), icon: 'icon-shield-check', options: [['none', I18n.t('html.none')], ['even', I18n.t('html.even')], ['odd', I18n.t('html.odd')]] },
+		{ key: 'flowControl', label: I18n.t('html.flowControl'), icon: 'icon-arrow-left-right', options: [['none', I18n.t('html.none')], ['hardware', I18n.t('html.hardware')]] },
 	]
 	function makeFwConn() {
 		const wrap = mk('div', 'mdn-conn')
@@ -813,17 +813,17 @@
 		const more = btn('mdn-conn-more')
 		more.setAttribute('aria-haspopup', 'dialog')
 		more.setAttribute('aria-expanded', 'false')
-		more.setAttribute('aria-label', '固件连接的串口参数')
-		more.title = '串口参数'
+		more.setAttribute('aria-label', I18n.t('shell.fwLinkPortSettings'))
+		more.title = I18n.t('html.portSettings')
 		const moreParams = mk('span', 'mdn-conn-params')
 		more.append(icon('icon-sliders'), moreParams)
 		const pop = mk('div', 'mdn-pop')
 		pop.hidden = true
 		pop.setAttribute('role', 'dialog')
-		pop.setAttribute('aria-label', '固件连接的串口参数')
-		const head = mk('div', 'mdn-pop-title', '固件连接')
+		pop.setAttribute('aria-label', I18n.t('shell.fwLinkPortSettings'))
+		const head = mk('div', 'mdn-pop-title', I18n.t('shell.fwLink'))
 		const par = mk('div', 'mdn-pop-sec mdn-pop-params')
-		const parCap = mk('div', 'mdn-pop-cap', '串口参数')
+		const parCap = mk('div', 'mdn-pop-cap', I18n.t('html.portSettings'))
 		const card = mk('div', 'serial-settings-card mdn-fw-params')
 		const fields = {}
 		FW_FIELDS.forEach(function (f) {
@@ -863,13 +863,13 @@
 			card.appendChild(row)
 		})
 		par.append(parCap, card)
-		const wireless = mk('div', 'mdn-fw-conn-note', '无线连接不使用本地串口参数')
+		const wireless = mk('div', 'mdn-fw-conn-note', I18n.t('shell.wirelessNoLocalParams'))
 		wireless.hidden = true
 		pop.append(head, par, wireless)
 		const dd = mk('div', 'mdn-dd')
 		dd.hidden = true
 		dd.setAttribute('role', 'dialog')
-		dd.setAttribute('aria-label', '选择固件连接的设备')
+		dd.setAttribute('aria-label', I18n.t('shell.fwLinkSelectDevice'))
 		listen(power, 'click', function () {
 			const lanes = window.serialLanes
 			if (!lanes || power.disabled) return
@@ -905,10 +905,10 @@
 		const bar = hostEl(mk('div', 'mdn-connbar mdn-fw-connbar'), top)
 		bar.id = 'mdn-fw-connbar'
 		bar.setAttribute('role', 'toolbar')
-		bar.setAttribute('aria-label', '固件连接')
-		const cap = mk('span', 'mdn-fw-conn-cap', '固件连接')
+		bar.setAttribute('aria-label', I18n.t('shell.fwLink'))
+		const cap = mk('span', 'mdn-fw-conn-cap', I18n.t('shell.fwLink'))
 		const f = makeFwConn()
-		const note = mk('span', 'mdn-fw-conn-hint', '固件页自己的连接，与通信调试各路互不影响')
+		const note = mk('span', 'mdn-fw-conn-hint', I18n.t('shell.fwLinkHint'))
 		bar.append(cap, f.wrap, note)
 		refs.paths.F = f
 		refs.fwBar = bar
@@ -932,16 +932,16 @@
 		const transport = lanes.transportOf ? lanes.transportOf('F') : 'serial'
 		p.wrap.dataset.state = failed ? 'close-failed' : (opening ? 'opening' : (open ? 'open' : 'closed'))
 		const name = port ? portRowTitle(lanes.portMeta(port)) : ''
-		p.port.textContent = name || '选择设备'
+		p.port.textContent = name || I18n.t('shell.selectDevice3')
 		p.params.textContent = compactParams(lanes.summary('F'))
-		const st = failed ? '关闭失败，请重试' : (opening ? '正在连接' : (open ? '已连接' : '未连接'))
+		const st = failed ? I18n.t('shell.closeFailedRetry') : (opening ? I18n.t('shell.connecting') : (open ? I18n.t('shell.connected') : I18n.t('shell.disconnected')))
 		p.power.disabled = !port || (busy && !opening)
 		p.power.setAttribute('aria-pressed', String(!!open))
-		p.power.setAttribute('aria-label', '固件连接 ' + (failed ? '重试关闭串口' : (opening ? '正在连接，取消连接' : (open ? '断开串口' : '连接串口'))))
-		p.power.title = busy ? '固件升级进行中' : (failed ? '关闭失败，点此重试关闭' : (opening ? '正在连接，点此取消' : (open ? '已连接，点此断开' : (port ? '未连接，点此连接' : '先选择设备'))))
+		p.power.setAttribute('aria-label', I18n.t('shell.fwLink') + ' ' + (failed ? I18n.t('shell.retryClosingPort') : (opening ? I18n.t('shell.connectingCancel') : (open ? I18n.t('shell.disconnectPort') : I18n.t('shell.connectPort')))))
+		p.power.title = busy ? I18n.t('shell.fwUpgradeRunning') : (failed ? I18n.t('shell.closeFailedClickToRetry') : (opening ? I18n.t('shell.connectingClickToCancel') : (open ? I18n.t('shell.connectedClickToDisconnect') : (port ? I18n.t('shell.disconnectedClickToConnect') : I18n.t('shell.selectADeviceFirst')))))
 		p.btn.disabled = busy
-		p.btn.setAttribute('aria-label', '固件连接 ' + (name || '未选择设备') + ' · ' + st + ' · 选择设备')
-		p.btn.title = busy ? '固件升级进行中，暂不能更换设备' : '固件连接 · ' + st + ' · 选择设备'
+		p.btn.setAttribute('aria-label', I18n.t('shell.fwLink') + ' ' + (name || I18n.t('shell.noDeviceSelected')) + ' · ' + st + ' · ' + I18n.t('shell.selectDevice3'))
+		p.btn.title = busy ? I18n.t('shell.fwBusyCantChangeDevice') : I18n.t('shell.fwLink') + ' · ' + st + ' · ' + I18n.t('shell.selectDevice3')
 		p.par.hidden = transport !== 'serial'
 		p.wireless.hidden = transport === 'serial'
 		const lock = busy || opening
