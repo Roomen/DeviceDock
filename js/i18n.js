@@ -93,9 +93,20 @@
 			el.setAttribute(target, t(a.value))
 		}
 	}
+	// CSS 伪元素里的文案（content: var(--i18n-xxx, '中文兜底')）：css.xxx 键写成 html 上的 --i18n-xxx 字符串变量
+	function applyCssVars(docEl) {
+		const style = docEl && docEl.style
+		if (!style || typeof style.setProperty !== 'function') return
+		for (const k of Object.keys(dicts[FALLBACK])) {
+			if (k.indexOf('css.') === 0) style.setProperty('--i18n-' + k.slice(4), JSON.stringify(t(k)))
+		}
+	}
 	function apply(rootEl) {
 		const r = rootEl || root.document
-		if (r && r === root.document && r.documentElement) r.documentElement.removeAttribute('data-i18n-pending')
+		if (r && r === root.document && r.documentElement) {
+			applyCssVars(r.documentElement)
+			r.documentElement.removeAttribute('data-i18n-pending')
+		}
 		if (!r || !r.querySelectorAll) return
 		if (r.nodeType === 1) applyEl(r)
 		const all = r.querySelectorAll('*')

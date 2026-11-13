@@ -5350,7 +5350,7 @@ hr {
 
 /* 日志空态引导 */
 .serial-logs:empty::before {
-  content: '暂无收发数据';
+  content: var(--i18n-log-empty, '暂无收发数据');
   display: block;
   margin-top: 16vh;
   text-align: center;
@@ -5360,7 +5360,7 @@ hr {
 }
 
 #log-main:not(.wb-connected) .serial-logs:empty::before {
-  content: '选择串口并连接后，收发数据会显示在这里';
+  content: var(--i18n-log-empty-disconnected, '选择串口并连接后，收发数据会显示在这里');
 }
 
 .connect-bar-palette {
@@ -5866,7 +5866,7 @@ summary {
 }
 
 #serial-send-panel.is-looping #serial-send .send-btn-kbd::before {
-  content: '循环中 · ';
+  content: var(--i18n-looping, '循环中 · ');
   font-weight: 600;
 }
 
@@ -7294,7 +7294,7 @@ html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #seri
 }
 
 html[data-layout='modern'][data-dual-view='bubble'] :is(#serial-logs-dual, #serial-logs-single) .log-row > .log-time[data-mdn-gap]::before {
-	content: '⋮ 静默 ' attr(data-mdn-gap);
+	content: '⋮ ' var(--i18n-silence, '静默 ') attr(data-mdn-gap);
 	position: absolute;
 	top: -19px;
 	width: calc(var(--mdn-ax) - 12px);
@@ -8168,16 +8168,16 @@ html[data-layout='modern'] #activity-rail .rail-item[data-view] .rail-label::aft
 }
 
 html[data-layout='modern'] #activity-rail .rail-item[data-view='view-serial'] .rail-label::after {
-	content: '串口';
+	content: var(--i18n-rail-serial, '串口');
 }
 
 html[data-layout='modern'] #activity-rail .rail-item[data-view='view-fw-pack'] .rail-label::after {
-	content: '固件';
+	content: var(--i18n-rail-firmware, '固件');
 }
 
 /* 配置是 data-view 的视图入口(不再是下拉)，短标签同样要有一条：漏了这条，选中时只剩图标 */
 html[data-layout='modern'] #activity-rail .rail-item[data-view='view-settings'] .rail-label::after {
-	content: '配置';
+	content: var(--i18n-rail-settings, '配置');
 }
 
 html[data-layout='modern'] #activity-rail .rail-version {
@@ -9255,7 +9255,7 @@ html[data-layout='modern'] #serial-send-history-btn {
 }
 
 html[data-layout='modern'] #serial-send-history-btn::after {
-	content: '历史';
+	content: var(--i18n-history, '历史');
 	margin-left: 4px;
 	font-size: var(--fs-small);
 }
@@ -9293,7 +9293,7 @@ html[data-layout='modern'] #serial-statusbar .sb-task:focus-visible {
 }
 
 html[data-layout='modern'] #serial-statusbar .sb-task::after {
-	content: '· 点击打开';
+	content: var(--i18n-click-to-open, '· 点击打开');
 	opacity: 0.85;
 }
 
@@ -9320,7 +9320,7 @@ html[data-layout='modern'] #serial-statusbar .sb-task:has(.sb-dot-run[data-state
 }
 
 html[data-layout='modern'] #serial-statusbar .sb-tasks:not(:has(.sb-task:not([hidden])))::before {
-	content: '无后台任务';
+	content: var(--i18n-no-tasks, '无后台任务');
 	color: var(--mdn-bar-dim);
 	font-size: var(--fs-micro);
 }

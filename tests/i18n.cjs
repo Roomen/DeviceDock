@@ -56,6 +56,15 @@ for (const f of jsFiles) {
 		used.add(m[1])
 	}
 }
+// CSS 伪元素文案：content: var(--i18n-xxx, '中文兜底') ↔ 键 css.xxx（js/i18n.js 的 applyCssVars 写变量）
+const css = read('css/style.css')
+for (const m of css.matchAll(/var\(--i18n-([a-z0-9-]+)/g)) {
+	assert.ok(('css.' + m[1]) in zh, 'css/style.css 引用了不存在的键：css.' + m[1])
+	used.add('css.' + m[1])
+}
+for (const line of css.split('\n')) {
+	if (/^\s*content:/.test(line) && CJK.test(line.replace(/var\(--i18n-[a-z0-9-]+,\s*'[^']*'\)/g, ''))) assert.fail('css/style.css 的 content 里有没走 --i18n-* 变量的中文：' + line.trim())
+}
 for (const k of used) assert.ok(k in zh, 'index.html 引用了不存在的键：' + k)
 const unused = zhKeys.filter((k) => !used.has(k))
 assert.deepEqual(unused, [], '字典里有无人引用的键')
