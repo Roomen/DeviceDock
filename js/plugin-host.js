@@ -139,7 +139,7 @@
 		view = {
 			plugin: plugin, el: el, iframe: iframe, ready: false, closed: false,
 			claims: new Map(), busy: new Map(), busySeq: 0, teardowns: [], ctx: null,
-			admission: Rpc.newAdmissionState(), ackState: Rpc.newAckState(), eventState: Rpc.newEventState(),
+			admission: Rpc.newAdmissionState(), eventState: Rpc.newEventState(),
 			stateEventState: Rpc.newStateEventState(), pendingState: {}, stateTimer: 0,
 		}
 		view.ctx = makeContext(view)
@@ -381,14 +381,15 @@
 	if (!view || view.closed) return
 	const data = event.data
 
-	// claim.ack 走 O(1) 轻量校验 + 独立的每秒 240 条上限，**不做**通用遍历 / 不计 RPC 配额。
-	// 畸形（多余键、非字符串 claimId、非安全正整数 gen/seq）直接丢弃、不回包；超频也静默丢弃。
+	// claim.ack 走 O(1) 轻量校验（不枚举对象、不做通用遍历、不计 RPC 配额、不单独限流）：
+	// 它是累积确认，丢掉一条会让收发停住；重复 / 不前进的 ACK 在 API 层被忽略，天然幂等。
+	// 畸形（非字符串 claimId、非安全正整数 gen/seq）直接丢弃、不回包。
 	const ack = Rpc.validateAck(data)
 	if (ack) {
 		if (!ack.ok) return
-		const aadm = Rpc.ackAdmission(view.ackState, Date.now(), Rpc.ACK_LIMITS)
-		view.ackState = aadm.state
-		if (!aadm.ok) return
+		// 能力校验不能省：没有 serial.claim 的插件不能确认任何 claim
+		if (Rpc.authorize(view.plugin.capabilities || [], 'claim.ack')) return
+		// ctx.claimRecord 是当前 view 的声明表 → 只能确认自己的 claim
 		try { await Api.call('claim.ack', { claimId: ack.claimId, gen: ack.gen, seq: ack.seq }, view.ctx) } catch (e) { /* 静默 */ }
 		return
 	}

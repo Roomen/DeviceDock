@@ -203,42 +203,26 @@
 		return { windowStart: s.windowStart, windowCount: s.windowCount, inflight: Math.max(0, s.inflight - 1) }
 	}
 
-	// claim.ack 是每个 claim.rx 的回执，不计入每秒 60 次 RPC 配额。
-	// 它走单独的「轻量校验 + 频率上限」，不做通用遍历（见 validateAck）。
+	// claim.ack 是每个 claim.rx 的回执，不计入每秒 60 次 RPC 配额，也不再单独限流：
+	// 它是累积确认，丢掉一条会让收发停住；重复 / 不前进的 ACK 在 API 层被忽略，天然幂等。
 	function isQuotaExemptMethod(method) { return method === 'claim.ack' }
-	// 每个插件每秒最多处理这么多条 ACK，超出静默丢弃（不回错误、不计 RPC 配额）
-	const ACK_LIMITS = { maxPerWindow: 240, windowMs: 1000 }
 
-	const ACK_TOP_KEYS = ['__devicedock', 'id', 'method', 'params']
-	const ACK_PARAM_KEYS = ['claimId', 'gen', 'seq']
-	function onlyKeys(obj, allowed) {
-		const keys = Object.keys(obj)
-		if (keys.length > allowed.length) return false
-		for (let i = 0; i < keys.length; i++) if (allowed.indexOf(keys[i]) === -1) return false
-		return true
-	}
 	function safePositiveInt(v) { return typeof v === 'number' && Number.isSafeInteger(v) && v > 0 }
-	// O(1) 轻量校验：固定字段、固定大小，不做任何遍历式 validateRequest。
-	// 返回 null 表示「不是 claim.ack」，否则 { ok, id?, claimId?, gen?, seq? }。
+
+	// O(1) 轻量校验，**不枚举对象**：直接读固定字段，多余键忽略即可（取值本身 O(1)）。
+	// 返回 null 表示「不是 claim.ack」（交给通用路径），{ ok:false } 表示畸形（丢弃、不回包）。
 	function validateAck(msg) {
-		if (!isObject(msg) || msg.method !== 'claim.ack') return null
-		const id = typeof msg.id === 'string' && msg.id && msg.id.length <= 64 ? msg.id : ''
-		if (msg.__devicedock !== PROTOCOL || !id || !onlyKeys(msg, ACK_TOP_KEYS)) return { ok: false }
+		if (!isObject(msg)) return null
+		if (msg.method !== 'claim.ack') return null
+		if (msg.__devicedock !== PROTOCOL) return { ok: false }
+		const id = msg.id
+		if (typeof id !== 'string' || !id || id.length > 64) return { ok: false }
 		const p = msg.params
-		if (!isObject(p) || !onlyKeys(p, ACK_PARAM_KEYS)) return { ok: false }
+		if (!p || typeof p !== 'object') return { ok: false }
 		const claimId = p.claimId
 		if (typeof claimId !== 'string' || !claimId || claimId.length > 64) return { ok: false }
 		if (!safePositiveInt(p.gen) || !safePositiveInt(p.seq)) return { ok: false }
 		return { ok: true, id: id, claimId: claimId, gen: p.gen, seq: p.seq }
-	}
-	function newAckState() { return { windowStart: 0, count: 0 } }
-	// ACK 频率上限：窗口内超出就静默丢弃
-	function ackAdmission(state, now, limits) {
-		const l = limits || ACK_LIMITS
-		const st = state || newAckState()
-		if (now - st.windowStart >= l.windowMs) return { ok: true, state: { windowStart: now, count: 1 } }
-		if (st.count >= l.maxPerWindow) return { ok: false, state: st }
-		return { ok: true, state: { windowStart: st.windowStart, count: st.count + 1 } }
 	}
 
 	function isObject(v) {
@@ -382,7 +366,7 @@
 		PROTOCOL, CAPABILITIES, CAPABILITY_TEXT, METHODS, EVENTS, ERROR_TEXT,
 		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, DIRECT_EVENTS, BATCHED_EVENTS,
 		isStateEvent, isDataEvent, isBatchedEvent, isDirectEvent, isQuotaExemptMethod,
-		ACK_LIMITS, validateAck, newAckState, ackAdmission, stateEventKey, coalesceState,
+		validateAck, stateEventKey, coalesceState,
 		estimateSize, newEventState, eventAdmission, newStateEventState, stateEventPlan,
 		newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,

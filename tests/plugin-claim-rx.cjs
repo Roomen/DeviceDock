@@ -52,12 +52,13 @@ function fakeCtx() {
 	return { ctx, events, recs }
 }
 
-// 打开一个 claim 的“新 gen”（不经过真串口）：与 openClaim 成功后的动作一致
+// 打开一个 claim 的「新 gen」（不经过真串口）：与 openClaim 成功后的动作一致
 function openGen(Api, rec) {
 	rec.gen = (rec.gen || 0) + 1
-	rec.rxSeq = 0
 	rec.rxOffset = 0
 	rec.rx = null
+	rec.gens = rec.gens || {}
+	rec.gens[rec.gen] = { rxSeq: 0, ackedSeq: 0, offset: 0 }
 	return rec.gen
 }
 
@@ -208,7 +209,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 			Api._flushClaimRx(rec)
 		}
 		assert.equal(rxEvents(box.events).length, 4, '已发 4 批')
-		assert.equal(Api._claimInflight(rec), 4, 'inflight = rxSeq - ackedSeq')
+		assert.equal(Api._claimInflight(rec), 4, 'inflight = 各 gen (rxSeq - ackedSeq) 之和')
 		// 第 5 批：在途已满 → 不发送，数据留在缓冲
 		one.fill(9)
 		Api._appendClaimRx(rec, one)
@@ -229,7 +230,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		// ack 到第 2 批 → ackedSeq=2、inflight=2，缺口+缓冲数据立刻继续发
 		const gapBytes = Api._pendingClaimGap(rec).bytes
 		assert.equal(Api._ackClaimRx(rec, 1, 2), true)
-		assert.equal(rec.ackedSeq, 2)
+		assert.equal(rec.gens[1].ackedSeq, 2)
 		assert.equal(Api._claimInflight(rec), 3, 'ack 后先发 gap 再发一批 → 3')
 		const gaps = gapEvents(box.events)
 		assert.equal(gaps.length, 1, 'ack 触发时把待发缺口发出去')
@@ -321,10 +322,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.equal(Api._claimInflight(rec), 1)
 		assert.equal(Api._ackClaimRx(rec, 1, 1), true)
 		assert.equal(Api._claimInflight(rec), 0)
-		assert.equal(rec.ackedSeq, 1, 'ackedSeq 前进')
+		assert.equal(rec.gens[1], undefined, '该 gen 全部确认后条目被删除')
 		// 重复 / 旧 ack 不再改变任何状态
-		assert.equal(Api._ackClaimRx(rec, 1, 1), false, '重复 ack 被忽略')
-		assert.equal(rec.ackedSeq, 1)
+		assert.equal(Api._ackClaimRx(rec, 1, 1), false, '重复 ack 被忽略（gen 条目已删除）')
 		assert.equal(Api._claimInflight(rec), 0)
 		assert.equal(Api._ackClaimRx(null, 1, 1), false, '未知 claim 被忽略')
 
@@ -336,7 +336,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		for (let i = 0; i < 4; i++) { buf.fill(i); Api._appendClaimRx(rec2, buf); Api._flushClaimRx(rec2) }
 		assert.equal(Api._claimInflight(rec2), 4)
 		assert.equal(Api._ackClaimRx(rec2, 1, 2), true)
-		assert.equal(Api._claimInflight(rec2), 2, 'inflight = rxSeq - ackedSeq')
+		assert.equal(Api._claimInflight(rec2), 2, 'inflight 按 gen 记账')
 		assert.equal(Api._ackClaimRx(rec2, 1, 2), false, '重复 ack 不前进')
 		assert.equal(Api._claimInflight(rec2), 2, '重复 ack 不改变 inflight')
 		assert.equal(Api._ackClaimRx(rec2, 1, 1), false, '旧 ack（更小 seq）被忽略')
@@ -443,6 +443,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.equal(acks().filter((m) => m.params.claimId === 'c3' && m.params.seq === 5).length, 1, '拒绝仍 ack')
 		offReject()
 
+		// ---- ACK 即发即忘：不登记 pending（不产生等待响应的 Promise / 定时器）----
+		{
+			const before = sdk._pendingCount()
+			sdk.claim.ack('c1', 3, 7)
+			sdk.claim.ack('c1', 3, 8)
+			assert.equal(sdk._pendingCount(), before, 'ACK 不登记 pending')
+			assert.equal(sdk.claim.ack('c1', 3, 9), undefined, '公开 claim.ack 返回 undefined')
+			const acksSent = sent.filter((m) => m && m.method === 'claim.ack')
+			assert.equal(acksSent.length >= 3, true, 'ACK 仍然真的发出去了')
+			assert.equal(acksSent[acksSent.length - 1].params.seq, 9)
+			// 等一个超时窗口后仍无 pending（真的没有定时器在跑）
+			await sleep(20)
+			assert.equal(sdk._pendingCount(), before, '没有残留 pending')
+		}
+
 		// ---- gap 事件形状 ----
 		sdk._handleMessage({ data: Rpc.eventEnvelope('claim.gap', { claimId: 'c1', gen: 3, offset: 200, bytes: 64, reason: 'overflow' }) })
 		const gap = got.filter((g) => g.gap)[0].gap
@@ -482,35 +497,57 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.ok(rec2.rx.chunks[0].buffer.byteLength <= CLAIM_RX_MAX_BYTES, '切前缀后的块也是独立拷贝')
 	}
 
-	// ---- 12. claim.ack 轻量校验：畸形 / 超大在通用校验前被丢，超 240/s 静默丢弃 ----
+	// ---- 12. claim.ack 轻量校验：O(1)、不枚举对象、不再限流 ----
 	{
 		const ok = Rpc.validateAck({ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2 } })
 		assert.equal(ok.ok, true)
 		assert.equal(ok.claimId, 'c1')
 		assert.equal(Rpc.validateAck({ __devicedock: 1, id: 'r1', method: 'serial.write', params: {} }), null, '不是 ack 返回 null')
-		// 畸形：多余键、非字符串 claimId、非安全正整数
+		// 多余键忽略即可（不做固定键白名单枚举）——取值本身 O(1)
+		assert.equal(Rpc.validateAck({ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2, extra: 'x' } }).ok, true, '多余 params 键被忽略')
+		assert.equal(Rpc.validateAck({ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2 }, extra: {} }).ok, true, '多余顶层键被忽略')
+		// 畸形：非字符串 / 空 / 超长 claimId、非安全正整数 gen / seq、协议号不对、id 缺失
 		const bad = [
-			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2, extra: 'x' } },
 			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 1, gen: 1, seq: 2 } },
+			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: '', gen: 1, seq: 2 } },
+			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'x'.repeat(65), gen: 1, seq: 1 } },
 			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 0, seq: 2 } },
 			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 1.5 } },
-			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2 }, extra: {} },
-			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'x'.repeat(65), gen: 1, seq: 1 } },
+			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: -3 } },
+			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2 ** 60 } },
+			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1 } },
 			{ __devicedock: 2, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2 } },
 			{ __devicedock: 1, id: '', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2 } },
+			{ __devicedock: 1, id: 'r1', method: 'claim.ack', params: 'not-an-object' },
 		]
 		bad.forEach((m, i) => assert.equal(Rpc.validateAck(m).ok, false, '畸形 ack #' + i + ' 必须被拒'))
-		// 超大 ack：固定键但仍要过大小检查（这里模拟 params.claimId 超长已被拒）；ACK 不做通用遍历
+		// O(1)：固定字段直读，不 Object.keys / 不遍历；5000 次很快
 		const hugeAck = { __devicedock: 1, id: 'r1', method: 'claim.ack', params: { claimId: 'c1', gen: 1, seq: 2 } }
 		let t0 = Date.now()
 		for (let i = 0; i < 5000; i++) Rpc.validateAck(hugeAck)
 		assert.ok(Date.now() - t0 < 2000, '轻量校验不做遍历，5000 次也很便宜')
-		// 频率上限：每秒 240 条
-		assert.equal(Rpc.ACK_LIMITS.maxPerWindow, 240)
-		let st = Rpc.newAckState()
-		for (let i = 0; i < Rpc.ACK_LIMITS.maxPerWindow; i++) st = Rpc.ackAdmission(st, 1000, Rpc.ACK_LIMITS).state
-		assert.equal(Rpc.ackAdmission(st, 1000, Rpc.ACK_LIMITS).ok, false, '超过 240/s 被拒')
-		assert.equal(Rpc.ackAdmission(st, 1000 + Rpc.ACK_LIMITS.windowMs, Rpc.ACK_LIMITS).ok, true, '窗口过后恢复')
+		// 不再单独限流：失败会让收发停住，重复 / 不前进的 ACK 在 API 层被忽略
+		assert.equal(Rpc.ACK_LIMITS, undefined, 'ACK 限流已删除')
+		assert.equal(Rpc.ackAdmission, undefined)
+		assert.equal(Rpc.newAckState, undefined)
+	}
+
+	// ---- 12b. 能力 / 归属：无 serial.claim 的 ack 被丢；别人的 claimId 无效 ----
+	{
+		const box = fakeCtx()
+		const rec = box.ctx.claim('claim-mine')
+		openGen(Api, rec)
+		Api._appendClaimRx(rec, new Uint8Array([1]))
+		Api._flushClaimRx(rec)
+		assert.equal(Api._claimInflight(rec), 1)
+		// 别的插件的 claimId：ctx.claimRecord 只认本 view 的声明表
+		const otherBox = fakeCtx()
+		const res = await Api.call('claim.ack', { claimId: 'claim-mine', gen: 1, seq: 1 }, otherBox.ctx)
+		assert.equal(res.ack, false, '别的插件的 claimId 无效')
+		assert.equal(Api._claimInflight(rec), 1, '额度没被别人的 ack 释放')
+		// 能力校验：没有 serial.claim 时 authorize 返回错误 → 宿主丢弃、不调用 API
+		assert.equal(Rpc.authorize(['device.read'], 'claim.ack').code, 'capability_denied')
+		assert.equal(Rpc.authorize(['serial.claim'], 'claim.ack'), null)
 	}
 
 	// ---- 13. 关闭时在途已满：不发数据，只发 closing 缺口 ----
@@ -547,7 +584,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		assert.equal(gapEvents(box2.events).length, 0, '没有缺口')
 	}
 
-	// ---- 14. 重新 open 清 ackedSeq / inflight，旧 gen 的在途 ack 被忽略 ----
+	// ---- 14. 在途额度跨 gen 累计：旧 gen 未确认继续占额度，旧 gen 的 ack 能释放 ----
 	{
 		const box = fakeCtx()
 		const rec = box.ctx.claim('claim-gen-ack')
@@ -557,18 +594,89 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 		Api._flushClaimRx(rec)
 		Api._appendClaimRx(rec, buf)
 		Api._flushClaimRx(rec)
-		assert.equal(Api._claimInflight(rec), 2)
+		assert.equal(Api._claimInflight(rec), 2, 'gen1 有 2 批在途')
 		Api._disposeClaimRx(rec)
 		openGen(Api, rec)
-		assert.equal(rec.rxSeq, 0)
-		assert.equal(rec.ackedSeq, 0, '新 gen 从 0 起算')
-		assert.equal(Api._claimInflight(rec), 0, '旧 gen 的在途不带到新 gen')
-		assert.equal(Api._ackClaimRx(rec, 1, 1), false, '旧 gen 的 ack 被忽略')
-		Api._appendClaimRx(rec, new Uint8Array([1]))
+		assert.equal(rec.gen, 2)
+		assert.equal(Api._claimInflight(rec), 2, '旧 gen 未确认的批次继续占用额度')
+		// 新 gen 只能再发 2 批（总共 4）
+		Api._appendClaimRx(rec, buf)
 		Api._flushClaimRx(rec)
-		assert.equal(Api._claimInflight(rec), 1)
-		assert.equal(Api._ackClaimRx(rec, 2, 1), true, '新 gen 的 ack 生效')
+		assert.equal(Api._claimInflight(rec), 3)
+		Api._appendClaimRx(rec, buf)
+		Api._flushClaimRx(rec)
+		assert.equal(Api._claimInflight(rec), 4)
+		// 再灌不发（在途已满），且也不发缺口（本轮规则 4）
+		Api._appendClaimRx(rec, buf)
+		const beforeRx = rxEvents(box.events).length
+		const beforeGap = gapEvents(box.events).length
+		Api._flushClaimRx(rec)
+		assert.equal(rxEvents(box.events).length, beforeRx, '在途满时不发数据')
+		assert.equal(gapEvents(box.events).length, beforeGap, '在途满时也不发缺口')
+		assert.equal(rec.rx.bytes, CLAIM_RX_FLUSH_BYTES, '数据留在缓冲')
+		// 旧 gen 的 ack 生效并释放额度：腾出的 1 个名额立刻被缓冲里的数据用掉（这才是背压的意义）
+		assert.equal(Api._ackClaimRx(rec, 1, 1), true, '旧 gen 的 ack 照样生效')
+		assert.equal(Api._claimInflight(rec), 4, '释放的名额立刻被新 gen 的缓冲数据用掉')
+		assert.equal(gapEvents(box.events).length, beforeGap, '这条路径不该产生缺口（缺口是 overflow/closing）')
+		// 旧 gen 全部确认 → 条目删除，额度真正回到 3
+		assert.equal(Api._ackClaimRx(rec, 1, 2), true)
+		assert.equal(Api._claimInflight(rec), 3)
+		assert.equal(rec.gens[1], undefined, '旧 gen 全部确认后条目删除')
+		assert.equal(Api._ackClaimRx(rec, 1, 1), false, '已删除 gen 的 ack 被忽略')
+	}
+
+	// ---- 15. 关闭 → 打开循环：总在途始终 ≤ 4；旧 gen ack 释放额度 ----
+	{
+		const box = fakeCtx()
+		const rec = box.ctx.claim('claim-cycle')
+		const buf = new Uint8Array(CLAIM_RX_FLUSH_BYTES)
+		for (let cycle = 0; cycle < 3; cycle++) {
+			openGen(Api, rec)
+			for (let i = 0; i < 6; i++) {
+				Api._appendClaimRx(rec, buf)
+				Api._flushClaimRx(rec)
+			}
+			assert.ok(Api._claimInflight(rec) <= CLAIM_RX_INFLIGHT_MAX, 'cycle ' + cycle + ' 在途 ≤ 4')
+			Api._disposeClaimRx(rec)
+			assert.ok(Api._claimInflight(rec) <= CLAIM_RX_INFLIGHT_MAX, 'cycle ' + cycle + ' 关闭后仍 ≤ 4')
+		}
+		assert.equal(Api._claimInflight(rec), 4, '三轮共 12 批尝试，实际只放出 4 批')
+		assert.equal(rxEvents(box.events).length, 4, '反复 open 不会突破上限')
+		// 只有 gen1 真有已发批次（4 批）；gen2/3 的数据在关闭时都记成了 closing 缺口
+		assert.equal(rec.gens[1].rxSeq, 4, 'gen1 发出 4 批')
+		assert.equal(rec.gens[2].rxSeq, 0, 'gen2 一个都没发出去（额度已被 gen1 占满）')
+		assert.equal(Api._ackClaimRx(rec, 1, 4), true, '旧 gen 的 ack 释放额度')
 		assert.equal(Api._claimInflight(rec), 0)
+		assert.equal(rec.gens[1], undefined, 'gen1 全部确认后删除')
+		// gen2/3 没有未确认批次，ack 自然被忽略
+		assert.equal(Api._ackClaimRx(rec, 2, 1), false)
+	}
+
+	// ---- 16. 在途已满 + 高频小块：缺口事件条数 ≤ 时长/16 ms + 1 ----
+	{
+		const box = fakeCtx()
+		const rec = box.ctx.claim('claim-gap-rate')
+		openGen(Api, rec)
+		const buf = new Uint8Array(CLAIM_RX_FLUSH_BYTES)
+		for (let i = 0; i < 4; i++) { Api._appendClaimRx(rec, buf); Api._flushClaimRx(rec) }
+		assert.equal(Api._claimInflight(rec), 4)
+		const started = Date.now()
+		// 灌满缓冲并持续制造丢弃
+		const fill = new Uint8Array(CLAIM_RX_MAX_BYTES - 0)
+		Api._appendClaimRx(rec, fill)
+		for (let i = 0; i < 2000; i++) {
+			Api._appendClaimRx(rec, new Uint8Array(256))
+			Api._flushClaimRx(rec)
+		}
+		await sleep(CLAIM_RX_WINDOW_MS * 4)
+		const elapsed = Date.now() - started
+		const gaps = gapEvents(box.events)
+		const bound = Math.ceil(elapsed / CLAIM_RX_WINDOW_MS) + 2
+		assert.ok(gaps.length <= bound, '缺口条数 ' + gaps.length + ' ≤ ' + bound + '（时长 ' + elapsed + 'ms）')
+		// 可对账：所有缺口 bytes 之和 = 实际丢弃总量（每块 256 B）
+		const totalGapBytes = gaps.reduce((a, g) => a + g.payload.bytes, 0)
+		assert.ok(totalGapBytes >= 2000 * 256, '缺口字节覆盖全部丢弃')
+		assert.equal(Api._pendingClaimGap(rec) === null || Api._pendingClaimGap(rec).bytes >= 0, true)
 	}
 
 	console.log('plugin-claim-rx: ok')

@@ -91,6 +91,14 @@
 			target.postMessage(envelope, '*')
 		}
 
+		// 即发即忘：不登记 pending Promise、不起超时定时器。宿主快速路径不回包，
+		// 用 call 会留下一个永远等不到响应的 Promise 与定时器。
+		function post(method, params) {
+			try {
+				postToHost({ __devicedock: PROTOCOL, id: 'post-' + (++seq), method: String(method), params: params || {} })
+			} catch (e) {}
+		}
+
 		function call(method, params, opts) {
 			const timeoutMs = (opts && Number(opts.timeoutMs)) > 0 ? Number(opts.timeoutMs) : DEFAULT_TIMEOUT_MS
 			return new Promise(function (resolve, reject) {
@@ -166,7 +174,7 @@
 				enqueueClaim(String(item.claimId), function () {
 					const ack = function () {
 						if (!item.seq) return
-						try { call('claim.ack', { claimId: item.claimId, gen: item.gen, seq: item.seq }).catch(function () {}) } catch (e) {}
+						post('claim.ack', { claimId: item.claimId, gen: item.gen, seq: item.seq })
 					}
 					let out
 					try {
@@ -214,6 +222,8 @@
 			getTheme: function () { return Object.assign({}, currentTheme, { tokens: Object.assign({}, currentTheme.tokens) }) },
 			// 测试注入入口
 			_handleMessage: onMessage,
+			post: post,
+			_pendingCount: function () { return pending.size },
 			setClaimErrorHandler: setClaimErrorHandler,
 			_claimQueueDone: claimQueueDone,
 			bytesView: bytesView,
@@ -239,7 +249,8 @@
 				write: function (claimId, bytes) { return call('claim.write', { claimId: claimId, bytes: bytes }) },
 				onRx: onClaimRx,
 				onGap: onClaimGap,
-				ack: function (claimId, gen, seq) { return call('claim.ack', { claimId: claimId, gen: gen, seq: seq }) },
+				// 即发即忘（宿主不回包）：返回 undefined
+				ack: function (claimId, gen, seq) { post('claim.ack', { claimId: claimId, gen: gen, seq: seq }) },
 			},
 			protocol: {
 				info: function (lane) { return call('protocol.info', { lane: lane }) },
