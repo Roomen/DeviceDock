@@ -12,6 +12,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 cc = "1"
 tauri-build = { version = "2", features = [] }
+# Windows 应用清单：tauri-build 的资源只挂 bin，单元测试 exe 另由 build.rs 用这份 embed-resource 编清单(版本跟随 tauri-winres 依赖树)
+embed-resource = "3"
 
 [dependencies]
 # macOSPrivateApi: true(tauri.conf.json)对应的 feature；2.12.1 起它本身是空操作，但 tauri-build 仍会核对两边是否一致
