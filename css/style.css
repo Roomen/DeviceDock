@@ -8655,6 +8655,51 @@ html[data-layout='modern'] .mdn-conn-params {
 	}
 }
 
+/* 顶栏按当前视图只显示一条连接条：通信调试是各路连接栏，固件页是固件页自己的连接；其它视图(配置、插件)不显示，顶栏不占位 */
+html[data-layout='modern']:not([data-view='view-serial']) #mdn-connbar,
+html[data-layout='modern']:not([data-view='view-fw-pack']) #mdn-fw-connbar {
+	display: none;
+}
+
+/* 固件连接条：与每路连接组同款(电源 · 设备 · 设置)，前面一个说明是哪条连接的小标题 */
+html[data-layout='modern'] .mdn-fw-conn-cap {
+	color: var(--text-secondary);
+	font-weight: 500;
+}
+
+html[data-layout='modern'] .mdn-fw-conn-hint {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--text-muted);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+html[data-layout='modern'] .mdn-fw-connbar .mdn-conn > .mdn-conn-btn:disabled {
+	opacity: 0.6;
+}
+
+html[data-layout='modern'] .mdn-fw-params {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+html[data-layout='modern'] .mdn-fw-conn-note {
+	color: var(--text-secondary);
+	font-size: var(--fs-small);
+}
+
+html[data-layout='modern'] .mdn-fw-conn-note[hidden] {
+	display: none;
+}
+
+@media (max-width: 960px) {
+	html[data-layout='modern'] .mdn-fw-conn-hint {
+		display: none;
+	}
+}
+
 html[data-layout='modern'] .mdn-dot {
 	flex: 0 0 auto;
 	width: 8px;
@@ -10015,7 +10060,7 @@ html[data-runtime='tauri'][data-glass='liquid'][data-theme='dark'] #activity-rai
 	border-top-color: rgba(255, 255, 255, 0.12);
 }
 
-html[data-runtime='tauri'][data-glass='liquid'] #mdn-connbar {
+html[data-runtime='tauri'][data-glass='liquid'] :is(#mdn-connbar, #mdn-fw-connbar) {
 	background: var(--glass-top);
 }
 
@@ -10036,7 +10081,7 @@ html[data-runtime='tauri'][data-glass='liquid'] :is(.mdn-pop, .mdn-dd, .app-dlg-
 		background: var(--mdn-rail);
 	}
 
-	html[data-runtime='tauri'][data-glass='liquid'] #mdn-connbar {
+	html[data-runtime='tauri'][data-glass='liquid'] :is(#mdn-connbar, #mdn-fw-connbar) {
 		background: var(--bg-surface);
 	}
 

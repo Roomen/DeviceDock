@@ -673,7 +673,7 @@
 			const sec = host('section', 'fw-pack-upgrade', 'fw-pack-upgrade')
 			sec.setAttribute('aria-label', '固件升级')
 			const head = mk('div', 'fw-pack-upgrade-head')
-			head.append(iconEl('icon-cpu'), mk('span', 'fw-pack-upgrade-title', '固件升级'), mk('span', 'view-bar-sub', '经顶部串口连接收发'))
+			head.append(iconEl('icon-cpu'), mk('span', 'fw-pack-upgrade-title', '固件升级'), mk('span', 'view-bar-sub', '经顶部的固件连接收发'))
 			sec.appendChild(head)
 			fwView.appendChild(sec)
 			sec.appendChild(fw.base.el)

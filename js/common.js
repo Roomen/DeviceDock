@@ -4,7 +4,11 @@
 	function platformHas(id) { return !platform || platform.has(id) }
 	function platformAllowsProtocol(id) { return !platform || platform.allowsProtocol(id) }
 	// 会话里只有平台允许的物理路才会被自动恢复 / 重开：只有一路时 A/B 的存储意图保留但不执行，否则界面是单路、后台却开着 A/B
-	function platformHasSid(sid) { return sid === 'S' || platformHas('lane.dual') }
+	// 固件连接 F 只在有固件页(view.firmware-pack)的画像里存在；移动端的固件升级仍走那唯一一路
+	function platformHasSid(sid) {
+		if (sid === 'F') return platformHas('view.firmware-pack')
+		return sid === 'S' || platformHas('lane.dual')
+	}
 
 	if (!SerialAdapter.isSupported()) {
 		window.AppDialog.alert('当前浏览器不支持串口操作,请更换Edge或Chrome浏览器')
@@ -125,8 +129,10 @@
 	// 那比文件末尾的 reloadAutoReconnect 早得多，声明放在末尾会踩 TDZ
 	let reconnectGrace = false
 
-	// ===== SerialHub: 单路 / 双路 A / 双路 B 三套独立会话 =====
-	// 物理 sid：'S' 单路，'A' 双路 A，'B' 双路 B。切模式只换 UI，不关另一模式的口。
+	// ===== SerialHub: 单路 / 双路 A / 双路 B / 固件连接 F 四套独立会话 =====
+	// 物理 sid：'S' 单路，'A' 双路 A，'B' 双路 B，'F' 固件页自己的连接。切模式只换 UI，不关另一模式的口。
+	// F 不属于通信页的任何一路：不可见(isVisible 为假)、不进通信日志、不进 serialApi 的通用接收、不给 MCP 与插件的 lane 接口，
+	// 只经 serialApi.firmwareLink 收发；选口、打开关闭、热插拔、刷新重连、应用更新释放与 S/A/B 共用同一套路径
 	function makeSerialSession(label) {
 		return {
 			port: null,
@@ -156,13 +162,16 @@
 	const sessionSingle = makeSerialSession('COM')
 	const sessionA = makeSerialSession('A路')
 	const sessionB = makeSerialSession('B路')
-	// 提示文案里的会话名：固定叫「单路 / A路 / B路」，不跟可编辑的标签走
+	const sessionF = makeSerialSession('固件')
+	// 提示文案里的会话名：固定叫「单路 / A路 / B路 / 固件连接」，不跟可编辑的标签走
 	function sidName(sid) {
+		if (sid === 'F') return '固件连接'
 		return sid === 'S' ? '单路' : sid + '路'
 	}
 	function sessionByPhys(sid) {
 		if (sid === 'S') return sessionSingle
 		if (sid === 'B') return sessionB
+		if (sid === 'F') return sessionF
 		return sessionA
 	}
 	const SerialHub = {
@@ -171,7 +180,7 @@
 
 		// UI 的 A/B → 物理 sid。I/O 路径必须用物理 sid，不能再按当前 mode 猜。
 		uiSid(sid) {
-			if (sid === 'B' || sid === 'S') return sid
+			if (sid === 'B' || sid === 'S' || sid === 'F') return sid
 			return this.mode === 'dual' ? 'A' : 'S'
 		},
 		activeSendPhys() {
@@ -192,7 +201,8 @@
 			if (sid === 'S') return 'single'
 			return 'dual'
 		},
-		allPhys() { return ['S', 'A', 'B'] },
+		// 含固件连接 F：占用判定、释放、应用更新屏障都要算上它；只面向通信页各路的地方按 isVisible 过滤
+		allPhys() { return ['S', 'A', 'B', 'F'] },
 
 		_sess(sid) { return sessionByPhys(sid) },
 		getPort(sid) { return this._sess(sid).port },
@@ -228,6 +238,7 @@
 			this._sess(sid).opening = v
 			// 取消只对当前这段连接过程有效：连接过程结束(成功、失败或已取消)就清掉
 			if (!v) this._sess(sid).openCancel = false
+			if (sid === 'F') notifyFirmwareConn()
 			refreshParamsBusyUI()
 			if (window.Workbench) window.Workbench.refreshStatus()
 		},
@@ -277,6 +288,7 @@
 			if (sessionSingle.port === port) return 'S'
 			if (sessionA.port === port) return 'A'
 			if (sessionB.port === port) return 'B'
+			if (sessionF.port === port) return 'F'
 			return null
 		},
 
@@ -297,6 +309,20 @@
 			return null
 		},
 
+		// 端口正被哪个会话占着(不含插件声明)：开着 / 打开中 / 尚未确认释放，或正在换上(bindSessionPort 的预留)。
+		// 插件声明前用它查物理口独占，与通信页各路是否可见、主发路是否钉扎无关
+		sessionOwnerOfPort(port) {
+			if (!port) return null
+			const all = this.allPhys()
+			for (let i = 0; i < all.length; i++) {
+				const sid = all[i]
+				if (this.getPort(sid) !== port) continue
+				if (this.isOpen(sid) || this.isOpening(sid) || this.isReleaseFailed(sid) || this._sess(sid).releaseTask) return sid
+			}
+			const reserved = typeof _portClaims !== 'undefined' ? _portClaims.get(port) : null
+			return reserved || null
+		},
+
 		// 热插拔认领新插入的口：只在当前可见模式里找（不要误绑到隐藏模式），
 		// 先接回已拔出的口，再找空会话；用户选着但关着的口(isLost 为假)不顶替。
 		// 口带路径/序列号(原生后端)时按强身份认领：对不上的是同型号的另一台设备，这样的会话不能认领；
@@ -306,7 +332,10 @@
 			// 插件声明占用的口不参与热插拔认领，免得重插后被会话悄悄抢走
 			if (window.serialPortClaims && window.serialPortClaims.ownerOf && window.serialPortClaims.ownerOf(port)) return null
 			const sids = this.mode === 'single' ? ['S'] : ['A', 'B']
-			const free = sids.filter((sid) => !this.isOpen(sid) && !this.isOpening(sid) && !this.isReleaseFailed(sid) && !this._sess(sid).releaseTask)
+			// 固件连接只接回自己拔出过的口，不认领新插入的空口(空口留给通信页)
+			const lostSids = platformHasSid('F') ? sids.concat('F') : sids
+			const isFree = (sid) => !this.isOpen(sid) && !this.isOpening(sid) && !this.isReleaseFailed(sid) && !this._sess(sid).releaseTask
+			const free = lostSids.filter(isFree)
 			const usbId = function (p) {
 				try {
 					const info = p.getInfo ? p.getInfo() : {}
@@ -342,7 +371,7 @@
 				}
 			}
 			for (let i = 0; i < free.length; i++) {
-				if (!this.getPort(free[i])) return free[i]
+				if (free[i] !== 'F' && !this.getPort(free[i])) return free[i]
 			}
 			return null
 		},
@@ -388,6 +417,27 @@
 	let laneOptions = DualCfg.migrateLaneOptions(lsGet(SERIAL_OPTIONS_LANES_KEY), lsGet(SERIAL_OPTIONS_DUAL_KEY))
 	function persistLaneOptions() {
 		try { localStorage.setItem(SERIAL_OPTIONS_LANES_KEY, JSON.stringify(laneOptions)) } catch (e) {}
+	}
+	// 固件连接 F 的参数：固件页自己的参数菜单读写，存 'serialOptionsFirmware'(设置，跨实例共享)；不经参数卡
+	const SERIAL_OPTIONS_FW_KEY = 'serialOptionsFirmware'
+	let firmwareOptions = DualCfg.normalizeOptions(readSerialOptions(SERIAL_OPTIONS_FW_KEY))
+	function persistFirmwareOptions() {
+		try { localStorage.setItem(SERIAL_OPTIONS_FW_KEY, JSON.stringify(firmwareOptions)) } catch (e) {}
+	}
+	// 某一路打开时用的参数(不读参数卡 dropdown 的那几路)：F 取自己的一份，A/B 取各自的一份
+	function storedOptionsOf(sid) {
+		if (sid === 'F') return firmwareOptions
+		if (sid === 'S') return readSerialOptions(SERIAL_OPTIONS_KEY)
+		return laneOptions[sid]
+	}
+	// 固件页的设备条据此刷新：连接态、设备、参数、别名变了都派发(只是通知，不带状态)
+	let fwConnNotifyTimer = null
+	function notifyFirmwareConn() {
+		if (fwConnNotifyTimer) return
+		fwConnNotifyTimer = setTimeout(function () {
+			fwConnNotifyTimer = null
+			try { document.dispatchEvent(new CustomEvent('serial-fw-conn')) } catch (e) {}
+		}, 0)
 	}
 	// 双路下参数卡正在设置哪一路（由连接栏打开的那一路菜单决定，经 serialLanes.setParamsTarget），单路下恒为 S
 	let paramsTarget = 'A'
@@ -460,7 +510,7 @@
 	function laneParams(sid) {
 		const transport = laneTransport(sid)
 		if (transport !== 'serial') return { lane: sid, transport, options: null, summary: transport === 'bt-classic' ? 'SPP' : 'BLE', open: SerialHub.isOpen(sid), opening: SerialHub.isOpening(sid) }
-		const opts = sid === 'S' ? readSerialOptions(SERIAL_OPTIONS_KEY) : laneOptions[sid]
+		const opts = storedOptionsOf(sid)
 		const norm = DualCfg.normalizeOptions(opts)
 		return { lane: sid, options: norm, summary: DualCfg.paramsSummary(norm), open: SerialHub.isOpen(sid), opening: SerialHub.isOpening(sid) }
 	}
@@ -532,7 +582,9 @@
 	const SERIAL_WANT_OPEN_KEY_S = 'serialWantOpenS'
 	const SERIAL_WANT_OPEN_KEY_A = 'serialWantOpenA'
 	const SERIAL_WANT_OPEN_KEY_B = 'serialWantOpenB'
+	const SERIAL_WANT_OPEN_KEY_F = 'serialWantOpenF'
 	function wantOpenStorageKey(sid) {
+		if (sid === 'F') return SERIAL_WANT_OPEN_KEY_F
 		if (sid === 'S') return SERIAL_WANT_OPEN_KEY_S
 		if (sid === 'B') return SERIAL_WANT_OPEN_KEY_B
 		return SERIAL_WANT_OPEN_KEY_A
@@ -572,7 +624,9 @@
 	const SERIAL_WANT_PORT_KEY_S = 'serialWantPortKeyS'
 	const SERIAL_WANT_PORT_KEY_A = 'serialWantPortKeyDualA'
 	const SERIAL_WANT_PORT_KEY_B = 'serialWantPortKeyB'
+	const SERIAL_WANT_PORT_KEY_F = 'serialWantPortKeyF'
 	function wantPortStorageKey(sid) {
+		if (sid === 'F') return SERIAL_WANT_PORT_KEY_F
 		if (sid === 'S') return SERIAL_WANT_PORT_KEY_S
 		if (sid === 'B') return SERIAL_WANT_PORT_KEY_B
 		return SERIAL_WANT_PORT_KEY_A
@@ -782,10 +836,15 @@
 	//上一轮分批重渲还没做完：新一轮会让它的剩余批次作废，这时只重渲某一路会把另一路留成一半新一半旧
 	let rerenderPending = false
 	//各路连接重置 SEK 会话的次数，历史重渲收尾时据此判断能否把该路的重放末态交给实时会话
-	const sessionResetSeq = { S: 0, A: 0, B: 0 }
+	const sessionResetSeq = { S: 0, A: 0, B: 0, F: 0 }
 	//每路连接代次：连接 / 断开 / 关闭失败都 +1。MCP 的读游标按它判代次，旧会话的游标不能读到新设备的数据
-	const serialSessionGen = { S: 0, A: 0, B: 0 }
+	const serialSessionGen = { S: 0, A: 0, B: 0, F: 0 }
 	function bumpSessionGen(sid, state) {
+		// 固件连接不是通信页的路：不派发 serial-session(插件 device.lane、MCP 只认通信页)，只通知固件页
+		if (sid === 'F') {
+			notifyFirmwareConn()
+			return
+		}
 		if (state === 'connecting') return
 		serialSessionGen[sid] = (serialSessionGen[sid] || 0) + 1
 		try {
@@ -3673,6 +3732,7 @@
 			opts.blockMessage = late
 			return false
 		}
+		dropIdleCrossHolders(port, sid)
 		SerialHub.setPort(sid, port)
 		// 多 CDC 槽位依赖 getPorts 全集：清缓存后重算(WeakMap 没有 clear，整体换新)
 		_portIdentityCache = new WeakMap()
@@ -3706,6 +3766,26 @@
 			return ok
 		}
 		return true
+	}
+
+	// 固件连接与通信页之间，同一个口只留一处记着：一边选用了另一边关着记着的口，另一边就不再记着它
+	// (打开着的口过不了 laneSelectBlock)。否则两边各挂一个同样的端口对象，热插拔接回与刷新后重连按口找会话时认不出该归谁，
+	// 重插后两边同时去开同一个口。同一模式里通信页各路之间的规则不变(lanePortOwner 已拒绝)。同步执行，不能有 await
+	function dropIdleCrossHolders(port, sid) {
+		const others = sid === 'F' ? ['S', 'A', 'B'] : ['F']
+		for (let i = 0; i < others.length; i++) {
+			const o = others[i]
+			if (SerialHub.getPort(o) !== port) continue
+			const sess = SerialHub._sess(o)
+			if (sess.open || sess.opening || sess.releaseFailed || sess.releaseTask) continue
+			SerialHub.setPort(o, null)
+			SerialHub.setManualClose(o, true)
+			setSerialWantOpen(false, o)
+			setSerialWantPortKey(o, null)
+			updatePortButtonDisplay(o, null)
+			updateOpenButton(o)
+			if (o === 'F') notifyFirmwareConn()
+		}
 	}
 
 	//屏幕唤醒锁：息屏后系统会挂起 USB 导致设备掉线，长时间挂测必须按住
@@ -3757,6 +3837,7 @@
 			session.writeSeq = (session.writeSeq || 0) + 1
 			resetRxWatch(sid)
 			const port = SerialHub.getPort(sid)
+			// 物理口被别处持有(另一会话或插件声明)就只放下本会话的 reader/writer，不关口
 			const closePort = port && !portHeldByOther(port, sid)
 			const r = SerialHub.getReader(sid)
 			const writer = session.writer
@@ -3841,6 +3922,7 @@
 		serialStatuChange(false, 'S')
 		serialStatuChange(false, 'A')
 		serialStatuChange(false, 'B')
+		serialStatuChange(false, 'F')
 		updateOpenButton('S')
 		updateOpenButton('A')
 		updateOpenButton('B')
@@ -3856,6 +3938,7 @@
 		reopenIfWanted('S')
 		reopenIfWanted('A')
 		reopenIfWanted('B')
+		reopenIfWanted('F')
 	})
 
 	//关闭串口(无论 serialOpen 标志如何都尽量释放 reader/port，避免锁泄漏导致再次打开失败)
@@ -3940,7 +4023,7 @@
 				? collectSerialParamsFromUI()
 				: readSerialOptions(SERIAL_OPTIONS_KEY)
 		} else {
-			SerialOptions = Object.assign({}, laneOptions[sid])
+			SerialOptions = Object.assign({}, storedOptionsOf(sid))
 		}
 		//打开前必须确认旧口已释放；关闭超时后不能并发 open。
 		if (!await releasePort(sid)) {
@@ -4027,6 +4110,7 @@
 		})
 		serialStatuChange(true, sid)
 		if (sid === 'S') localStorage.setItem(SERIAL_OPTIONS_KEY, JSON.stringify(SerialOptions))
+		else if (sid === 'F') persistFirmwareOptions()
 		else persistLaneOptions()
 		requestWakeLock(sid)
 		const w = rxWatch(sid)
@@ -4097,9 +4181,18 @@
 	// 这一路现在能不能动：返回 { code, message }，可以动返回 null。MCP 与 UI 共用同一套判据
 	function laneBlockReason(sid, port) {
 		sid = SerialHub.uiSid(sid)
-		if (!platformHasSid(sid) || !SerialHub.isVisible(sid)) return { code: 'lane_not_visible', message: '这一路当前不可用' }
-		if (laneMoving) return { code: 'lane_moving', message: '正在切换串口，请稍候' }
+		if (!platformHasSid(sid) || (sid !== 'F' && !SerialHub.isVisible(sid))) return { code: 'lane_not_visible', message: '这一路当前不可用' }
 		if (window.serialApi && window.serialApi.updatePreparing) return { code: 'update_preparing', message: '正在安装应用更新，暂不能操作串口' }
+		// 固件连接与通信页的增减路、事务钉扎无关，只受物理口独占约束
+		if (sid === 'F') {
+			if (window.serialApi && window.serialApi.firmwareLink && window.serialApi.firmwareLink.isBusy()) return { code: 'firmware_busy', message: '固件升级进行中，暂不能操作固件连接' }
+			if (port) {
+				const owner = lanePortOwner(port, sid)
+				if (owner) return { code: 'lane_conflict', message: portConflictMsg(owner) }
+			}
+			return null
+		}
+		if (laneMoving) return { code: 'lane_moving', message: '正在切换串口，请稍候' }
 		if (window.serialApi && window.serialApi.isPinned() && SerialHub.activeSendPhys() === sid) {
 			return { code: 'transaction_pinned', message: '事务进行中，暂不能操作这一路的串口' }
 		}
@@ -4299,11 +4392,15 @@
 		if (typeof taken === 'string' && taken.indexOf('plugin:') === 0) return '该口已被插件「' + taken.slice(7) + '」占用'
 		if (taken === 'S') return '该口已被单路串口占用'
 		if (taken === 'A' || taken === 'B') return '该口已被' + sidName(taken) + '占用'
+		if (taken === 'F') return '该口已被固件页的连接占用'
 		return '该口已被其它会话占用'
 	}
 
+	// 释放时判断这个物理口是不是别人的：通信 S/A/B、固件连接 F 开着或未确认释放，或插件声明着(插件自己开关它)。
+	// 本会话只是选着(关着记着)而别人打开了同一个口时，releasePort 不能去关它：可关则把别人的连接掐断，读流被锁则让换口失败
 	function portHeldByOther(port, exceptSid) {
 		if (!port) return false
+		if (window.serialPortClaims && window.serialPortClaims.ownerOf && window.serialPortClaims.ownerOf(port)) return true
 		const all = SerialHub.allPhys()
 		for (let i = 0; i < all.length; i++) {
 			if (all[i] === exceptSid) continue
@@ -4739,6 +4836,11 @@
 
 	/** 更新端口选择按钮：无口显示「选择」；有口显示设备名 + 改名/清除（与状态区合二为一） */
 	function updatePortButtonDisplay(sid, port) {
+		// 固件连接没有通信页的芯片：固件页的设备条按通知自己刷新
+		if (sid === 'F') {
+			notifyFirmwareConn()
+			return
+		}
 		let btnId = null
 		if (SerialHub.mode === 'dual') {
 			btnId = sid === 'A' ? 'serial-select-port-a' : 'serial-select-port-b'
@@ -4762,6 +4864,7 @@
 
 	/** 刷新选口按钮上的设备名/别名 */
 	function refreshPortDisplayNames() {
+		if (SerialHub.getPort('F')) notifyFirmwareConn()
 		if (SerialHub.mode === 'dual') {
 			updatePortButtonDisplay('A', SerialHub.getPort('A'))
 			updatePortButtonDisplay('B', SerialHub.getPort('B'))
@@ -4960,8 +5063,11 @@
 			}
 			SerialHub._sess(sid).txBytes += data.length
 			const shown = opts.logData ? Uint8Array.from(opts.logData) : data
-			if (window.serialByteTap) window.serialByteTap.emit('tx', sid, shown)
-			addLog(shown, false, sendTime, sid, false, sendName)
+			// 固件连接的收发由固件页自己记日志，不进通信日志与插件旁路
+			if (sid !== 'F') {
+				if (window.serialByteTap) window.serialByteTap.emit('tx', sid, shown)
+				addLog(shown, false, sendTime, sid, false, sendName)
+			}
 			return { startedAt: sendTime.getTime(), completedAt: completedAt.getTime(), durationMs, bytes: data.length }
 		} catch (error) {
 			recoverIfWriteDead(sid, session, gen, error)
@@ -5062,10 +5168,10 @@
 	const READ_STREAM_SWAP_WAIT_MS = 2000
 	const READ_BACKOFF_DELAYS = [1000, 3000, 10000]
 	// 启动读循环及释放串口时递增，旧循环据此退出，不跨连接抢新流或处理迟到数据
-	const readGenBySid = { S: 0, A: 0, B: 0 }
+	const readGenBySid = { S: 0, A: 0, B: 0, F: 0 }
 	const REOPEN_DELAYS = [300, 1000, 3000]
 	const REOPEN_STABLE_MS = 10000
-	const reopenAttemptBySid = { S: 0, A: 0, B: 0 }
+	const reopenAttemptBySid = { S: 0, A: 0, B: 0, F: 0 }
 
 	function makeRxWatch() {
 		return { lastRxAt: 0, openedAt: 0, swapping: 0, backoff: 0, deferTimer: null }
@@ -5089,7 +5195,7 @@
 			recoverDeadReadLoop(sid, reasonMsg)
 		}, 400)
 	}
-	const rxWatchBySid = { S: makeRxWatch(), A: makeRxWatch(), B: makeRxWatch() }
+	const rxWatchBySid = { S: makeRxWatch(), A: makeRxWatch(), B: makeRxWatch(), F: makeRxWatch() }
 	function rxWatch(sid) {
 		return rxWatchBySid[sid] || rxWatchBySid.A
 	}
@@ -5188,7 +5294,7 @@
 
 	// 手动兜底：完整重开同一物理口，保留重连意图，不走错误恢复的退避计数。
 	async function rebuildSerialReceive(sid) {
-		if (!['S', 'A', 'B'].includes(sid) || !SerialHub.isOpen(sid) || SerialHub.isOpening(sid)) return false
+		if (!['S', 'A', 'B', 'F'].includes(sid) || !SerialHub.isOpen(sid) || SerialHub.isOpening(sid)) return false
 		const port = SerialHub.getPort(sid)
 		if (!port) return false
 		SerialHub.setOpening(sid, true)
@@ -5438,6 +5544,16 @@
 	function dataReceived(data, sid, meta) {
 		sid = sid || SerialHub.activeSendPhys()
 		noteSerialRx(sid)
+		// 固件连接：只交给按 F 订阅的固件升级模块，不进通信日志、分包、插件字节旁路与通用订阅者
+		if (sid === 'F') {
+			SerialHub._sess(sid).rxBytes += data.length
+			const subs = window.serialApi && window.serialApi._receivers ? window.serialApi._receivers.slice() : []
+			for (let i = 0; i < subs.length; i++) {
+				if (subs[i].sid !== 'F') continue
+				try { subs[i].cb(data) } catch (e) { /* ignore */ }
+			}
+			return
+		}
 		// 插件宿主的原始字节旁路(仅桌面客户端)：没人订阅时直接返回
 		if (window.serialByteTap) window.serialByteTap.emit('rx', sid, data)
 		SerialHub._sess(sid).rxBytes += data.length
@@ -5456,6 +5572,7 @@
 			if (SerialHub.mode === 'single') {
 				if (api._receivers && api._receivers.length) {
 					for (let i = 0; i < api._receivers.length; i++) {
+						if (api._receivers[i].sid === 'F') continue
 						try { api._receivers[i].cb(data) } catch (e) { /* ignore */ }
 					}
 				} else if (api._onReceive) {
@@ -5551,13 +5668,58 @@
 		armFlush()
 	}
 
+	// 固件连接的占用者(升级 / 查询进行中)：占用期间不换口、不改参数、不准备应用更新
+	let fwLinkOwner = ''
+	let fwLinkToken = null
+	let fwLinkSeq = 0
 	//对外暴露的串口接口(供固件升级/协议测试等模块使用)
 	//onReceive 支持多订阅者; 旧单回调 _onReceive 仍兼容
 	window.serialApi = {
+		// 固件页自己的连接(物理 sid 'F')，只给固件升级模块用；有固件页的画像才启用(enabled)，否则固件升级仍走主发那一路。
+		// 与通信页 S/A/B 互不影响：不钉扎主发路、不进通信日志；MCP 与插件的 lane 接口都不认它
+		firmwareLink: {
+			enabled: function () { return platformHasSid('F') },
+			isOpen: function () {
+				const port = SerialHub.getPort('F')
+				return !!(port && port.writable && SerialHub.isOpen('F'))
+			},
+			// 返回 writeData 的计时 { startedAt, completedAt, durationMs, bytes }；未打开、写失败一律抛错
+			write: function (bytes) {
+				return writeData(bytes, 'F', undefined, { raw: true, throwOnError: true })
+			},
+			onReceive: function (cb) {
+				if (typeof cb !== 'function') return function () {}
+				const api = window.serialApi
+				const sub = { cb: cb, sid: 'F' }
+				api._receivers.push(sub)
+				return function unsubscribe() {
+					const idx = api._receivers.indexOf(sub)
+					if (idx !== -1) api._receivers.splice(idx, 1)
+				}
+			},
+			transport: function () { return laneTransport('F') },
+			// 占用固件连接(升级 / 查询)：返回令牌；已被占用或正在准备应用更新时抛错
+			begin: function (owner) {
+				if (window.serialApi.updatePreparing) throw new Error('正在安装应用更新，暂不能开始')
+				if (fwLinkOwner) throw new Error('固件连接正被「' + fwLinkOwner + '」使用')
+				fwLinkOwner = owner || '固件升级'
+				fwLinkToken = 'fw-' + (++fwLinkSeq)
+				notifyFirmwareConn()
+				return fwLinkToken
+			},
+			end: function (token) {
+				if (!fwLinkToken || token !== fwLinkToken) return
+				fwLinkOwner = ''
+				fwLinkToken = null
+				notifyFirmwareConn()
+			},
+			isBusy: function () { return !!fwLinkOwner },
+		},
 		updatePreparing: false,
 		// 与刷新同样保留 wantOpen；等待关闭完成后才允许安装，最后一批日志也必须先落盘。
 		async prepareForAppUpdate() {
 			if (this.isPinned()) throw new Error('协议事务正在运行')
+			if (fwLinkOwner) throw new Error('固件升级正在进行')
 			const all = SerialHub.allPhys()
 			if (all.some(function (sid) { return SerialHub.isOpening(sid) })) throw new Error('串口正在连接或关闭')
 			clearInterval(serialloopSendTimer)
@@ -6389,6 +6551,11 @@
 	}
 	//系统日志：有物理 sid 写到对应模式容器；否则写当前可见模式
 	function addLogErr(msg, sid) {
+		// 固件连接的系统消息进固件页的升级日志，不进通信日志
+		if (sid === 'F') {
+			try { document.dispatchEvent(new CustomEvent('serial-fw-log', { detail: { msg: String(msg) } })) } catch (e) {}
+			return
+		}
 		const target = (sid === 'S' || sid === 'A' || sid === 'B')
 			? sid
 			: (SerialHub.mode === 'dual' ? 'A' : 'S')
@@ -7507,6 +7674,8 @@
 		if (taken) return taken
 		const claim = _portClaims.get(port)
 		if (claim && claim !== sid) return claim
+		// 固件连接与通信页之间只认「开着 / 正在换上」：关着记着的口可以选走，原来记着它的一边随之放手(dropIdleCrossHolders)
+		if (sid === 'F') return null
 		const sids = SerialHub.mode === 'dual' ? ['A', 'B'] : ['S']
 		for (let i = 0; i < sids.length; i++) {
 			if (sids[i] !== sid && SerialHub.getPort(sids[i]) === port) return sids[i]
@@ -7517,7 +7686,14 @@
 	// 事务钉扎在这一路上时拒绝，免得事务后续帧发到另一台设备；本路自己的 opening 锁由调用方查(bindSessionPort 时锁已在调用方手里)
 	function laneSelectBlock(sid, port) {
 		sid = SerialHub.uiSid(sid)
-		if (!platformHasSid(sid) || !SerialHub.isVisible(sid)) return '这一路当前不可用'
+		if (!platformHasSid(sid) || (sid !== 'F' && !SerialHub.isVisible(sid))) return '这一路当前不可用'
+		// 固件连接不随通信页增减路、不受主发路事务钉扎影响，只查物理口独占；升级进行中不换口
+		if (sid === 'F') {
+			if (window.serialApi && window.serialApi.firmwareLink && window.serialApi.firmwareLink.isBusy()) return '固件升级进行中，暂不能更换固件连接的串口'
+			if (!port) return ''
+			const fwOwner = lanePortOwner(port, sid)
+			return fwOwner ? portConflictMsg(fwOwner) : ''
+		}
 		if (laneMoving) return '正在切换串口，请稍候'
 		if (window.serialApi && window.serialApi.isPinned() && SerialHub.activeSendPhys() === sid) return '事务进行中，暂不能更换这一路的串口'
 		if (!port) return ''
@@ -7541,7 +7717,7 @@
 			return true
 		}
 		if (cancelled()) return false
-		if (!port || !platformHasSid(sid) || !SerialHub.isVisible(sid)) { opts.reason = 'lane_not_visible'; return false }
+		if (!port || !platformHasSid(sid) || (sid !== 'F' && !SerialHub.isVisible(sid))) { opts.reason = 'lane_not_visible'; return false }
 		if (SerialHub.isOpening(sid)) { opts.reason = 'lane_busy'; return false }
 		const block = laneSelectBlock(sid, port)
 		if (block) {
@@ -7597,8 +7773,29 @@
 		}
 	}
 
+	// 固件页参数菜单：归一化 → 落盘 → 已打开就按「关闭 → 100ms → 按新参数打开」重连(与各路改参数同一条老路)
+	async function configureFirmware(patch) {
+		if (!platformHasSid('F')) return { ok: false, code: 'lane_not_visible', message: '固件连接当前不可用' }
+		if (laneTransport('F') !== 'serial') return { ok: false, code: 'unsupported_transport', message: '无线透传不使用本地串口参数' }
+		if (fwLinkOwner) return { ok: false, code: 'firmware_busy', message: '固件升级进行中，暂不能修改串口参数' }
+		if (SerialHub.isOpening('F')) return { ok: false, code: 'lane_busy', message: '固件连接正在连接或关闭' }
+		const next = DualCfg.normalizeOptions(patch, firmwareOptions)
+		if (DualCfg.sameOptions(next, firmwareOptions)) return { ok: true, changed: false, options: next }
+		firmwareOptions = next
+		persistFirmwareOptions()
+		notifyFirmwareConn()
+		if (SerialHub.isOpen('F') && !SerialHub.isOpening('F')) {
+			const ok = await reopenWithNewParams('F')
+			return ok ? { ok: true, changed: true, options: next, reopened: true } : { ok: false, code: 'reopen_failed', message: '参数已保存，但按新参数重新打开失败', options: next }
+		}
+		return { ok: true, changed: true, options: next, reopened: false }
+	}
+
 	window.serialLanes = {
 		mode: function () { return SerialHub.mode },
+		// 固件页的连接(F)：参数读写；选口、连接、改名与各路共用下面的 selectPort / toggle / forget / requestPort / portOwner
+		firmwareParams: function () { return Object.assign({}, firmwareOptions) },
+		configureFirmware: function (patch) { return configureFirmware(patch) },
 		singleTarget: singlePresetTarget,
 		laneSnapshot: laneSnapshot,
 		addLaneB: addLaneB,
@@ -7630,7 +7827,7 @@
 		summary: function (sid) {
 			if (laneTransport(sid) !== 'serial') return laneParams(sid).summary
 			if (laneSummaryOf) return laneSummaryOf(sid)
-			return DualCfg.paramsSummary(sid === 'S' ? readSerialOptions(SERIAL_OPTIONS_KEY) : laneOptions[sid])
+			return DualCfg.paramsSummary(storedOptionsOf(sid))
 		},
 		getParamsTarget: function () { return paramsTarget },
 		setParamsTarget: setParamsTarget,
@@ -7902,7 +8099,8 @@
 		const wantS = getSerialWantOpen('S')
 		const wantA = getSerialWantOpen('A')
 		const wantB = getSerialWantOpen('B')
-		if (!wantS && !wantA && !wantB) return
+		const wantF = platformHasSid('F') && getSerialWantOpen('F')
+		if (!wantS && !wantA && !wantB && !wantF) return
 		reconnectGrace = true
 		try {
 			// 恢复模式（此时所有 const/函数已初始化，无 TDZ 风险）
@@ -7976,14 +8174,15 @@
 				if (!platformHasSid(sid) || !getSerialWantOpen(sid)) return null
 				const idKey = getSerialWantPortKey(sid)
 				let plan = findPortByKey(sid)
-				if (!plan && !idKey) plan = findFirstFreePort()
+				// 固件连接不按位置猜：没有存下身份就不自动连
+				if (!plan && !idKey && sid !== 'F') plan = findFirstFreePort()
 				if (getSerialWantOpen(sid) && !plan) {
-					addLogErr((sid === 'S' ? '单路' : sid) + ' 未找到原设备，请重新选择串口', sid)
+					addLogErr(sidName(sid) + ' 未找到原设备，请重新选择串口', sid)
 					return null
 				}
 				if (!plan) return null
 				if (used.indexOf(plan) !== -1) {
-					addLogErr((sid === 'S' ? '单路' : sid) + ' 与其它会话匹配到同一设备，请重新选择串口', sid)
+					addLogErr(sidName(sid) + ' 与其它会话匹配到同一设备，请重新选择串口', sid)
 					return null
 				}
 				used.push(plan)
@@ -8001,6 +8200,8 @@
 			await restoreSid('S')
 			const planA = await restoreSid('A')
 			const planB = await restoreSid('B')
+			// 固件连接最后恢复：它与通信页各路是不同的设备，身份对上的口已被前面占用(used)时按冲突处理
+			await restoreSid('F')
 			if (wantA && wantB && planA && planB) {
 				const aIdKey = getSerialWantPortKey('A')
 				const bIdKey = getSerialWantPortKey('B')

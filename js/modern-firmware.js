@@ -767,14 +767,12 @@
 		ui.stats.textContent = line
 		setNote(ui.upNote, u.notice)
 		ui.upFold.last.textContent = shortMsg(u.lastLog, 60)
-		// 当前走哪个串口：与顶栏主发口一致
+		// 当前走哪个串口：固件页自己的连接(顶部固件连接条)，与通信页各路无关
 		if (ui.c3.sub) {
 			let t = ''
 			try {
-				const sid = root.serialApi && root.serialApi.getActiveSendSid && root.serialApi.getActiveSendSid()
-				if (sid === 'A') t = '经顶栏 A 路'
-				else if (sid === 'B') t = '经顶栏 B 路'
-				else if (sid) t = '经顶栏串口'
+				const link = root.serialApi && root.serialApi.firmwareLink
+				if (link && link.enabled()) t = link.isOpen() ? '经固件连接' : '固件连接未连接'
 			} catch (e) { /* 取不到就不显示 */ }
 			if (ui.c3.sub.textContent !== t) ui.c3.sub.textContent = t
 		}
