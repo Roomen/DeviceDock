@@ -14,13 +14,13 @@
 		function fail(at, reason) {
 			const lines = text.slice(0, at).split('\n')
 			const column = Array.from(lines[lines.length - 1]).length + 1
-			throw new Error('TEXT 转义错误（第 ' + lines.length + ' 行，第 ' + column + ' 列）：' + reason)
+			throw new Error(I18n.t('textEnc.textEscapeErrorLineColumn', { length: lines.length, column, reason }))
 		}
 		while (i < text.length) {
 			if (text[i] !== '\\') { i++; continue }
 			literal(i)
 			const at = i++
-			if (i === text.length) fail(at, '末尾反斜杠缺少转义字符')
+			if (i === text.length) fail(at, I18n.t('textEnc.trailingBackslashHasNothingToEscape'))
 			const ch = text[i++]
 			let value
 			if (Object.prototype.hasOwnProperty.call(simple, ch)) {
@@ -39,11 +39,11 @@
 					// Saturate only the accumulator; still consume every hex digit.
 					value = Math.min(256, value * 16 + parseInt(text[i++], 16))
 				}
-				if (i === first) fail(at, '\\x 后至少需要一位十六进制数字')
+				if (i === first) fail(at, I18n.t('textEnc.xNeedsAtLeastOneHex'))
 			} else {
-				fail(at, '不支持的转义；字面反斜杠请写成 \\\\')
+				fail(at, I18n.t('textEnc.unsupportedEscapeWriteALiteralBackslash'))
 			}
-			if (value > 255) fail(at, '数字转义超出单字节范围 0–255')
+			if (value > 255) fail(at, I18n.t('textEnc.numericEscapeIsOutsideTheByte'))
 			bytes[used++] = value
 			start = i
 		}

@@ -1,6 +1,7 @@
 // Run: node tests/plugin-host-fixes.cjs — 全部用合成对象，不连真串口、不发网络请求。
 // 覆盖回修 1 的页面侧：RPC 限额与准入、同版本重装的信任键、协议调用换入隔离 lane、
 // BLE 扫描清理在启动前登记、导出与存储限额、停用时串口在飞打开/读循环/关闭的异步收尾。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

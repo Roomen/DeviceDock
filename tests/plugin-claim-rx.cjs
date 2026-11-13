@@ -3,6 +3,7 @@
 // 8 MiB 缓冲与单块超限（截前缀、claim.gap 报告）、关闭途中兑现的读块不丢、
 // claim.gap 不受数据事件配额、claim.ack 免 RPC 配额且旧 gen / 未知 claim 被忽略、
 // close→open 后 gen +1 且 seq / offset 重新起算、SDK 自动 ack。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

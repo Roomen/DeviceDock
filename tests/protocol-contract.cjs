@@ -1,6 +1,7 @@
 // Run: node tests/protocol-contract.cjs
 // 协议契约 v1 的纯逻辑回归：清单 / 目录校验、包内路径、SemVer、来源 URL 解析、命名空间、
 // provides 严格一致、runtime / apiVersion 拒绝、信任键、协议对象规范化，以及示例仓库的摘要自洽。
+require('./i18n-env.cjs')
 'use strict'
 const assert = require('node:assert/strict')
 const fs = require('node:fs')

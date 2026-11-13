@@ -1,6 +1,7 @@
 // Run: node tests/plugin-rpc.cjs — synthetic data only.
 // 覆盖: 插件 RPC 能力白名单校验、拖拽/键盘排序持久化、主题推送与 SDK applyTheme、
 // 宿主 API 串口归属声明与 busy 源阻断应用更新、示例插件(examples/plugin-hello)清单摘要自洽。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const crypto = require('node:crypto')
 const fs = require('node:fs')

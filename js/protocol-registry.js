@@ -54,7 +54,7 @@
 		const existing = entries[id]
 		const packageId = String((meta && meta.packageId) || '')
 		if (existing && existing.meta && !existing.meta.builtin && existing.meta.packageId !== packageId) {
-			throw new Error('协议 id 已被另一个协议包占用：' + id)
+			throw new Error(I18n.t('registry.protocolIdIsAlreadyTakenBy', { id }))
 		}
 		return register(id, impl, Object.assign({}, meta, { builtin: false, source: sourceKey }))
 	}
@@ -94,7 +94,7 @@
 			bySource[key].items.push(item)
 		})
 		const out = []
-		if (builtin.length) out.push({ label: '内置', items: builtin })
+		if (builtin.length) out.push({ label: I18n.t('registry.builtIn'), items: builtin })
 		Object.keys(bySource).sort(function (a, b) { return bySource[a].label.localeCompare(bySource[b].label) }).forEach(function (k) {
 			out.push(bySource[k])
 		})

@@ -49,6 +49,7 @@
 .icon-history::before { content: "\e1f5"; }
 .icon-import::before { content: "\e22f"; }
 .icon-info::before { content: "\e0f9"; }
+.icon-languages::before { content: "\e0fe"; }
 .icon-layout-grid::before { content: "\e0ff"; }
 .icon-line-chart::before { content: "\e2a5"; }
 .icon-list-check::before { content: "\e5fa"; }
@@ -56,6 +57,7 @@
 .icon-lock-open::before { content: "\e10c"; }
 .icon-message-circle-more::before { content: "\e565"; }
 .icon-minus::before { content: "\e11c"; }
+.icon-monitor::before { content: "\e11d"; }
 .icon-moon-star::before { content: "\e410"; }
 .icon-notebook-text::before { content: "\e598"; }
 .icon-package::before { content: "\e129"; }

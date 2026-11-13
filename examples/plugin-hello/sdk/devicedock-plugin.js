@@ -1,6 +1,7 @@
 // DeviceDock 插件端 SDK（运行在 sandbox="allow-scripts" 的插件 iframe 内，也可在 node 单测中加载）。
 // 与宿主页面不同源，所有能力调用走 window.parent.postMessage({ __devicedock: 1, id, method, params }, '*')；
-// 宿主在收到 load 后立即推送 ready（含初始 { theme, tokens }），主题切换时推送 theme-change / theme。
+// 宿主在收到 load 后立即推送 ready（含初始 { theme, tokens }），主题切换时推送 theme-change / theme；
+// 界面语言经状态事件 app.locale（{ locale: 'zh-CN' | 'en' }）送达，getLocale / onLocale 读取与订阅。
 ;(function (root) {
 	'use strict'
 
@@ -15,6 +16,8 @@
 		let seq = 0
 		let currentTheme = { theme: 'light', tokens: {} }
 		let readyInfo = null
+		// 宿主界面语言：收到 app.locale 之前是 null（旧宿主不推，插件按 navigator.language 回退）
+		let currentLocale = null
 		const readyWaiters = []
 
 		function emitLocal(name, payload) {
@@ -67,6 +70,15 @@
 					emitLocal('ready', readyInfo)
 					emitLocal('theme', currentTheme)
 					emitLocal('theme-change', currentTheme)
+					return
+				}
+				if (msg.event === 'app.locale') {
+					const loc = p && (p.locale === 'zh-CN' || p.locale === 'en') ? p.locale : null
+					if (loc && loc !== currentLocale) {
+						currentLocale = loc
+						emitLocal('locale', currentLocale)
+					}
+					emitLocal('app.locale', p)
 					return
 				}
 				if (msg.event === 'theme' || msg.event === 'theme-change') {
@@ -208,6 +220,16 @@
 			})
 		}
 
+		// 订阅界面语言：已收到过就立即回调一次；返回取消订阅函数
+		function onLocale(fn) {
+			if (typeof fn !== 'function') return function () {}
+			const off = on('locale', fn)
+			if (currentLocale) {
+				try { fn(currentLocale) } catch (e) {}
+			}
+			return off
+		}
+
 		function ready() {
 			if (readyInfo) return Promise.resolve(readyInfo)
 			return new Promise(function (resolve) { readyWaiters.push(resolve) })
@@ -220,6 +242,8 @@
 			ready: ready,
 			applyTheme: applyTheme,
 			getTheme: function () { return Object.assign({}, currentTheme, { tokens: Object.assign({}, currentTheme.tokens) }) },
+			getLocale: function () { return currentLocale },
+			onLocale: onLocale,
 			// 测试注入入口
 			_handleMessage: onMessage,
 			post: post,

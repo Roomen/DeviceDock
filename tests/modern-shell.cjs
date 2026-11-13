@@ -1,5 +1,6 @@
 // Run: node tests/modern-shell.cjs — synthetic data only.
 // 覆盖: 现代布局外壳 js/modern-shell.js 的纯函数（日志过滤的解析与匹配、连接按钮的参数摘要、日志缩放档位、串口列表行的标题 / 次行 / 状态）
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

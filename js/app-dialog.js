@@ -29,7 +29,7 @@
 		const titleId = 'app-dlg-title-' + Date.now().toString(36)
 		const msgId = titleId + '-msg'
 		box.setAttribute('aria-labelledby', titleId)
-		const title = mk('div', 'app-dlg-title', job.opts.title || '提示')
+		const title = mk('div', 'app-dlg-title', job.opts.title || I18n.t('dialog.notice'))
 		title.id = titleId
 		box.appendChild(title)
 		let msg = null
@@ -65,18 +65,18 @@
 		let cancelBtn = null
 		let okBtn = null
 		if (job.kind === 'panel') {
-			const closeBtn = mk('button', 'btn btn-sm btn-outline-secondary', job.opts.closeText || '关闭')
+			const closeBtn = mk('button', 'btn btn-sm btn-outline-secondary', job.opts.closeText || I18n.t('dialog.close'))
 			closeBtn.type = 'button'
 			closeBtn.addEventListener('click', function () { finish(false) })
 			actions.appendChild(closeBtn)
 			cancelBtn = closeBtn
 		} else {
 			if (job.kind !== 'alert') {
-				cancelBtn = mk('button', 'btn btn-sm btn-outline-secondary', job.opts.cancelText || '取消')
+				cancelBtn = mk('button', 'btn btn-sm btn-outline-secondary', job.opts.cancelText || I18n.t('dialog.cancel'))
 				cancelBtn.type = 'button'
 				actions.appendChild(cancelBtn)
 			}
-			okBtn = mk('button', 'btn btn-sm ' + (job.opts.danger ? 'btn-danger' : 'btn-primary'), job.opts.okText || '确定')
+			okBtn = mk('button', 'btn btn-sm ' + (job.opts.danger ? 'btn-danger' : 'btn-primary'), job.opts.okText || I18n.t('dialog.ok'))
 			okBtn.type = 'button'
 			actions.appendChild(okBtn)
 		}

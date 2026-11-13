@@ -37,7 +37,7 @@
 	function build(body, s) {
 		body.classList.add('mdn-src-panel', 'mdn-plg-panel')
 		body.appendChild(mk('p', 'mdn-src-intro',
-			'插件从 GitHub Release 下载并经 SHA-256 校验，在独立沙箱 iframe 中隔离运行，只能按授予的能力调用宿主接口。更新版本或能力变化时须重新确认。'))
+			I18n.t('pluginsPanel.pluginsAreDownloadedFromGithubReleases')))
 
 		// 插件根目录 / 锁失败时整个子系统不可用：顶部说明原因，客户端仍照常运行
 		s.statusEl = mk('div', 'mdn-src-err mdn-plg-status')
@@ -52,14 +52,14 @@
 		const addRow = mk('div', 'mdn-src-add')
 		s.repoInput = mk('input', 'form-control form-control-sm')
 		s.repoInput.type = 'text'
-		s.repoInput.placeholder = 'https://github.com/组织/仓库（可加 @v1.0.0 指定标签）'
-		s.repoInput.setAttribute('aria-label', '插件 GitHub 仓库地址')
+		s.repoInput.placeholder = I18n.t('pluginsPanel.httpsGithubComOrgRepoAppend')
+		s.repoInput.setAttribute('aria-label', I18n.t('pluginsPanel.pluginGithubRepositoryUrl'))
 		s.repoInput.setAttribute('autocomplete', 'off')
 		s.repoInput.setAttribute('spellcheck', 'false')
 		s.inspectBtn = mk('button', 'btn btn-sm btn-primary')
 		s.inspectBtn.type = 'button'
 		s.inspectBtn.appendChild(mk('i', 'icon icon-sm icon-download'))
-		s.inspectBtn.appendChild(mk('span', '', '从仓库安装…'))
+		s.inspectBtn.appendChild(mk('span', '', I18n.t('pluginsPanel.installFromRepository')))
 		addRow.appendChild(s.repoInput)
 		addRow.appendChild(s.inspectBtn)
 		body.appendChild(addRow)
@@ -90,7 +90,7 @@
 		if (s.inspecting || s.installing) return
 		const raw = s.repoInput.value.trim()
 		if (!raw) {
-			s.addError = '请填写插件 GitHub 仓库地址'
+			s.addError = I18n.t('pluginsPanel.enterThePluginSGithubRepository')
 			render(s)
 			return
 		}
@@ -147,41 +147,41 @@
 		const head = mk('div', 'mdn-src-head')
 		const title = mk('div', 'mdn-src-title')
 		title.appendChild(mk('i', 'icon icon-sm icon-shield-check'))
-		title.appendChild(mk('span', 'mdn-src-name', (isUpdate ? '确认安装更新：' : '确认安装插件：') + (info.name || info.id)))
+		title.appendChild(mk('span', 'mdn-src-name', (isUpdate ? I18n.t('pluginsPanel.confirmUpdate') : I18n.t('pluginsPanel.confirmPluginInstall')) + (info.name || info.id)))
 		const verText = info.currentVersion ? ('v' + info.currentVersion + ' → v' + info.version) : ('v' + info.version)
 		title.appendChild(mk('span', 'mdn-src-ver', verText))
 		if (info.packageSha256) {
 			const sha = mk('span', 'mdn-src-digest', shortSha(info.packageSha256))
-			sha.title = '包文件 SHA-256：' + info.packageSha256
+			sha.title = I18n.t('pluginsPanel.packageSha256', { packageSha256: info.packageSha256 })
 			title.appendChild(sha)
 		}
 		head.appendChild(title)
 		card.appendChild(head)
 
-		const meta = mk('div', 'mdn-src-url', '来源：' + info.repo + (info.tag ? ' @ ' + info.tag : '') + ' · ID：' + info.id)
+		const meta = mk('div', 'mdn-src-url', I18n.t('pluginsPanel.sourceId', { repo: info.repo, v: (info.tag ? ' @ ' + info.tag : ''), id: info.id }))
 		card.appendChild(meta)
 
 		if (info.supported === false) {
-			card.appendChild(mk('div', 'mdn-src-err', '该插件声明的 platforms 不包含当前系统，安装后将无法加载。'))
+			card.appendChild(mk('div', 'mdn-src-err', I18n.t('pluginsPanel.thisPluginSPlatformsDonT')))
 		}
 
 		const caps = Rpc.capabilitySummary(info.capabilities || [])
 		const added = Array.isArray(info.added) ? info.added : []
 		const removed = Array.isArray(info.removed) ? info.removed : []
 		const capBox = mk('div', 'mdn-plg-caps')
-		capBox.appendChild(mk('div', 'mdn-plg-caps-title', caps.length ? '申请的宿主能力（请确认授权）：' : '该插件未申请任何宿主特权能力'))
+		capBox.appendChild(mk('div', 'mdn-plg-caps-title', caps.length ? I18n.t('pluginsPanel.requestedHostCapabilitiesConfirmToGrant') : I18n.t('pluginsPanel.thisPluginRequestsNoPrivilegedHost')))
 		caps.forEach(function (c) {
 			const item = mk('div', 'mdn-plg-cap-item')
 			const badge = mk('code', 'mdn-src-chip', c.id)
 			item.appendChild(badge)
 			if (isUpdate && added.indexOf(c.id) !== -1) {
-				item.appendChild(mk('span', 'mdn-plg-cap-added', '新增'))
+				item.appendChild(mk('span', 'mdn-plg-cap-added', I18n.t('pluginsPanel.new')))
 			}
 			item.appendChild(mk('span', 'mdn-plg-cap-desc', c.text))
 			capBox.appendChild(item)
 		})
 		if (isUpdate && removed.length) {
-			capBox.appendChild(mk('div', 'mdn-src-note', '本次更新移除了能力：' + removed.join('、')))
+			capBox.appendChild(mk('div', 'mdn-src-note', I18n.t('pluginsPanel.thisUpdateRemovesCapabilities', { removed: removed.join(I18n.t('pluginsPanel.s')) })))
 		}
 		card.appendChild(capBox)
 
@@ -194,10 +194,10 @@
 		okBtn.type = 'button'
 		okBtn.disabled = !!s.installing
 		okBtn.appendChild(mk('i', 'icon icon-sm icon-check'))
-		okBtn.appendChild(mk('span', '', s.installing ? '正在安装…' : (isUpdate ? '授权并更新' : '授权并安装')))
+		okBtn.appendChild(mk('span', '', s.installing ? I18n.t('pluginsPanel.installing') : (isUpdate ? I18n.t('pluginsPanel.grantAndUpdate') : I18n.t('pluginsPanel.grantAndInstall'))))
 		okBtn.addEventListener('click', function () { confirmInstall(s) })
 
-		const cancelBtn = mk('button', 'btn btn-sm btn-outline-secondary', '取消')
+		const cancelBtn = mk('button', 'btn btn-sm btn-outline-secondary', I18n.t('pluginsPanel.cancel'))
 		cancelBtn.type = 'button'
 		cancelBtn.disabled = !!s.installing
 		cancelBtn.addEventListener('click', function () {
@@ -212,7 +212,7 @@
 
 	function runPluginAction(s, key, fn, busyText) {
 		if (s.busy[key]) return
-		s.busy[key] = busyText || '处理中'
+		s.busy[key] = busyText || I18n.t('pluginsPanel.working')
 		s.errors[key] = ''
 		render(s)
 		Promise.resolve().then(fn).then(function () {
@@ -236,28 +236,28 @@
 		if (p.version) title.appendChild(mk('span', 'mdn-src-ver', 'v' + p.version))
 		if (p.packageSha256) {
 			const sha = mk('span', 'mdn-src-digest', shortSha(p.packageSha256))
-			sha.title = '包文件 SHA-256：' + p.packageSha256
+			sha.title = I18n.t('pluginsPanel.packageSha256', { packageSha256: p.packageSha256 })
 			title.appendChild(sha)
 		}
 		if (s.busy['check:' + p.id]) title.appendChild(mk('span', 'mdn-src-busy', s.busy['check:' + p.id]))
 		head.appendChild(title)
 
 		const actions = mk('div', 'mdn-src-head-actions')
-		const checkBtn = iconBtn('refresh-cw', '检查更新')
+		const checkBtn = iconBtn('refresh-cw', I18n.t('pluginsPanel.checkForUpdates'))
 		checkBtn.disabled = !p.repo || !!s.busy['check:' + p.id]
 		checkBtn.addEventListener('click', function () {
 			s.notes[p.id] = ''
 			runPluginAction(s, 'check:' + p.id, function () {
 				return Promise.resolve(svc.checkUpdate(p.id)).then(function (upd) {
 							if (!upd) {
-						s.notes[p.id] = '已是最新版本（v' + p.version + '）'
+						s.notes[p.id] = I18n.t('pluginsPanel.upToDateV', { version: p.version })
 						return
 					}
 					s.pendingConfirm = { mode: 'update', info: upd }
 				})
-			}, '检查中…')
+			}, I18n.t('pluginsPanel.checking2'))
 		})
-		const removeBtn = iconBtn('trash-2', s.confirmRemove === p.id ? '确认卸载这个插件' : '卸载插件')
+		const removeBtn = iconBtn('trash-2', s.confirmRemove === p.id ? I18n.t('pluginsPanel.confirmUninstall') : I18n.t('pluginsPanel.uninstallPlugin'))
 		if (s.confirmRemove === p.id) removeBtn.classList.add('is-danger')
 		removeBtn.disabled = !!s.busy['remove:' + p.id]
 		removeBtn.addEventListener('click', function () {
@@ -279,14 +279,14 @@
 					if (Array.isArray(list)) s.plugins = list
 					else return refreshList(s)
 				})
-			}, '卸载中…')
+			}, I18n.t('pluginsPanel.uninstalling'))
 		})
 		actions.appendChild(checkBtn)
 		actions.appendChild(removeBtn)
 		head.appendChild(actions)
 		card.appendChild(head)
 
-		card.appendChild(mk('div', 'mdn-src-url', (p.repo || '本地安装') + (p.tag ? ' @ ' + p.tag : '') + ' · ID：' + p.id))
+		card.appendChild(mk('div', 'mdn-src-url', I18n.t('pluginsPanel.id', { v: (p.repo || I18n.t('pluginsPanel.localInstall')), v2: (p.tag ? ' @ ' + p.tag : ''), id: p.id })))
 
 		const caps = Rpc.capabilitySummary(p.capabilities || [])
 		if (caps.length) {
@@ -303,17 +303,17 @@
 		const foot = mk('div', 'mdn-src-actions')
 		// 释放失败（串口 / BLE 扫描收尾没成功）时给一个显式重试入口，别让 busy 源永久挡住更新
 		if (s.failedReleases.indexOf(p.id) !== -1) {
-			const retryBtn = mk('button', 'btn btn-sm btn-outline-warning', '重试释放')
+			const retryBtn = mk('button', 'btn btn-sm btn-outline-warning', I18n.t('pluginsPanel.retryRelease'))
 			retryBtn.type = 'button'
 			retryBtn.disabled = !!s.busy['retry:' + p.id]
 			retryBtn.addEventListener('click', function () {
 				runPluginAction(s, 'retry:' + p.id, function () {
 					if (!root.PluginHost || !root.PluginHost.retryRelease) return
 					return Promise.resolve(root.PluginHost.retryRelease(p.id)).then(function () { return refreshList(s) })
-				}, '重试中…')
+				}, I18n.t('pluginsPanel.retrying'))
 			})
 			foot.appendChild(retryBtn)
-			card.appendChild(mk('div', 'mdn-src-err', '资源释放未确认完成，应用更新会被阻止；可在此重试'))
+			card.appendChild(mk('div', 'mdn-src-err', I18n.t('pluginsPanel.resourceReleaseWasnTConfirmedSo')))
 		}
 		const enableKey = 'enable:' + p.id
 		const enableWrap = mk('label', 'form-check form-switch ctl-switch')
@@ -331,20 +331,20 @@
 					if (Array.isArray(list)) s.plugins = list
 					else return refreshList(s)
 				})
-			}, on ? '启用中' : '停用中')
+			}, on ? I18n.t('pluginsPanel.enabling') : I18n.t('pluginsPanel.disabling'))
 		})
-		const enableLabel = mk('label', 'form-check-label', p.enabled ? '已启用' : '已停用')
+		const enableLabel = mk('label', 'form-check-label', p.enabled ? I18n.t('pluginsPanel.enabled') : I18n.t('pluginsPanel.disabled'))
 		enableLabel.setAttribute('for', enableInput.id)
 		enableWrap.appendChild(enableInput)
 		enableWrap.appendChild(enableLabel)
 		foot.appendChild(enableWrap)
 		card.appendChild(foot)
 
-		if (!p.supported) card.appendChild(mk('div', 'mdn-src-note', '该插件不支持当前操作系统'))
+		if (!p.supported) card.appendChild(mk('div', 'mdn-src-note', I18n.t('pluginsPanel.thisPluginDoesnTSupportThe')))
 		if (s.notes[p.id]) card.appendChild(mk('div', 'mdn-src-note', s.notes[p.id]))
 		if (p.error) card.appendChild(mk('div', 'mdn-src-err', p.error))
-		if (p.repair) card.appendChild(mk('div', 'mdn-src-err', '安装事务恢复失败：' + p.repair + '（见面板顶部的重试恢复 / 移除）'))
-		if (p.installing) card.appendChild(mk('div', 'mdn-src-note', '安装 / 卸载事务进行中，暂不提供启用视图'))
+		if (p.repair) card.appendChild(mk('div', 'mdn-src-err', I18n.t('pluginsPanel.installTransactionRecoveryFailedSeeRetry', { repair: p.repair })))
+		if (p.installing) card.appendChild(mk('div', 'mdn-src-note', I18n.t('pluginsPanel.anInstallUninstallIsInProgress')))
 		if (s.errors['check:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['check:' + p.id]))
 		if (s.errors['remove:' + p.id]) card.appendChild(mk('div', 'mdn-src-err', s.errors['remove:' + p.id]))
 		if (s.errors[enableKey]) card.appendChild(mk('div', 'mdn-src-err', s.errors[enableKey]))
@@ -359,7 +359,7 @@
 		const resources = (s.issues && s.issues.resources) || []
 		const rows = []
 		repairs.forEach(function (r) {
-			rows.push({ kind: 'repair', id: r.id, resource: '安装事务 ' + (r.stage || ''), reason: r.reason })
+			rows.push({ kind: 'repair', id: r.id, resource: I18n.t('pluginsPanel.installTransaction', { v: (r.stage || '') }), reason: r.reason })
 		})
 		resources.forEach(function (r) {
 			rows.push({ kind: 'release', id: r.id, resource: r.resource, reason: r.reason })
@@ -376,18 +376,18 @@
 			head.appendChild(title)
 			const actions = mk('div', 'mdn-src-head-actions')
 			if (row.kind === 'release') {
-				const retry = mk('button', 'btn btn-sm btn-outline-warning', '重试释放')
+				const retry = mk('button', 'btn btn-sm btn-outline-warning', I18n.t('pluginsPanel.retryRelease'))
 				retry.type = 'button'
 				retry.disabled = !!s.busy['issue:' + row.kind + ':' + row.id]
 				retry.addEventListener('click', function () {
 					runPluginAction(s, 'issue:' + row.kind + ':' + row.id, function () {
 						if (!root.PluginHost || !root.PluginHost.retryRelease) return
 						return Promise.resolve(root.PluginHost.retryRelease(row.id)).then(function () { return refreshList(s) })
-					}, '重试中…')
+					}, I18n.t('pluginsPanel.retrying'))
 				})
 				actions.appendChild(retry)
 			} else {
-				const retry = mk('button', 'btn btn-sm btn-outline-warning', '重试恢复')
+				const retry = mk('button', 'btn btn-sm btn-outline-warning', I18n.t('pluginsPanel.retryRecovery'))
 				retry.type = 'button'
 				retry.disabled = !!s.busy['issue:' + row.kind + ':' + row.id]
 				retry.addEventListener('click', function () {
@@ -395,9 +395,9 @@
 						return Promise.resolve(svc.retryRecovery(row.id)).then(function () { return refreshList(s) }, function (e) {
 							s.errors['issue:' + row.kind + ':' + row.id] = String((e && e.message) || e)
 						})
-					}, '恢复中…')
+					}, I18n.t('pluginsPanel.recovering'))
 				})
-				const remove = mk('button', 'btn btn-sm btn-outline-danger', '移除')
+				const remove = mk('button', 'btn btn-sm btn-outline-danger', I18n.t('pluginsPanel.remove'))
 				remove.type = 'button'
 				remove.addEventListener('click', function () {
 					runPluginAction(s, 'issue:' + row.kind + ':' + row.id, function () {
@@ -405,7 +405,7 @@
 							if (root.PluginHost && root.PluginHost.close) root.PluginHost.close(row.id)
 							return refreshList(s)
 						})
-					}, '移除中…')
+					}, I18n.t('pluginsPanel.removing'))
 				})
 				actions.appendChild(retry)
 				actions.appendChild(remove)
@@ -423,7 +423,7 @@
 	function render(s) {
 		if (!s) return
 		s.inspectBtn.disabled = !!s.inspecting || !!s.installing
-		s.inspectBtn.querySelector('span').textContent = s.inspecting ? '正在检查…' : '从仓库安装…'
+		s.inspectBtn.querySelector('span').textContent = s.inspecting ? I18n.t('pluginsPanel.checking') : I18n.t('pluginsPanel.installFromRepository')
 		s.repoInput.disabled = !!s.inspecting || !!s.installing
 		s.addErr.hidden = !s.addError
 		s.addErr.textContent = s.addError || ''
@@ -432,15 +432,15 @@
 		renderIssues(s)
 		const st = s.status || {}
 		s.statusEl.hidden = st.available !== false
-		s.statusEl.textContent = st.available === false ? ('插件子系统不可用：' + (st.reason || '未知原因') + '。客户端其它功能不受影响。') : ''
+		s.statusEl.textContent = st.available === false ? (I18n.t('pluginsPanel.thePluginSubsystemIsUnavailableEverything', { v: (st.reason || I18n.t('pluginsPanel.unknownReason')) })) : ''
 
 		const list = s.plugins || []
 		s.listEl.textContent = ''
 		if (!list.length) {
 			const empty = mk('div', 'mdn-src-empty-block')
-			empty.appendChild(mk('div', 'mdn-src-empty-title', '还没有安装插件'))
+			empty.appendChild(mk('div', 'mdn-src-empty-title', I18n.t('pluginsPanel.noPluginsInstalled')))
 			empty.appendChild(mk('div', 'mdn-src-empty',
-				'输入插件的 GitHub 仓库地址即可从 Release 下载并校验安装。启用后插件会出现在左侧导航栏「插件」分组中，支持拖拽或 Alt+↑/↓ 调整顺序。'))
+				I18n.t('pluginsPanel.enterAPluginSGithubRepository')))
 			s.listEl.appendChild(empty)
 			return
 		}

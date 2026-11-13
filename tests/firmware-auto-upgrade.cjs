@@ -2,6 +2,7 @@
 // 覆盖: 固件升级面板(js/firmware-upgrade.js)的自动升级端到端：假 DOM + 假串口 + 模拟 PCP 设备(按收到的分片拼回升级包，
 // 差分包校验旧文件 CRC 是否等于自己当前固件)。原始固件 → 查设备版本 → 本机固件库找原固件 → 内存里生成差分 / 压缩包 → 升级；
 // 差分被拒(0x07 / 0x08)改用压缩包重来一次；导入的升级包照旧直接升级；原始固件导入即存库
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

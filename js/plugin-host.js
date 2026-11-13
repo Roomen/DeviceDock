@@ -110,6 +110,15 @@
 	function themeState() {
 		return Rpc.themePayload(doc.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light', readTokens())
 	}
+	function localeState() {
+		return Rpc.localePayload(root.I18n ? root.I18n.locale : 'zh-CN')
+	}
+	function pushLocale() {
+		const payload = localeState()
+		views.forEach(function (view) {
+			if (view.ready) postEvent(view, Rpc.eventEnvelope('app.locale', payload))
+		})
+	}
 	function pushTheme() {
 		const payload = themeState()
 		views.forEach(function (view) {
@@ -131,7 +140,7 @@
 		// 关键：不给 allow-same-origin，插件文档是 opaque origin，拿不到宿主的 DOM / cookie / 存储
 		iframe.setAttribute('sandbox', 'allow-scripts')
 		iframe.setAttribute('referrerpolicy', 'no-referrer')
-		iframe.setAttribute('title', plugin.name + '（插件）')
+		iframe.setAttribute('title', I18n.t('pluginHost.plugin3', { name: plugin.name }))
 		el.appendChild(iframe)
 		const host = doc.getElementById('views')
 		if (!host) return null
@@ -150,9 +159,11 @@
 				plugin: { id: plugin.id, name: plugin.name, version: plugin.version },
 				platform: platformInfo(),
 			}, themeState())))
+			// 界面语言是状态事件：每次 load 都推一份（切换语言会整页重载，插件随之重新 load 并收到新值）
+			postEvent(view, Rpc.eventEnvelope('app.locale', localeState()))
 		})
 		// 自定义协议加载失败（包被停用、文件校验失败）时不弹浏览器错误页：换成宿主自己的提示
-		iframe.addEventListener('error', function () { failView(view, '插件页面加载失败') })
+		iframe.addEventListener('error', function () { failView(view, I18n.t('pluginHost.pluginPageFailedToLoad')) })
 		iframe.src = pluginUrl(plugin, plugin.entry)
 		views.set(plugin.id, view)
 		ensureByteTap()
@@ -163,7 +174,7 @@
 		view.failed = true
 		const box = mk('div', 'plugin-fallback')
 		box.appendChild(mk('div', 'plugin-fallback-title', text))
-		box.appendChild(mk('div', 'plugin-fallback-text', '可在「配置 → 插件」里重新安装或停用它。'))
+		box.appendChild(mk('div', 'plugin-fallback-text', I18n.t('pluginHost.reinstallOrDisableItUnderSettings')))
 		view.el.appendChild(box)
 	}
 	// 停用 / 卸载 / 重装 / 更新准备统一走这里：iframe 立刻拿下，串口与扫描的收尾必须等完。
@@ -180,7 +191,7 @@
 					await Promise.resolve().then(t.fn)
 					t.done = true
 				} catch (e) {
-					failures.push({ claimId: 'teardown', message: '清理回调失败：' + String(e && e.message ? e.message : e) })
+					failures.push({ claimId: 'teardown', message: I18n.t('pluginHost.cleanupCallbackFailed', { String: String(e && e.message ? e.message : e) }) })
 				}
 			}
 			const claimFailures = Api.closeClaims
@@ -195,12 +206,12 @@
 	}
 	function runRelease(entry) {
 		const label = entry.view.plugin.name || entry.id
-		entry.label = label + ' · 正在释放资源'
+		entry.label = I18n.t('pluginHost.releasingResources2', { label })
 		entry.failures = []
 		return releaseView(entry.view, entry.state).then(function (res) {
 			entry.failed = !res.ok
 			entry.failures = res.failures || []
-			entry.label = label + (res.ok ? ' · 已释放' : ' · 释放失败（可重试）')
+			entry.label = label + (res.ok ? I18n.t('pluginHost.released') : I18n.t('pluginHost.releaseFailedRetryAvailable'))
 			if (res.ok) pendingReleases.delete(entry.id)
 			return res
 		})
@@ -219,7 +230,7 @@
 		if (view.stateTimer) { clearTimeout(view.stateTimer); view.stateTimer = 0 }
 		const entry = {
 			id: id, view: view, failed: false, promise: null, inflight: null, failures: [],
-			label: (view.plugin.name || id) + ' · 正在释放资源',
+			label: I18n.t('pluginHost.releasingResources', { v: (view.plugin.name || id) }),
 			state: { teardowns: view.teardowns.map(function (fn) { return { fn: fn, done: false } }) },
 		}
 		view.teardowns = []
@@ -481,9 +492,9 @@
 		railBox = mk('div', 'rail-plugins')
 		railBox.id = 'rail-plugins'
 		railBox.setAttribute('role', 'group')
-		railBox.setAttribute('aria-label', '插件')
+		railBox.setAttribute('aria-label', I18n.t('pluginHost.plugin2'))
 		railBox.dataset.feature = 'plugins'
-		const label = mk('div', 'rail-section-label', '插件')
+		const label = mk('div', 'rail-section-label', I18n.t('pluginHost.plugin2'))
 		label.setAttribute('aria-hidden', 'true')
 		railBox.appendChild(label)
 		top.appendChild(railBox)
@@ -494,7 +505,7 @@
 		item.type = 'button'
 		item.dataset.plugin = plugin.id
 		item.dataset.view = viewIdOf(plugin.id)
-		item.title = plugin.name + '（插件 ' + plugin.version + '）'
+		item.title = I18n.t('pluginHost.plugin', { name: plugin.name, version: plugin.version })
 		item.draggable = true
 		const icon = String(plugin.icon || '')
 		if (icon && (icon.indexOf('/') !== -1 || icon.indexOf('.') !== -1)) {
@@ -694,6 +705,8 @@
 		failedResources: failedResources,
 		list: function () { return plugins.slice() },
 		order: function () { return order.slice() },
+		// 语言变化目前靠整页重载送达；页内改语言的入口出现时调用它把新值推给所有已加载的插件
+		pushLocale: pushLocale,
 	}
 	P.provide('plugin-host', {
 		isBusyForUpdate: isBusyForUpdate,
@@ -706,7 +719,7 @@
 			if (failed.length) {
 				const why = []
 				failed.forEach(function (r) { r.failures.forEach(function (f) { why.push(f.message) }) })
-				throw new Error('插件串口未确认释放：' + why.join('；'))
+				throw new Error(I18n.t('pluginHost.pluginPortsNotConfirmedReleased', { why: why.join(I18n.t('pluginHost.listSep')) }))
 			}
 		},
 		reload: reload,

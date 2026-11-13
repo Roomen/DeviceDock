@@ -1,6 +1,7 @@
 // Run: node tests/firmware-core.cjs — synthetic data only.
 // 覆盖: 固件核心(js/firmware-core.js)的包头与 pcp.js FirmwareParser 互认、原始固件 / 升级包识别、自动升级的差分 / 压缩判定、
 // 差分被拒后的回退条件、内存里生成压缩包 / 差分包、差分 Worker 调度；本机固件库(js/firmware-library.js)的去重、按版本查找、淘汰
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

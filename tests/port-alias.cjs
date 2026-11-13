@@ -3,6 +3,7 @@
 // 桌面客户端原生后端的 getInfo 带路径、产品名、序列号：改名后重启(新的端口对象、空的身份缓存)按序列号或路径认回别名，
 // 首次显示(身份还没异步解析)就是别名；同型号的另一台设备(路径或序列号不同)不会靠产品名 / VID:PID / getPorts 排位的 slot 被套上别名，
 // 改名与清除别名也不会合并或删掉另一台的记录；网页版只有 VID/PID 的口(含同型号多 CDC 的 slot)照旧
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

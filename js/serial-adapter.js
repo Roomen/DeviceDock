@@ -75,7 +75,7 @@
 	// 切换后端只影响之后的选口、列口与事件；页面加载后已打开的口不迁移，所以原生后端要在 common.js 之前切
 	function use(name) {
 		const b = backends[name]
-		if (!b) throw new Error('未注册的串口后端: ' + name)
+		if (!b) throw new Error(I18n.t('adapter.unregisteredSerialBackend', { name }))
 		active = b
 		if (b.supported && b.attach && !attached.has(b)) {
 			attached.add(b)
@@ -116,7 +116,7 @@
 		if (chunk instanceof Uint8Array) return chunk
 		if (ArrayBuffer.isView(chunk)) return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength)
 		if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk)
-		throw new TypeError('串口只能写 BufferSource')
+		throw new TypeError(I18n.t('adapter.thePortCanOnlyWriteA'))
 	}
 
 	function createStreamPort(driver) {
@@ -186,7 +186,7 @@
 					// 写失败后这条流已报错；与 Chromium 一致，writable 之后换一条新流，端口仍是打开的。
 					// 在 then 里核对代次并调驱动：驱动同步抛错走同一条换流路径，核对与调用之间也插不进设备丢失
 					return Promise.resolve().then(function () {
-						if (g !== gen || state !== 'opened') throw makeError('NetworkError', '串口已断开')
+						if (g !== gen || state !== 'opened') throw makeError('NetworkError', I18n.t('adapter.portDisconnected'))
 						return driver.write(toBytes(chunk))
 					}).catch(function (e) {
 						if (ws === stream) ws = null
@@ -221,19 +221,19 @@
 					// 队列里已有积压且这一块放不下才算溢出；没人读时的单个大块照收
 					const room = rsCtl.desiredSize
 					if (room !== null && room < queueLimit && room < u8.byteLength) {
-						errorReadable(makeError('BufferOverrunError', '接收缓冲溢出'))
+						errorReadable(makeError('BufferOverrunError', I18n.t('adapter.receiveBufferOverflow')))
 						return
 					}
 					rsCtl.enqueue(u8)
 				},
 				error(err) {
 					if (!live()) return
-					errorReadable(err || makeError('FramingError', '串口读错误'))
+					errorReadable(err || makeError('FramingError', I18n.t('adapter.portReadError')))
 				},
 				lost(err) {
 					// 打开中丢失(如 BLE 开通知时断开)：驱动的 open 可能照样兑现，不能让 open 报成功
 					if (g === gen && state === 'opening') {
-						if (!pending.lost) pending.lost = err || makeError('NetworkError', '设备已断开')
+						if (!pending.lost) pending.lost = err || makeError('NetworkError', I18n.t('adapter.deviceDisconnected'))
 						// 这次 open 注定失败，暂存的数据随失败一起丢弃
 						pending.chunks = []
 						pending.bytes = 0
@@ -241,7 +241,7 @@
 					}
 					if (!live()) return
 					// 与 Chromium 一致：丢失后两条流都是 null，页面不会再调 close，所以句柄在这里替它释放
-					const e = err || makeError('NetworkError', '设备已断开')
+					const e = err || makeError('NetworkError', I18n.t('adapter.deviceDisconnected'))
 					gen++
 					state = 'closing'
 					resetPending()
@@ -261,7 +261,7 @@
 			get readable() { return ensureReadable() },
 			get writable() { return ensureWritable() },
 			async open(options) {
-				if (state !== 'closed') throw makeError('InvalidStateError', '串口已打开')
+				if (state !== 'closed') throw makeError('InvalidStateError', I18n.t('adapter.portIsAlreadyOpen'))
 				state = 'opening'
 				resetPending()
 				if (staleHandle) {
@@ -269,7 +269,7 @@
 						await driver.close()
 					} catch (e) {
 						state = 'closed'
-						throw makeError('InvalidStateError', '上次断开的设备句柄未能释放')
+						throw makeError('InvalidStateError', I18n.t('adapter.theHandleFromTheLastDisconnect'))
 					}
 					staleHandle = false
 				}
@@ -298,8 +298,8 @@
 			// 只有已打开才能关：打开中关闭会与驱动的 open 赛跑，后完成的 open 留下没人释放的句柄。
 			// 与 Chromium 一致，打开中两条流都是 null，页面本就不会在这时调 close
 			async close() {
-				if (state !== 'opened') throw makeError('InvalidStateError', '串口未打开')
-				if ((rs && rs.locked) || (ws && ws.locked)) throw makeError('InvalidStateError', '串口流仍被占用')
+				if (state !== 'opened') throw makeError('InvalidStateError', I18n.t('adapter.portIsNotOpen'))
+				if ((rs && rs.locked) || (ws && ws.locked)) throw makeError('InvalidStateError', I18n.t('adapter.portStreamIsStillLocked'))
 				const r = rs
 				const w = ws
 				rs = null
@@ -329,7 +329,7 @@
 		}
 		if (typeof driver.setSignals === 'function') {
 			port.setSignals = function (signals) {
-				if (state !== 'opened') return Promise.reject(makeError('InvalidStateError', '串口未打开'))
+				if (state !== 'opened') return Promise.reject(makeError('InvalidStateError', I18n.t('adapter.portIsNotOpen')))
 				return Promise.resolve(driver.setSignals(signals || {}))
 			}
 		}
@@ -348,7 +348,7 @@
 		},
 		isSupported() { return !!(active && active.supported) },
 		requestPort(options) {
-			if (!api.isSupported()) return Promise.reject(makeError('NotSupportedError', '当前环境不支持串口'))
+			if (!api.isSupported()) return Promise.reject(makeError('NotSupportedError', I18n.t('adapter.serialPortsAreNotSupportedIn')))
 			return active.requestPort(options)
 		},
 		getPorts() {

@@ -1,3 +1,4 @@
+require('./i18n-env.cjs')
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createController, blockers } = require('../js/app-update.js')

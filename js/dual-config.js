@@ -114,14 +114,14 @@
 	// cfg: { A: { options, protocol, label }, B: {...} }
 	function makePreset(name, cfg) {
 		const n = cleanName(name)
-		if (!n) throw new Error('预设名称不能为空')
+		if (!n) throw new Error(I18n.t('dual.presetNameCanTBeEmpty'))
 		const c = isObj(cfg) ? cfg : {}
 		return { name: n, A: normalizeLane(c.A), B: normalizeLane(c.B) }
 	}
 	// lane: { options, protocol }
 	function makeSinglePreset(name, lane) {
 		const n = cleanName(name)
-		if (!n) throw new Error('预设名称不能为空')
+		if (!n) throw new Error(I18n.t('dual.presetNameCanTBeEmpty'))
 		return { name: n, kind: 'single', S: normalizeSingleLane(lane) }
 	}
 
@@ -159,18 +159,18 @@
 			next[i] = preset
 			return { list: next, replaced: true }
 		}
-		if (next.length >= PRESET_MAX) throw new Error('预设最多 ' + PRESET_MAX + ' 个，请先删除不用的')
+		if (next.length >= PRESET_MAX) throw new Error(I18n.t('dual.upToPresetsDeleteOneYou', { PRESET_MAX }))
 		next.push(preset)
 		return { list: next, replaced: false }
 	}
 
 	function renamePreset(list, from, to) {
 		const i = indexOfName(list, from)
-		if (i === -1) throw new Error('预设不存在')
+		if (i === -1) throw new Error(I18n.t('dual.presetNotFound'))
 		const n = cleanName(to)
-		if (!n) throw new Error('预设名称不能为空')
+		if (!n) throw new Error(I18n.t('dual.presetNameCanTBeEmpty'))
 		const j = indexOfName(list, n)
-		if (j !== -1 && j !== i) throw new Error('已有同名预设「' + n + '」')
+		if (j !== -1 && j !== i) throw new Error(I18n.t('dual.aPresetNamedAlreadyExists', { n }))
 		const next = list.slice()
 		next[i] = Object.assign({}, next[i], { name: n })
 		return next
@@ -193,8 +193,8 @@
 			if (!isObj(cur[sid])) return false
 			const p = normalizeLane(preset[sid])
 			const c = normalizeLane(cur[sid])
-			const lp = single ? '' : p.label || sid + '路'
-			const lc = single ? '' : c.label || sid + '路'
+			const lp = single ? '' : p.label || I18n.t('dual.lane2', { sid })
+			const lc = single ? '' : c.label || I18n.t('dual.lane2', { sid })
 			return sameOptions(p.options, c.options) && p.protocol === c.protocol && lp === lc
 		})
 	}
@@ -284,7 +284,7 @@
 	function laneLine(sid, lane) {
 		const l = lanes()
 		const name = l ? l.protocolName(lane.protocol) : lane.protocol
-		const label = lane.label && lane.label !== sid + '路' ? lane.label + ' ' : ''
+		const label = lane.label && lane.label !== I18n.t('dual.lane2', { sid }) ? lane.label + ' ' : ''
 		return (sid === 'S' ? '' : sid + ' ') + label + paramsSummary(lane.options) + ' · ' + name
 	}
 	function curMode() {
@@ -299,7 +299,7 @@
 		return { S: l.laneSnapshot(l.singleTarget()) }
 	}
 	function sidLabel(sid) {
-		return sid === 'S' ? '单路' : sid + ' 路'
+		return sid === 'S' ? I18n.t('dual.single') : I18n.t('dual.lane', { sid })
 	}
 
 	function presetRow(p, i) {
@@ -310,7 +310,7 @@
 		apply.type = 'button'
 		apply.dataset.idx = String(i)
 		apply.dataset.act = 'apply'
-		apply.title = '套用「' + p.name + '」' + (on ? '（当前配置与它一致）' : '')
+		apply.title = on ? I18n.t('dual.applyMatchesTheCurrentSetup', { name: p.name }) : I18n.t('dual.apply', { name: p.name })
 		if (on) apply.setAttribute('aria-current', 'true')
 		const head = mk('span', 'dual-preset-name')
 		if (on) head.appendChild(icon('icon-check'))
@@ -322,15 +322,15 @@
 		ren.type = 'button'
 		ren.dataset.idx = String(i)
 		ren.dataset.act = 'rename'
-		ren.title = '重命名'
-		ren.setAttribute('aria-label', '重命名预设 ' + p.name)
+		ren.title = I18n.t('dual.rename')
+		ren.setAttribute('aria-label', I18n.t('dual.renamePreset2', { name: p.name }))
 		ren.appendChild(icon('icon-pencil'))
 		const del = mk('button', 'dual-preset-act')
 		del.type = 'button'
 		del.dataset.idx = String(i)
 		del.dataset.act = 'delete'
-		del.title = '删除'
-		del.setAttribute('aria-label', '删除预设 ' + p.name)
+		del.title = I18n.t('dual.delete')
+		del.setAttribute('aria-label', I18n.t('dual.deletePreset3', { name: p.name }))
 		del.appendChild(icon('icon-trash-2'))
 		row.append(apply, ren, del)
 		return row
@@ -344,20 +344,20 @@
 		const dual = curMode() === 'dual'
 		const l = lanes()
 		const sub = document.getElementById('serial-dual-preset-sub')
-		if (sub) sub.textContent = dual ? '两路参数 · 协议 · 路标签，不含设备' : '参数 · 协议，不含设备'
+		if (sub) sub.textContent = dual ? I18n.t('dual.bothLanesSettingsProtocolLabelsNo') : I18n.t('dual.settingsProtocolNoDevice')
 		const input = document.getElementById('serial-dual-preset-name')
-		if (input) input.placeholder = dual ? '给当前两路配置起个名字' : '给当前串口配置起个名字'
+		if (input) input.placeholder = dual ? I18n.t('dual.nameTheCurrentDualLaneSetup') : I18n.t('dual.nameTheCurrentPortSetup')
 		box.textContent = ''
 		const mine = []
 		const other = []
 		list.forEach(function (p, i) { (isSinglePreset(p) === !dual ? mine : other).push(i) })
-		if (!mine.length) box.appendChild(mk('div', 'dual-preset-empty', dual ? '还没有双路预设。设好两路的参数、协议与标签后，在下面起个名字保存。' : '还没有单路预设。设好参数与协议后，在下面起个名字保存。'))
+		if (!mine.length) box.appendChild(mk('div', 'dual-preset-empty', dual ? I18n.t('dual.noDualLanePresetsYetSet') : I18n.t('dual.noSingleLanePresetsYetSet')))
 		mine.forEach(function (i) { box.appendChild(presetRow(list[i], i)) })
 		// 平台只有一路时不列双路预设(套不上)；存储里照留，回到桌面端仍可用
 		const canDual = !window.AppPlatform || window.AppPlatform.has('lane.dual')
 		if (other.length && (dual || canDual)) {
 			const target = dual && l ? sidLabel(l.singleTarget()) : ''
-			box.appendChild(mk('div', 'dual-preset-group', dual ? '单路预设 · 套用到主发路（' + target + '）' : '双路预设 · 套用后进入双路'))
+			box.appendChild(mk('div', 'dual-preset-group', dual ? I18n.t('dual.singleLanePresetsApplyToThe', { target }) : I18n.t('dual.dualLanePresetsApplyingSwitchesTo')))
 			other.forEach(function (i) { box.appendChild(presetRow(list[i], i)) })
 		}
 	}
@@ -376,20 +376,20 @@
 			return
 		}
 		if (b.dataset.act === 'rename') {
-			const to = await window.AppDialog.prompt('预设新名称（最多 ' + NAME_MAX + ' 字）', p.name, { title: '重命名预设', maxLength: NAME_MAX })
+			const to = await window.AppDialog.prompt(I18n.t('dual.newPresetNameUpToCharacters', { NAME_MAX }), p.name, { title: I18n.t('dual.renamePreset'), maxLength: NAME_MAX })
 			if (to === null) return
 			try {
 				if (savePresets(renamePreset(list, p.name, to))) render()
-				else toast('保存失败：浏览器存储不可用', 'error')
+				else toast(I18n.t('dual.saveFailedBrowserStorageIsUnavailable'), 'error')
 			} catch (err) {
 				toast(err.message, 'error')
 			}
 			return
 		}
 		if (b.dataset.act === 'delete') {
-			if (!await window.AppDialog.confirm('删除预设「' + p.name + '」？', { title: '删除预设', okText: '删除', danger: true })) return
+			if (!await window.AppDialog.confirm(I18n.t('dual.deletePreset2', { name: p.name }), { title: I18n.t('dual.deletePreset'), okText: I18n.t('dual.delete'), danger: true })) return
 			if (savePresets(removePreset(list, p.name))) render()
-			else toast('删除失败：浏览器存储不可用', 'error')
+			else toast(I18n.t('dual.deleteFailedBrowserStorageIsUnavailable'), 'error')
 		}
 	}
 
@@ -408,7 +408,7 @@
 			return
 		}
 		const list = loadPresets()
-		if (indexOfName(list, preset.name) !== -1 && !await window.AppDialog.confirm('已有预设「' + preset.name + '」，用当前' + (dual ? '两路' : '串口') + '配置覆盖它？', { title: '覆盖预设', okText: '覆盖' })) return
+		if (indexOfName(list, preset.name) !== -1 && !await window.AppDialog.confirm(dual ? I18n.t('dual.presetExistsOverwriteItWithThe2', { name: preset.name }) : I18n.t('dual.presetExistsOverwriteItWithThe', { name: preset.name }), { title: I18n.t('dual.overwritePreset'), okText: I18n.t('dual.overwrite') })) return
 		let res
 		try {
 			res = upsertPreset(list, preset)
@@ -417,11 +417,11 @@
 			return
 		}
 		if (!savePresets(res.list)) {
-			toast('保存失败：浏览器存储不可用', 'error')
+			toast(I18n.t('dual.saveFailedBrowserStorageIsUnavailable'), 'error')
 			return
 		}
 		input.value = ''
-		toast((res.replaced ? '已覆盖预设「' : '已保存预设「') + preset.name + '」')
+		toast(res.replaced ? I18n.t('dual.presetOverwritten', { name: preset.name }) : I18n.t('dual.presetSaved', { name: preset.name }))
 		render()
 	}
 

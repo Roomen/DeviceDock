@@ -9,7 +9,7 @@
 	const STATE_KEY = 'workbenchStateModern'
 	const LEGACY_STATE_KEY = 'workbenchState'
 	const DOCKS = ['right', 'bottom']
-	const DOCK_NAME = { right: '右侧', bottom: '底部' }
+	const DOCK_NAME = { right: I18n.t('workbench.right'), bottom: I18n.t('workbench.bottom') }
 
 	const panels = []
 	let state = loadState()
@@ -276,7 +276,7 @@
 				b.dataset.dock = p.dock
 				const ok = isAvailable(p)
 				b.disabled = !ok
-				b.title = ok ? p.title + '（' + DOCK_NAME[p.dock] + '）' : (p.unavailableHint || p.title + '当前不可用')
+				b.title = ok ? I18n.t('workbench.s', { title: p.title, v: DOCK_NAME[p.dock] }) : (p.unavailableHint || I18n.t('workbench.isUnavailable', { title: p.title }))
 				const label = document.createElement('span')
 				label.className = 'wb-dock-label'
 				label.textContent = p.label
@@ -329,14 +329,14 @@
 
 	function registerBuiltins() {
 		const qs = $('nav-quick-send')
-		if (qs) registerPanel({ id: 'quick-send', title: '快捷发送', icon: 'icon-zap', el: qs, order: 10 })
+		if (qs) registerPanel({ id: 'quick-send', title: I18n.t('workbench.quickSend'), icon: 'icon-zap', el: qs, order: 10 })
 		const proto = $('nav-protocol')
-		if (proto) registerPanel({ id: 'protocol', title: '协议设置与下发', label: '协议', icon: 'icon-braces', el: proto, order: 20 })
-		standalonePanel('flow', '测试流程（批量配置 / 随机读写）', '测试流程', 'icon-list-check', 'sk-flow-card', 30, '当前协议没有提供字段目录与构帧钩子，无法运行测试流程')
+		if (proto) registerPanel({ id: 'protocol', title: I18n.t('workbench.protocolSettingsCommands'), label: I18n.t('workbench.protocol'), icon: 'icon-braces', el: proto, order: 20 })
+		standalonePanel('flow', I18n.t('workbench.testFlowBatchConfigRandomR'), I18n.t('workbench.testFlow'), 'icon-list-check', 'sk-flow-card', 30, I18n.t('workbench.theCurrentProtocolProvidesNoField'))
 		const fw = $('nav-firmware')
-		if (fw) registerPanel({ id: 'firmware', title: '固件升级', icon: 'icon-cpu', el: fw, order: 50 })
+		if (fw) registerPanel({ id: 'firmware', title: I18n.t('workbench.firmwareUpgrade'), icon: 'icon-cpu', el: fw, order: 50 })
 		const parse = $('serial-parse-body')
-		if (parse) registerPanel({ id: 'parse', title: '协议解析', label: '解析', icon: 'icon-workflow', el: parse, order: 0, docks: ['bottom'], fixed: true })
+		if (parse) registerPanel({ id: 'parse', title: I18n.t('workbench.protocolParse'), label: I18n.t('workbench.parse'), icon: 'icon-workflow', el: parse, order: 0, docks: ['bottom'], fixed: true })
 	}
 
 	// ---------- 顶栏：命令面板入口 ----------
@@ -356,7 +356,7 @@
 	function panelTask(panel, stopId, progressId, label) {
 		return {
 			label: label,
-			title: '打开' + label + '面板',
+			title: I18n.t('workbench.openPanel', { label }),
 			blocksUpdate: true,
 			running: function () {
 				const stop = $(stopId)
@@ -365,17 +365,17 @@
 			text: function () {
 				const prog = $(progressId)
 				const txt = prog ? prog.textContent.trim() : ''
-				return label + (txt ? ' ' + txt : '') + ' 运行中'
+				return txt ? I18n.t('workbench.running3', { label, txt }) : I18n.t('workbench.running2', { label })
 			},
 			open: function () { open(panel) },
 		}
 	}
 	const TASKS = [
-		panelTask('flow', 'sk-flow-stop', 'sk-flow-progress-bar', '测试流程'),
-		panelTask('firmware', 'fw-stop', 'fw-progress', '固件升级'),
+		panelTask('flow', 'sk-flow-stop', 'sk-flow-progress-bar', I18n.t('workbench.testFlow')),
+		panelTask('firmware', 'fw-stop', 'fw-progress', I18n.t('workbench.firmwareUpgrade')),
 		{
-			label: '循环发送',
-			title: '定位到串口发送',
+			label: I18n.t('workbench.repeatSend'),
+			title: I18n.t('workbench.goToSend'),
 			blocksUpdate: false,
 			running: function () {
 				const cb = $('serial-loop-send')
@@ -383,7 +383,7 @@
 			},
 			text: function () {
 				const t = $('serial-loop-send-time')
-				return '循环发送 每 ' + (t ? t.value : '?') + ' ms'
+				return I18n.t('workbench.repeatSendEveryMs', { v: (t ? t.value : '?') })
 			},
 			open: function () {
 				ensureSerialView()
@@ -396,7 +396,7 @@
 			// 本地 MCP 服务(js/mcp-service.js)：只有平台提供了服务且已启用才显示，未启用不占位。
 			// 常驻服务绝不能阻止应用更新：blocksUpdate: false。异常 / 等待 / 运行用彩色小点区分
 			label: 'MCP',
-			title: '打开本地 MCP 服务面板',
+			title: I18n.t('workbench.openLocalMcpServerPanel'),
 			noSpin: true,
 			blocksUpdate: false,
 			stateDot: true,
@@ -413,8 +413,8 @@
 				if (!s) return 'MCP'
 				const st = s.state()
 				if (st === 'running') return 'MCP :' + s.port()
-				if (st === 'error') return 'MCP 服务异常'
-				return 'MCP 等待启动'
+				if (st === 'error') return I18n.t('workbench.mcpServerError')
+				return I18n.t('workbench.mcpWaitingToStart')
 			},
 			open: function () {
 				const s = window.McpServiceStatus
@@ -470,8 +470,8 @@
 			const rebuild = document.createElement('button')
 			rebuild.type = 'button'
 			rebuild.className = 'sb-receive-reset'
-			rebuild.textContent = '重建接收'
-			rebuild.title = '释放并重新打开此串口'
+			rebuild.textContent = I18n.t('workbench.rebuildReceive2')
+			rebuild.title = I18n.t('workbench.releaseAndReopenThisPort')
 			rebuild.addEventListener('click', async function () {
 				if (rebuild.disabled || !window.serialApi) return
 				rebuild.disabled = true
@@ -502,7 +502,7 @@
 			return { def: t, btn: b, text: text, dot: dot }
 		})
 		const hint = span('sb-hint')
-		hint.append(span('', 'Ctrl/⌘+Enter 发送'), span('', 'Ctrl/⌘+K 命令'))
+		hint.append(span('', I18n.t('workbench.ctrlEnterSend')), span('', I18n.t('workbench.ctrlKCommands')))
 		bar.append(left, tasks, hint)
 		if (issueTip) bar.appendChild(issueTip)
 	}
@@ -523,11 +523,11 @@
 		sids.forEach(function (sid) {
 			const r = statusRefs.sessions[sid]
 			const st = hub.getStats(sid)
-			const label = sid === 'S' ? '串口' : (sid === 'A' ? hub.getLabelA() : hub.getLabelB())
+			const label = sid === 'S' ? I18n.t('workbench.port') : (sid === 'A' ? hub.getLabelA() : hub.getLabelB())
 			r.seg.classList.toggle('is-open', !!st.open)
 			r.seg.dataset.sid = sid
 			r.name.textContent = label
-			r.state.textContent = st.open ? fmtDuration(now - st.openedAt) : '未连接'
+			r.state.textContent = st.open ? fmtDuration(now - st.openedAt) : I18n.t('workbench.disconnected')
 			const showNums = st.open || st.txBytes > 0 || st.rxBytes > 0
 			r.txWrap.hidden = !showNums
 			r.rxWrap.hidden = !showNums
@@ -535,11 +535,11 @@
 			r.rx.textContent = fmtBytes(st.rxBytes)
 			r.lastRx.hidden = !st.open
 			if (st.open) {
-				const age = st.lastRxAt ? '上次接收 ' + Math.max(0, Math.floor((now - st.lastRxAt) / 1000)) + 's 前' : '未收到'
-				r.lastRx.textContent = age + (st.receivePaused ? ' · 接收暂缓' : '')
+				const age = st.lastRxAt ? I18n.t('workbench.lastRxSAgo', { max: Math.max(0, Math.floor((now - st.lastRxAt) / 1000)) }) : I18n.t('workbench.nothingReceived')
+				r.lastRx.textContent = age + (st.receivePaused ? I18n.t('workbench.receivePaused') : '')
 			}
 			r.rebuild.disabled = !st.open || hub.isOpening(sid)
-			r.rebuild.setAttribute('aria-label', label + '：重建接收')
+			r.rebuild.setAttribute('aria-label', I18n.t('workbench.rebuildReceive', { label }))
 		})
 		statusRefs.tasks.forEach(function (t) {
 			const running = t.def.running()
@@ -549,7 +549,7 @@
 				if (t.dot && t.def.dotState) {
 					const st = t.def.dotState()
 					t.dot.dataset.state = st
-					t.btn.title = t.def.title + (st === 'running' ? ' · 运行中' : st === 'error' ? ' · 异常' : ' · 等待')
+					t.btn.title = t.def.title + (st === 'running' ? I18n.t('workbench.running') : st === 'error' ? I18n.t('workbench.error') : I18n.t('workbench.waiting'))
 				}
 			}
 		})
@@ -566,7 +566,7 @@
 	// 对注册定义的覆盖：解析变成右栏第一个标签「检查器」，固件升级并进固件打包页
 	const PROFILE = {
 		parse: function () {
-			return { el: inspectorEl(), title: '检查器', label: '检查器', icon: 'icon-search', order: -1, docks: ['right'], defDock: 'right', fixed: false }
+			return { el: inspectorEl(), title: I18n.t('workbench.inspector'), label: I18n.t('workbench.inspectorShort'), icon: 'icon-search', order: -1, docks: ['right'], defDock: 'right', fixed: false }
 		},
 		firmware: function () {
 			return fwInPackView() ? { hidden: true, view: 'view-fw-pack' } : null
@@ -590,26 +590,26 @@
 		pane.dataset.dockPanel = 'parse'
 		const bar = mk('div', 'wb-inspector-bar')
 		const tools = mk('span', 'wb-inspector-tools')
-		bar.append(mk('span', 'wb-inspector-hint', '点选日志行即解析该行'), tools)
+		bar.append(mk('span', 'wb-inspector-hint', I18n.t('workbench.clickALogLineToParse')), tools)
 		const actions = mk('div', 'wb-inspector-actions')
 		actions.setAttribute('role', 'group')
-		actions.setAttribute('aria-label', '基于此帧')
+		actions.setAttribute('aria-label', I18n.t('workbench.fromThisFrame'))
 		const resend = mk('button', 'btn btn-sm btn-outline-secondary')
 		resend.type = 'button'
 		resend.id = 'wb-frame-resend'
-		resend.append(iconEl('icon-refresh-cw'), document.createTextNode(' 重发此帧'))
+		resend.append(iconEl('icon-refresh-cw'), document.createTextNode(I18n.t('workbench.resendFrame')))
 		const save = mk('button', 'btn btn-sm btn-outline-secondary')
 		save.type = 'button'
 		save.id = 'wb-frame-save'
-		save.append(iconEl('icon-zap'), document.createTextNode(' 存为快捷发送'))
-		actions.append(mk('span', 'wb-inspector-actions-title', '基于此帧'), resend, save)
+		save.append(iconEl('icon-zap'), document.createTextNode(I18n.t('workbench.saveAsQuickSend')))
+		actions.append(mk('span', 'wb-inspector-actions-title', I18n.t('workbench.fromThisFrame')), resend, save)
 		// 结构化视图由 js/modern-inspector.js 往 view 里画；原协议解析面板(HEX 输入区 + 输出)放进可折叠的「原始输出」
 		const view = mk('div', 'wb-insp-view')
 		view.id = 'wb-insp-view'
 		view.tabIndex = -1
 		const raw = mk('details', 'wb-insp-raw')
 		raw.id = 'wb-insp-raw'
-		raw.appendChild(mk('summary', 'wb-insp-raw-sum', '原始输出 / 手动粘贴 HEX'))
+		raw.appendChild(mk('summary', 'wb-insp-raw-sum', I18n.t('workbench.rawOutputPasteHex')))
 		const rawBody = mk('div', 'wb-insp-raw-body')
 		raw.appendChild(rawBody)
 		pane.append(bar, view, actions, raw)
@@ -635,8 +635,8 @@
 		const f = api ? api.selected() : null
 		inspector.resend.disabled = !f || f.dir !== 'tx'
 		inspector.save.disabled = !f
-		inspector.resend.title = !f ? '先在日志里点选一行' : (f.dir === 'tx' ? '把这一帧原样发到当前主发口（不追加 CRLF）' : '只有发送(TX)行可以重发')
-		inspector.save.title = f ? '把这一帧的 HEX 加入当前快捷发送分组' : '先在日志里点选一行'
+		inspector.resend.title = !f ? I18n.t('workbench.selectALogLineFirst') : (f.dir === 'tx' ? I18n.t('workbench.sendThisFrameAsIsTo') : I18n.t('workbench.onlySentTxLinesCanBe'))
+		inspector.save.title = f ? I18n.t('workbench.addThisFrameSHexTo') : I18n.t('workbench.selectALogLineFirst')
 	}
 
 	function park(node, parent, before) {
@@ -671,9 +671,9 @@
 		const fw = find('firmware')
 		if (fwView && fw && fwInPackView()) {
 			const sec = host('section', 'fw-pack-upgrade', 'fw-pack-upgrade')
-			sec.setAttribute('aria-label', '固件升级')
+			sec.setAttribute('aria-label', I18n.t('workbench.firmwareUpgrade'))
 			const head = mk('div', 'fw-pack-upgrade-head')
-			head.append(iconEl('icon-cpu'), mk('span', 'fw-pack-upgrade-title', '固件升级'), mk('span', 'view-bar-sub', '经顶部的固件连接收发'))
+			head.append(iconEl('icon-cpu'), mk('span', 'fw-pack-upgrade-title', I18n.t('workbench.firmwareUpgrade')), mk('span', 'view-bar-sub', I18n.t('workbench.viaFirmwareLinkTop')))
 			sec.appendChild(head)
 			fwView.appendChild(sec)
 			sec.appendChild(fw.base.el)

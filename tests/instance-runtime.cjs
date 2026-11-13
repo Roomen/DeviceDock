@@ -1,3 +1,4 @@
+require('./i18n-env.cjs')
 'use strict'
 // 编辑中的流程（localStorage 共享）与产线计数（sessionStorage 按实例隔离）的真实存取函数。
 const assert = require('node:assert/strict')

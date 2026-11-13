@@ -30,7 +30,7 @@
 			return releasePromise
 		}
 		function read(p = {}) {
-			if (external) throw fail('lane_owned', 'SPP 已接入通信会话，请使用 serial_read')
+			if (external) throw fail('lane_owned', I18n.t('classic.sppIsAttachedToACommunication'))
 			const prefix = namespace + ':' + epoch + ':' + generation + ':'
 			let offset = base
 			if (p.cursor != null) {
@@ -55,7 +55,7 @@
 					const denied = guard && guard.step(); if (denied) throw fail(denied.code, denied.message)
 				}
 				await ready; check()
-				if (external && deps.isPinned && deps.isPinned()) throw fail('transaction_pinned', '通信事务进行中，请先停止事务再操作 SPP')
+				if (external && deps.isPinned && deps.isPinned()) throw fail('transaction_pinned', I18n.t('classic.aTransactionIsRunningStopIt'))
 				if (guard) { const denied = await guard.start(); if (denied) throw fail(denied.code, denied.message); check(); poll = setInterval(() => { if (token === epoch && guard.step()) release().catch(() => {}) }, 100) }
 				if (action === 'discover' || action === 'pair') {
 					phase = 'system-dialog'; notify()
@@ -68,7 +68,7 @@
 				if (action === 'close') { await release(); return { closed: true } }
 				if (action === 'connect') {
 					if (port || external || phase === 'close-failed') throw fail('already_open')
-					if (!devices.some(d => d.deviceId === p.deviceId && d.paired)) throw fail('pairing_required', '请先在系统窗口配对并重新选择设备')
+					if (!devices.some(d => d.deviceId === p.deviceId && d.paired)) throw fail('pairing_required', I18n.t('classic.pairTheDeviceInTheSystem'))
 					phase = 'opening'; generation++; bytes = []; base = next = 0; notify()
 					let handle = null, alive = true
 					const stream = deps.createStreamPort({
@@ -109,7 +109,7 @@
 		}
 		function createPort(deviceId) {
 			const device = devices.find(d => d.deviceId === deviceId && d.paired)
-			if (!device) throw fail('pairing_required', '请先在系统窗口选择已配对的 SPP 设备')
+			if (!device) throw fail('pairing_required', I18n.t('classic.selectAPairedSppDeviceIn'))
 			if (lanePortByDevice.has(deviceId)) return lanePortByDevice.get(deviceId)
 			const token = epoch
 			let connection = null
@@ -118,7 +118,7 @@
 				async open(options, sink) {
 					await ready
 					if (token !== epoch || deps.blocked()) throw fail('stale_generation')
-					if (port || external || closeFailed) throw fail('already_open', '请先关闭现有 SPP 连接')
+					if (port || external || closeFailed) throw fail('already_open', I18n.t('classic.closeTheCurrentSppConnectionFirst'))
 					const live = { handle: null, alive: true, sink }; external = connection = live
 					closing++
 					const onData = new deps.Channel(), onEvent = new deps.Channel()

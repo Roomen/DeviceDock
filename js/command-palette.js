@@ -45,10 +45,7 @@
 		node.dispatchEvent(new Event('change', { bubbles: true }))
 		return true
 	}
-	function textOf(id) {
-		const node = el(id)
-		return node ? (node.innerText || '').trim() : ''
-	}
+	function el2(root, sel) { return root.querySelector(sel) }
 
 	//---- 模糊匹配：子序列 + 打分 ----
 	// 返回 null 表示不命中，否则返回分值（越大越好）
@@ -103,8 +100,8 @@
 	function serialCommands() {
 		const list = []
 		list.push({
-			group: '串口',
-			title: '选择设备',
+			group: I18n.t('palette.port'),
+			title: I18n.t('palette.selectDevice'),
 			alias: 'xuanze shebei chuankou select device port',
 			run: function () {
 				const device = document.querySelector('#mdn-connbar .mdn-conn-btn')
@@ -113,28 +110,27 @@
 			}
 		})
 		// 按钮三态: 无口「连接」(选口+打开)、有口未开「打开」、已开「关闭」
-		const toggleText = textOf('serial-open-or-close') || '连接'
-		let toggleTitle = '打开串口'
-		if (toggleText.indexOf('关闭') >= 0) toggleTitle = '关闭串口'
-		else if (toggleText.indexOf('连接') >= 0) toggleTitle = '连接串口'
+		// 按钮只有图标：标题取它的 aria-label（common.js 按连接态写好、已本地化），没有口时就是「连接串口」
+		const toggleBtn = el('serial-open-or-close')
+		const toggleTitle = (toggleBtn && !toggleBtn.hidden && toggleBtn.getAttribute('aria-label')) || I18n.t('palette.connectPort')
 		list.push({
-			group: '串口',
+			group: I18n.t('palette.port'),
 			title: toggleTitle,
 			alias: 'open close serial connect dakai guanbi lianjie chuankou',
 			run: function () { clickEl('serial-open-or-close') }
 		})
 		list.push({
-			group: '串口',
-			title: '打开串口参数面板',
+			group: I18n.t('palette.port'),
+			title: I18n.t('palette.openPortSettings'),
 			alias: 'canshu params baudrate settings',
 			run: function () { clickEl('serial-params-summary') }
 		})
 		list.push({
-			group: '串口',
-			title: '切换串口模式（单路/双路）',
+			group: I18n.t('palette.port'),
+			title: I18n.t('palette.switchPortModeSingleDual'),
 			feature: 'lane.dual',
 			alias: 'moshi mode dual single shuanglu danlu qiehuan',
-			detail: '当前 ' + (window.SerialHub && window.SerialHub.mode === 'dual' ? '双路' : '单路'),
+			detail: I18n.t('palette.current2', { v: (window.SerialHub && window.SerialHub.mode === 'dual' ? I18n.t('palette.dual') : I18n.t('palette.single')) }),
 			run: function () {
 				if (!window.SerialHub) return
 				if (window.SerialHub.mode === 'dual') {
@@ -146,10 +142,10 @@
 		})
 		;[9600, 115200, 230400, 460800].forEach(function (baud) {
 			list.push({
-				group: '串口',
-				title: '波特率切换到 ' + baud,
+				group: I18n.t('palette.port'),
+				title: I18n.t('palette.setBaudRateTo', { baud }),
 				alias: 'botelv baud ' + baud,
-				detail: '当前 ' + ((el('serial-baud') || {}).value || '-'),
+				detail: I18n.t('palette.current2', { v: ((el('serial-baud') || {}).value || '-') }),
 				run: function () { setValue('serial-baud', String(baud)) }
 			})
 		})
@@ -159,26 +155,26 @@
 	function logCommands() {
 		const list = []
 		list.push({
-			group: '日志',
-			title: '清空日志',
+			group: I18n.t('palette.log'),
+			title: I18n.t('palette.clearLog'),
 			alias: 'qingkong clear log',
 			run: function () { clickEl('serial-clear') }
 		})
 		list.push({
-			group: '日志',
-			title: '复制日志',
+			group: I18n.t('palette.log'),
+			title: I18n.t('palette.copyLog'),
 			alias: 'fuzhi copy log',
 			run: function () { clickEl('serial-copy') }
 		})
 		list.push({
-			group: '日志',
-			title: '导出日志',
+			group: I18n.t('palette.log'),
+			title: I18n.t('palette.exportLog'),
 			alias: 'daochu export save log',
 			run: function () { clickEl('serial-save') }
 		})
 		list.push({
-			group: '日志',
-			title: '打开日志设置',
+			group: I18n.t('palette.log'),
+			title: I18n.t('palette.openLogSettings'),
 			alias: 'rizhi shezhi log settings type timeout rows',
 			run: function () { clickEl('serial-log-settings-btn') }
 		})
@@ -188,15 +184,15 @@
 				{ value: 'hex&text', label: 'HEX + TEXT' },
 				{ value: 'hex', label: 'HEX' },
 				{ value: 'text', label: 'TEXT' },
-				{ value: 'ansi', label: 'ANSI 彩色' },
+				{ value: 'ansi', label: I18n.t('palette.ansiColor') },
 				{ value: 'hex&ansi', label: 'HEX + ANSI' },
-				{ value: 'parse', label: '解析' },
-				{ value: 'hex&parse', label: 'HEX + 解析' },
-				{ value: 'term', label: '终端' },
+				{ value: 'parse', label: I18n.t('palette.parsed') },
+				{ value: 'hex&parse', label: I18n.t('palette.hexParsed') },
+				{ value: 'term', label: I18n.t('palette.terminal') },
 			].forEach(function (t) {
 				list.push({
-					group: '日志',
-					title: '日志类型：' + t.label,
+					group: I18n.t('palette.log'),
+					title: I18n.t('palette.logFormat', { label: t.label }),
 					alias: 'rizhi leixing log type ' + t.value,
 					run: function () { window.setLogType(t.value) }
 				})
@@ -208,8 +204,8 @@
 		const scrollBtn = document.getElementById('serial-auto-scroll')
 		const scrollOn = !!(scrollBtn && scrollBtn.getAttribute('aria-pressed') === 'true')
 		list.push({
-			group: '日志',
-			title: scrollOn ? '暂停日志滚动' : '恢复自动滚动',
+			group: I18n.t('palette.log'),
+			title: scrollOn ? I18n.t('palette.pauseLogScrolling') : I18n.t('palette.resumeAutoScroll'),
 			alias: 'gundong scroll auto pause',
 			run: function () { clickEl('serial-auto-scroll') }
 		})
@@ -253,7 +249,7 @@
 			grp.list.forEach(function (item) {
 				if (!item || !item.content) return
 				list.push({
-					group: '快捷发送',
+					group: I18n.t('palette.quickSend'),
 					feature: 'panel.quick-send',
 					title: item.name || item.content,
 					detail: (grp.name || '') + ' · ' + item.content + (item.hex ? ' · HEX' : ''),
@@ -296,7 +292,7 @@
 			grp.items.forEach(function (item) {
 				if (!item || !item.name) return
 				list.push({
-					group: '常用指令',
+					group: I18n.t('palette.presetCommands'),
 					title: item.name,
 					detail: (grp.group || '') + (item.desc ? ' · ' + item.desc : ''),
 					alias: 'changyong zhiling preset ' + (item.func || ''),
@@ -316,24 +312,24 @@
 	function viewCommands() {
 		const list = []
 		list.push({
-			group: '视图',
-			title: '切换到通信调试',
+			group: I18n.t('palette.view'),
+			title: I18n.t('palette.goToCommunication'),
 			alias: 'chuankou tiaoshi serial view',
 			run: function () { clickSel('.rail-item[data-view="view-serial"]') }
 		})
 		list.push({
-			group: '视图',
-			title: '切换到固件打包',
+			group: I18n.t('palette.view'),
+			title: I18n.t('palette.goToFirmwarePackaging'),
 			feature: 'view.firmware-pack',
 			alias: 'gujian dabao firmware pack view',
 			run: function () { clickSel('.rail-item[data-view="view-fw-pack"]') }
 		})
 		const themeNow = typeof window.getThemeChoice === 'function' ? window.getThemeChoice() : 'auto'
-		;[['auto', '跟随系统', 'zidong auto system'], ['light', '浅色', 'qianse liangse light'], ['dark', '深色', 'shense anse dark']].forEach(function (t) {
+		;[['auto', I18n.t('palette.followSystem'), 'zidong auto system'], ['light', I18n.t('palette.light'), 'qianse liangse light'], ['dark', I18n.t('palette.dark'), 'shense anse dark']].forEach(function (t) {
 			list.push({
-				group: '视图',
-				title: '主题：' + t[1],
-				detail: themeNow === t[0] ? '当前' : '',
+				group: I18n.t('palette.view'),
+				title: I18n.t('palette.theme', { v: t[1] }),
+				detail: themeNow === t[0] ? I18n.t('palette.current') : '',
 				alias: 'zhuti theme ' + t[2],
 				run: function () { if (window.setThemeChoice) window.setThemeChoice(t[0]) }
 			})
@@ -341,16 +337,16 @@
 		const main = el('main')
 		const rightCollapsed = !!(main && main.classList.contains('right-collapsed'))
 		list.push({
-			group: '视图',
-			title: rightCollapsed ? '展开右侧工具栏' : '折叠右侧工具栏',
+			group: I18n.t('palette.view'),
+			title: rightCollapsed ? I18n.t('palette.expandRightPanel') : I18n.t('palette.collapseRightPanel'),
 			alias: 'youlan sidebar tools zhedie',
 			run: function () { clickSel('.toggle-button[data-pane="right"]') }
 		})
 		const sendPanel = el('serial-send-panel')
 		const sendCollapsed = !!(sendPanel && sendPanel.classList.contains('collapsed'))
 		list.push({
-			group: '视图',
-			title: sendCollapsed ? '展开串口发送面板' : '折叠串口发送面板',
+			group: I18n.t('palette.view'),
+			title: sendCollapsed ? I18n.t('palette.expandSendPanel') : I18n.t('palette.collapseSendPanel'),
 			alias: 'fasong mianban send panel',
 			run: function () {
 				if (sendCollapsed && typeof window.expandSendPanel === 'function') {
@@ -364,9 +360,9 @@
 			window.Workbench.list().forEach(function (p) {
 				if (!p.available) return
 				list.push({
-					group: '视图',
-					title: (p.shown ? '收起面板：' : '打开面板：') + p.title,
-					detail: p.dock === 'bottom' ? '底部' : '右侧',
+					group: I18n.t('palette.view'),
+					title: (p.shown ? I18n.t('palette.hidePanel') : I18n.t('palette.showPanel')) + p.title,
+					detail: p.dock === 'bottom' ? I18n.t('palette.bottom') : I18n.t('palette.right'),
 					alias: 'mianban panel dock ' + p.id,
 					run: function () { window.Workbench.toggle(p.id) }
 				})
@@ -421,7 +417,7 @@
 	}
 
 	//---- 面板 UI ----
-	const GROUP_ORDER = ['串口', '日志', '快捷发送', '常用指令', '视图']
+	const GROUP_ORDER = [I18n.t('palette.port'), I18n.t('palette.log'), I18n.t('palette.quickSend'), I18n.t('palette.presetCommands'), I18n.t('palette.view')]
 
 	let overlay = null
 	let input = null
@@ -435,16 +431,22 @@
 		overlay.id = 'serial-cmdk-overlay'
 		overlay.hidden = true
 		overlay.innerHTML =
-			'<div id="serial-cmdk-panel" role="dialog" aria-modal="true" aria-label="命令面板">' +
+			'<div id="serial-cmdk-panel" role="dialog" aria-modal="true">' +
 			'<div id="serial-cmdk-inputbar">' +
 			'<i class="icon icon-search"></i>' +
-			'<input id="serial-cmdk-input" type="text" autocomplete="off" spellcheck="false" placeholder="搜索命令…（支持拼音/英文别名）">' +
+			'<input id="serial-cmdk-input" type="text" autocomplete="off" spellcheck="false" ">' +
 			'<span class="serial-cmdk-kbd">Esc</span>' +
 			'</div>' +
 			'<div id="serial-cmdk-list" role="listbox"></div>' +
-			'<div id="serial-cmdk-footer"><span><b>↑↓</b> 选择</span><span><b>Enter</b> 执行</span><span><b>' +
-			MOD_LABEL + '</b> 开关</span></div>' +
+			'<div id="serial-cmdk-footer"><span><b>↑↓</b> <i></i></span><span><b>Enter</b> <i></i></span><span><b></b> <i></i></span></div>' +
 			'</div>'
+		el2(overlay, '#serial-cmdk-panel').setAttribute('aria-label', I18n.t('palette.commandPalette'))
+		el2(overlay, '#serial-cmdk-input').setAttribute('placeholder', I18n.t('palette.searchCommandsEnglishOrPinyinAliases'))
+		const foot = overlay.querySelectorAll('#serial-cmdk-footer i')
+		foot[0].replaceWith(I18n.t('palette.select'))
+		foot[1].replaceWith(I18n.t('palette.run'))
+		foot[2].replaceWith(I18n.t('palette.toggle'))
+		overlay.querySelectorAll('#serial-cmdk-footer b')[2].textContent = MOD_LABEL
 		document.body.appendChild(overlay)
 		input = el('serial-cmdk-input')
 		listBox = el('serial-cmdk-list')
@@ -536,7 +538,8 @@
 
 	function render() {
 		if (!results.length) {
-			listBox.innerHTML = '<div class="serial-cmdk-empty">无匹配项</div>'
+			listBox.innerHTML = '<div class="serial-cmdk-empty"></div>'
+			listBox.firstChild.textContent = I18n.t('palette.noMatches')
 			activeIndex = 0
 			return
 		}

@@ -120,7 +120,7 @@
 		const hub = root.SerialHub
 		if (sid === 'A' && hub && typeof hub.getLabelA === 'function') return hub.getLabelA()
 		if (sid === 'B' && hub && typeof hub.getLabelB === 'function') return hub.getLabelB()
-		return sid === 'S' ? '单路' : sid
+		return sid === 'S' ? I18n.t('curves.single') : sid
 	}
 
 	// 面板要的字段目录：按这一路当前协议读注册表(不在实时上下文里，不能读 _activeProtocol)

@@ -1,6 +1,7 @@
 // Run: node tests/test-flow.cjs — synthetic data only.
 // 覆盖测试流程引擎 js/test-flow.js 的纯逻辑：步骤规范化与校验、{n} 替换、批量 / 随机生成(seed 可复现)、
 // 值解码与回读比对、执行(顺序 / 延时 / 超时 / 重试 / 失败策略 / 写后回读 / 恢复原值)、统计与导出。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const T = require('../js/test-flow.js')
 const vm = require('node:vm')

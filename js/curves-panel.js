@@ -280,7 +280,7 @@
 		}
 		el.readout.textContent = ''
 		if (!u || idx == null || !u.data || !u.data[0] || u.data[0][idx] == null) {
-			const hint = mk('span', 'mdn-curve-readout-hint', '悬停读取数值 · 拖拽框选缩放')
+			const hint = mk('span', 'mdn-curve-readout-hint', I18n.t('curvesPanel.hoverToReadValuesDragTo'))
 			el.readout.appendChild(hint)
 			return
 		}
@@ -302,7 +302,7 @@
 	function renderLegend(grouped) {
 		if (!el.legend) return
 		el.legend.textContent = ''
-		const units = ['左轴', '右轴']
+		const units = [I18n.t('curvesPanel.leftAxis'), I18n.t('curvesPanel.rightAxis')]
 		seriesMeta.forEach(function (m) {
 			const chip = mk('span', 'mdn-curve-legend-chip')
 			const swatch = mk('span', 'mdn-curve-swatch')
@@ -354,24 +354,24 @@
 	function updateEmpty(items, anyData) {
 		if (!el.empty) return
 		if (!items.length) {
-			el.empty.textContent = '当前协议没有可画的字段：协议需要用 fields 给出字段目录，并用 metrics(frame) 返回数值点'
+			el.empty.textContent = I18n.t('curvesPanel.theCurrentProtocolHasNoPlottable')
 			el.empty.hidden = false
 			return
 		}
 		const noMetrics = items.filter(function (it) { return !it.hasMetrics })
 		if (noMetrics.length === items.length) {
-			el.empty.textContent = '当前协议没有 metrics(frame)：曲线只能由协议提供的数值点驱动'
+			el.empty.textContent = I18n.t('curvesPanel.theCurrentProtocolHasNoMetrics2')
 			el.empty.hidden = false
 			return
 		}
-		el.empty.textContent = anyData ? '' : '等待数据：收到可解析的帧后自动出点'
+		el.empty.textContent = anyData ? '' : I18n.t('curvesPanel.waitingForDataPointsAppearOnce')
 		el.empty.hidden = !!anyData
 	}
 
 	function updateFieldButton(items) {
 		if (!el.fields) return
 		const n = items.length
-		el.fieldsLabel.textContent = n ? '字段 ' + n : '字段'
+		el.fieldsLabel.textContent = n ? I18n.t('curvesPanel.fields2', { n }) : I18n.t('curvesPanel.fields')
 		el.fields.setAttribute('aria-expanded', popOpen ? 'true' : 'false')
 	}
 
@@ -382,17 +382,17 @@
 		const lanes = S.lanes()
 		const sel = currentSelection()
 		if (lanes.length > 1) {
-			el.pop.appendChild(mk('div', 'mdn-curve-pop-head', 'A / B 同一字段会自动对比'))
+			el.pop.appendChild(mk('div', 'mdn-curve-pop-head', I18n.t('curvesPanel.theSameFieldOnAB')))
 		}
 		lanes.forEach(function (sid) {
 			const fields = fieldCache[sid] || []
 			const group = mk('div', 'mdn-curve-pop-group')
 			const head = mk('div', 'mdn-curve-pop-title')
-			head.append(mk('span', 'mdn-curve-pop-lane', lanes.length > 1 ? S.laneName(sid) : '字段'))
+			head.append(mk('span', 'mdn-curve-pop-lane', lanes.length > 1 ? S.laneName(sid) : I18n.t('curvesPanel.fields')))
 			head.append(mk('span', 'mdn-curve-pop-proto', S.protoName(sid)))
 			group.appendChild(head)
 			if (!fields.length) {
-				group.appendChild(mk('div', 'mdn-curve-pop-empty', '当前协议未提供字段目录'))
+				group.appendChild(mk('div', 'mdn-curve-pop-empty', I18n.t('curvesPanel.theCurrentProtocolHasNoField')))
 			}
 			fields.forEach(function (f) {
 				const spec = sid + '|' + f.key
@@ -408,13 +408,13 @@
 					render()
 				})
 				label.append(cb, mk('span', '', f.name + (f.unit ? ' · ' + f.unit : '')))
-				if (f.chart) label.title = '协议标记为默认显示'
+				if (f.chart) label.title = I18n.t('curvesPanel.shownByDefaultPerTheProtocol')
 				group.appendChild(label)
 			})
 			el.pop.appendChild(group)
 		})
 		const foot = mk('div', 'mdn-curve-pop-foot')
-		const reset = btn('btn btn-sm btn-outline-secondary', '恢复默认')
+		const reset = btn('btn btn-sm btn-outline-secondary', I18n.t('curvesPanel.resetToDefault'))
 		reset.addEventListener('click', function () {
 			S.setSelected(defaultSelection())
 			render()
@@ -449,7 +449,7 @@
 		const items = selectionItems().filter(function (it) { return it.hasMetrics })
 		const list = items.map(function (it) { return S.store.get(it.sid, it.key) }).filter(Boolean)
 		if (!list.length) {
-			if (window.AppDialog) window.AppDialog.alert('还没有数据可以导出')
+			if (window.AppDialog) window.AppDialog.alert(I18n.t('curvesPanel.noDataToExportYet'))
 			return
 		}
 		const csv = C.toCSV(list, {
@@ -470,14 +470,14 @@
 		const fields = btn('mdn-curve-fields')
 		fields.setAttribute('aria-haspopup', 'true')
 		fields.setAttribute('aria-expanded', 'false')
-		const fieldsLabel = mk('span', 'mdn-curve-fields-label', '字段')
+		const fieldsLabel = mk('span', 'mdn-curve-fields-label', I18n.t('curvesPanel.fields'))
 		fields.append(icon('icon-chart-line'), fieldsLabel)
 		const pause = btn('ctl-toggle', '')
 		pause.id = 'mdn-curve-pause'
 		pause.setAttribute('aria-pressed', 'false')
-		pause.append(icon('icon-pause'), mk('span', '', '暂停'))
-		const clear = btn('btn btn-sm btn-outline-secondary', '清空')
-		const reset = btn('btn btn-sm btn-outline-secondary', '复位缩放')
+		pause.append(icon('icon-pause'), mk('span', '', I18n.t('curvesPanel.pause')))
+		const clear = btn('btn btn-sm btn-outline-secondary', I18n.t('curvesPanel.clear'))
+		const reset = btn('btn btn-sm btn-outline-secondary', I18n.t('curvesPanel.resetZoom'))
 		reset.disabled = true
 		const capWrap = mk('label', 'mdn-curve-cap')
 		const cap = document.createElement('input')
@@ -486,8 +486,8 @@
 		cap.max = String(C.CAP_MAX)
 		cap.step = '100'
 		cap.value = String(S.capacity())
-		capWrap.append(mk('span', '', '每序列'), cap, mk('span', '', '点'))
-		const csv = btn('btn btn-sm btn-outline-secondary', '导出 CSV')
+		capWrap.append(mk('span', '', I18n.t('curvesPanel.perSeries')), cap, mk('span', '', I18n.t('curvesPanel.pts')))
+		const csv = btn('btn btn-sm btn-outline-secondary', I18n.t('curvesPanel.exportCsv'))
 		bar.append(fields, pause, clear, reset, capWrap, csv)
 
 		const pop = mk('div', 'mdn-curve-pop')
@@ -499,7 +499,7 @@
 		const legend = mk('div', 'mdn-curve-legend')
 		legend.hidden = true
 		const plot = mk('div', 'mdn-curve-plot')
-		const empty = mk('div', 'mdn-curve-empty', '等待数据')
+		const empty = mk('div', 'mdn-curve-empty', I18n.t('curvesPanel.waitingForData'))
 		pane.append(bar, pop, readout, legend, plot, empty)
 
 		el.pane = pane
@@ -530,8 +530,8 @@
 		pause.addEventListener('click', function () {
 			const paused = S.setPaused(!S.isPaused())
 			pause.setAttribute('aria-pressed', paused ? 'true' : 'false')
-			pause.lastChild.textContent = paused ? '继续' : '暂停'
-			pause.title = paused ? '继续采集新的数据点' : '暂停采集新的数据点（已有的点保留）'
+			pause.lastChild.textContent = paused ? I18n.t('curvesPanel.resume') : I18n.t('curvesPanel.pause')
+			pause.title = paused ? I18n.t('curvesPanel.resumeCollectingDataPoints') : I18n.t('curvesPanel.pauseCollectingDataPointsExistingPoints')
 			render()
 		})
 		clear.addEventListener('click', function () { S.clear() })
@@ -553,8 +553,8 @@
 		const pane = build()
 		window.Workbench.registerPanel({
 			id: 'curves',
-			title: '曲线',
-			label: '曲线',
+			title: I18n.t('curvesPanel.curves'),
+			label: I18n.t('curvesPanel.curves'),
 			icon: 'icon-chart-line',
 			el: pane,
 			order: 30,
@@ -563,7 +563,7 @@
 				if (!items.length) return false
 				return items.some(function (it) { return it.hasMetrics })
 			},
-			unavailableHint: '当前协议没有 metrics，无法出曲线',
+			unavailableHint: I18n.t('curvesPanel.theCurrentProtocolHasNoMetrics'),
 		})
 		refreshFieldCache()
 		S.onChange(render)

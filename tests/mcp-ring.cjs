@@ -1,5 +1,6 @@
 // Run: node tests/mcp-ring.cjs — synthetic data only.
 // 覆盖 js/mcp-ring.js：有界环的覆盖/游标/丢弃计数、换代次、命名空间游标、HEX 严格解析与读取参数校验。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const Ring = require('../js/mcp-ring.js')
 

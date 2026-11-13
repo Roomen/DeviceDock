@@ -5,6 +5,7 @@
 // selectPortFor/bindSessionPort/bindClaimedPort、openSerial、laneBlockReason/openLane/closeLane/handleToggleClick、
 // lanePortOwner/laneSelectBlock/selectLanePort、portListMeta、window.serialLanes。
 // mock 只在设备/传输边界：端口对象、SerialAdapter、closeSerial/releasePort 时序、serialApi I/O、localStorage、DOM。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

@@ -1,5 +1,6 @@
 // Run: node tests/serial-line-split.cjs — synthetic data only.
 // 覆盖: 接收分包的「按换行」方式（完整行立即成行、残行兜底超时 / 0 只等换行）与原「按超时」方式，以及二进制协议帧不被 0x0A 拆开
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

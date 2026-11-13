@@ -1,6 +1,7 @@
 // Run: node tests/protocol-fields-doc.cjs — synthetic data only.
 // 字段文档与协议 fields 的一致性：SEK 与示例协议仓库各生成一份，与仓库里的文档逐字比对，
 // 再抽查表格行（key / 类型 / 读写 / 曲线标记）。改 fields 而不重新生成文档时这里必须失败。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')

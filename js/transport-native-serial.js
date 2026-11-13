@@ -42,10 +42,10 @@
 	// 对话框与页面用的标题：有产品名用产品名，否则按连接方式给一个类别名
 	function portTitle(d) {
 		if (d.product) return d.product
-		if (d.transport === 'bluetooth') return '蓝牙串口'
-		if (d.transport === 'pci') return 'PCI 串口'
-		if (d.transport === 'usb') return 'USB 串口设备'
-		return '串口'
+		if (d.transport === 'bluetooth') return I18n.t('nativeSerial.bluetoothSerial')
+		if (d.transport === 'pci') return I18n.t('nativeSerial.pciSerial')
+		if (d.transport === 'usb') return I18n.t('nativeSerial.usbSerialDevice')
+		return I18n.t('nativeSerial.serialPort')
 	}
 
 	// 第二行的细节：厂商 · VID:PID · SN
@@ -156,7 +156,7 @@
 						}, function () {
 							if (retired) return
 							retired = true
-							sink.lost(makeError('NetworkError', '原生接收确认失败，已停止连接'))
+							sink.lost(makeError('NetworkError', I18n.t('nativeSerial.nativeReceiveAcknowledgementFailedConnectionStopped')))
 						}).finally(function () { ackBusy = false; acknowledge() })
 					}
 					const onData = new Channel()
@@ -171,8 +171,8 @@
 					onEvent.onmessage = function (ev) {
 						if (retired) return
 						const msg = ev && ev.message ? String(ev.message) : ''
-						if (ev && ev.type === 'lost') { retired = true; sink.lost(makeError('NetworkError', msg || '设备已断开')) }
-						else sink.error(makeError('FramingError', msg || '串口读错误'))
+						if (ev && ev.type === 'lost') { retired = true; sink.lost(makeError('NetworkError', msg || I18n.t('nativeSerial.deviceDisconnected'))) }
+						else sink.error(makeError('FramingError', msg || I18n.t('nativeSerial.portReadError')))
 					}
 					const o = options || {}
 					try {
@@ -195,7 +195,7 @@
 					}
 				},
 				write(bytes) {
-					if (handle == null) return Promise.reject(makeError('NetworkError', '串口未打开'))
+					if (handle == null) return Promise.reject(makeError('NetworkError', I18n.t('nativeSerial.portIsNotOpen')))
 					// 写入走 JSON 数组：Tauri 的 Vec<u8> 参数按数组反序列化，单次发送量(快捷发送、固件分片)不大
 					return invoke('serial_write', { handle, data: Array.from(bytes) }).catch(function (e) { throw nativeError(e) })
 				},
@@ -206,7 +206,7 @@
 					if (handle === h) { retireReceive(); handle = null }
 				},
 				setSignals(s) {
-					if (handle == null) return Promise.reject(makeError('InvalidStateError', '串口未打开'))
+					if (handle == null) return Promise.reject(makeError('InvalidStateError', I18n.t('nativeSerial.portIsNotOpen')))
 					const signals = {}
 					if (s.dataTerminalReady != null) signals.dataTerminalReady = !!s.dataTerminalReady
 					if (s.requestToSend != null) signals.requestToSend = !!s.requestToSend
@@ -291,9 +291,9 @@
 						return function () { watchers.delete(w) }
 					},
 				})
-				if (!desc) throw makeError('NotFoundError', '未选择串口设备')
+				if (!desc) throw makeError('NotFoundError', I18n.t('nativeSerial.noSerialDeviceSelected'))
 				const entry = present.get(desc.path)
-				if (!entry) throw makeError('NotFoundError', '所选设备已拔出')
+				if (!entry) throw makeError('NotFoundError', I18n.t('nativeSerial.theSelectedDeviceWasUnplugged'))
 				grant(entry.desc)
 				return entry.port
 			},
@@ -357,31 +357,31 @@
 			headingIcon.setAttribute('aria-hidden', 'true')
 			headingIcon.append(el('i', 'icon icon-usb'))
 			const headingText = el('div', 'native-port-heading-text')
-			const title = el('h2', 'modal-title', '选择串口设备')
+			const title = el('h2', 'modal-title', I18n.t('nativeSerial.selectSerialDevice'))
 			title.id = 'native-port-title'
-			headingText.append(title, el('p', 'native-port-subtitle', '选择要连接的设备，确认端口后连接'))
+			headingText.append(title, el('p', 'native-port-subtitle', I18n.t('nativeSerial.chooseTheDeviceToConnectCheck')))
 			heading.append(headingIcon, headingText)
 			const x = el('button', 'native-port-close')
 			x.type = 'button'
-			x.setAttribute('aria-label', '取消')
+			x.setAttribute('aria-label', I18n.t('nativeSerial.cancel'))
 			x.append(el('i', 'icon icon-x'))
 			head.append(heading, x)
 			const body = el('div', 'modal-body native-port-body')
 			const toolbar = el('div', 'native-port-toolbar')
 			const count = el('span', 'native-port-count')
-			const hint = el('div', 'native-port-hint', ctx.filters && ctx.filters.length ? '只列出本功能支持的设备' : '设备插拔后列表会自动刷新')
+			const hint = el('div', 'native-port-hint', ctx.filters && ctx.filters.length ? I18n.t('nativeSerial.onlyDevicesThisFeatureSupportsAre') : I18n.t('nativeSerial.theListRefreshesWhenDevicesAre'))
 			const list = el('div', 'native-port-list')
 			list.setAttribute('role', 'listbox')
-			list.setAttribute('aria-label', '串口设备')
+			list.setAttribute('aria-label', I18n.t('nativeSerial.serialDevices'))
 			toolbar.append(count, hint)
 			body.append(toolbar, list)
 			const foot = el('div', 'modal-footer')
 			const refreshBtn = el('button', 'btn btn-sm btn-outline-secondary me-auto')
 			refreshBtn.type = 'button'
-			refreshBtn.append(el('i', 'icon icon-rotate-cw'), doc.createTextNode(' 刷新'))
-			const cancel = el('button', 'btn btn-sm btn-outline-secondary', '取消')
+			refreshBtn.append(el('i', 'icon icon-rotate-cw'), doc.createTextNode(I18n.t('nativeSerial.refresh')))
+			const cancel = el('button', 'btn btn-sm btn-outline-secondary', I18n.t('nativeSerial.cancel'))
 			cancel.type = 'button'
-			const ok = el('button', 'btn btn-sm btn-primary', '连接')
+			const ok = el('button', 'btn btn-sm btn-primary', I18n.t('nativeSerial.connect'))
 			ok.type = 'button'
 			ok.disabled = true
 			foot.append(refreshBtn, cancel, ok)
@@ -400,7 +400,7 @@
 			const main = el('div', 'native-port-main')
 			const line1 = el('div', 'native-port-line1')
 			line1.append(el('span', 'native-port-name', portTitle(d)))
-			if (d.open) line1.append(el('span', 'native-port-badge', '已打开'))
+			if (d.open) line1.append(el('span', 'native-port-badge', I18n.t('nativeSerial.open')))
 			const path = el('div', 'native-port-path', d.name)
 			path.title = d.path
 			main.append(line1, path)
@@ -424,11 +424,11 @@
 
 				function render() {
 					ui.list.textContent = ''
-					ui.count.textContent = items.length + ' 个可用设备'
+					ui.count.textContent = I18n.t('nativeSerial.devicesAvailable', { length: items.length })
 					if (!items.length) {
 						const empty = el('div', 'native-port-empty')
-						empty.append(el('div', 'native-port-empty-title', '没有找到串口设备'))
-						empty.append(el('div', 'native-port-empty-text', '请插入设备后稍等片刻。CH340、CP210x 等 USB 转串口芯片在部分系统上需要先安装厂商驱动。'))
+						empty.append(el('div', 'native-port-empty-title', I18n.t('nativeSerial.noSerialDevicesFound')))
+						empty.append(el('div', 'native-port-empty-text', I18n.t('nativeSerial.plugInADeviceAndWait')))
 						ui.list.append(empty)
 					}
 					items.forEach(function (d) { ui.list.append(renderRow(d, d.path === selected)) })

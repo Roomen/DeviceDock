@@ -78,7 +78,7 @@
 					let out
 					t.oncomplete = function () { db.close(); resolve(out) }
 					t.onerror = function () { db.close(); reject(t.error) }
-					t.onabort = function () { db.close(); reject(t.error || new Error('固件库事务被中止')) }
+					t.onabort = function () { db.close(); reject(t.error || new Error(I18n.t('fwlib.firmwareLibraryTransactionAborted'))) }
 					body(t.objectStore('fw'), function (v) { out = v })
 				})
 			})

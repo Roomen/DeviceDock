@@ -83,7 +83,7 @@
 		if (m.alias) return m.alias
 		if (m.productName) return m.productName + (m.slot != null ? ' #' + (m.slot + 1) : '')
 		if (m.portName) return m.portName
-		return m.vid ? 'USB 串口设备' : '串口设备'
+		return m.vid ? I18n.t('shell.usbSerialDevice') : I18n.t('shell.serialDevice')
 	}
 	// 次行小字：口名 · VID:PID · SN(标题已经是口名时不重复)
 	function portRowSub(m) {
@@ -98,14 +98,14 @@
 	// s = { current, open, opening, failed, owner(sid | null), absent }
 	function portRowState(s) {
 		s = s || {}
-		if (s.absent) return { tag: '未在位', kind: 'absent', disabled: true }
-		if (s.current && s.failed) return { tag: '关闭失败', kind: 'failed', disabled: false }
-		if (s.current && s.opening) return { tag: '连接中', kind: 'opening', disabled: false }
-		if (s.current && s.open) return { tag: '已连接', kind: 'open', disabled: false }
-		if (s.current) return { tag: '当前设备', kind: 'current', disabled: false }
+		if (s.absent) return { tag: I18n.t('shell.notPresent'), kind: 'absent', disabled: true }
+		if (s.current && s.failed) return { tag: I18n.t('shell.closeFailed'), kind: 'failed', disabled: false }
+		if (s.current && s.opening) return { tag: I18n.t('shell.connecting2'), kind: 'opening', disabled: false }
+		if (s.current && s.open) return { tag: I18n.t('shell.connected'), kind: 'open', disabled: false }
+		if (s.current) return { tag: I18n.t('shell.current'), kind: 'current', disabled: false }
 		if (s.owner) {
-			const who = s.owner === 'S' ? '单路' : (s.owner === 'F' ? '固件页' : s.owner + ' 路')
-			return { tag: who + '占用', kind: 'busy', disabled: true }
+			const who = s.owner === 'S' ? I18n.t('shell.singleLane') : (s.owner === 'F' ? I18n.t('shell.firmwarePage') : I18n.t('shell.lane4', { owner: s.owner }))
+			return { tag: I18n.t('shell.inUseBy', { who }), kind: 'busy', disabled: true }
 		}
 		return { tag: '', kind: 'idle', disabled: false }
 	}
@@ -205,8 +205,8 @@
 		const more = btn('mdn-conn-more')
 		more.setAttribute('aria-haspopup', 'dialog')
 		more.setAttribute('aria-expanded', 'false')
-		more.setAttribute('aria-label', '串口设置')
-		more.title = '串口设置'
+		more.setAttribute('aria-label', I18n.t('shell.portSettings3'))
+		more.title = I18n.t('shell.portSettings3')
 		const moreParams = mk('span', 'mdn-conn-params')
 		more.append(icon('icon-sliders'), moreParams)
 		const pop = mk('div', 'mdn-pop')
@@ -214,16 +214,16 @@
 		pop.setAttribute('role', 'dialog')
 		const head = mk('div', 'mdn-pop-title')
 		const lab = mk('div', 'mdn-pop-sec mdn-pop-label mdn-dual-only')
-		lab.appendChild(mk('div', 'mdn-pop-cap', '路标签'))
+		lab.appendChild(mk('div', 'mdn-pop-cap', I18n.t('shell.laneLabel')))
 		const par = mk('div', 'mdn-pop-sec mdn-pop-params')
 		// 文案随模式：双路两路的参数与协议各自独立(refreshConn 里改)
-		const parCap = mk('div', 'mdn-pop-cap', '串口参数')
+		const parCap = mk('div', 'mdn-pop-cap', I18n.t('shell.portSettings2'))
 		par.appendChild(parCap)
 		pop.append(head, lab, par)
 		// 只有 B 路能移除：B 关闭(仍记着设备)，A 路的口、参数、协议原样交回单路(common.js 的 removeLaneB)
-		const remove = key === 'B' ? btn('mdn-conn-remove', '移除 B 路', '断开 B 路并回到单路：A 路的串口交回单路继续使用，B 路记着设备，下次加回来点一下就能连') : null
+		const remove = key === 'B' ? btn('mdn-conn-remove', I18n.t('shell.removeLaneB'), I18n.t('shell.disconnectLaneBAndGoBack')) : null
 		if (remove) {
-			remove.setAttribute('aria-label', '移除 B 路并回到单路')
+			remove.setAttribute('aria-label', I18n.t('shell.removeLaneBAndGoBack'))
 			listen(remove, 'click', function () {
 				closePops()
 				const m = $('serial-mode-single')
@@ -233,7 +233,7 @@
 		// 本路协议：常改，所以紧贴在连接按钮右侧一键直选，不进菜单。选项抄顶栏(协议注册时只往顶栏加)，改值经 serialLanes.setProtocol，
 		// 改的正好是顶栏那一路(单路、双路主发路)时由它转给顶栏派发 change
 		const proto = mk('select', 'form-select form-select-sm mdn-conn-proto')
-		proto.setAttribute('aria-label', key === 'B' ? 'B 路协议' : '协议')
+		proto.setAttribute('aria-label', key === 'B' ? I18n.t('shell.laneBProtocol') : I18n.t('shell.protocol'))
 		listen(proto, 'change', function () {
 			const lanes = window.serialLanes
 			if (lanes) lanes.setProtocol(sidFor(key), proto.value)
@@ -244,7 +244,7 @@
 		const dd = mk('div', 'mdn-dd')
 		dd.hidden = true
 		dd.setAttribute('role', 'dialog')
-		dd.setAttribute('aria-label', '选择设备')
+		dd.setAttribute('aria-label', I18n.t('shell.selectDevice3'))
 		// 电源键：连接 / 断开这一路已选的设备(serialLanes.toggle)，没设备时禁用(refreshConn 更新 disabled)。
 		// 本路菜单/下拉开着也先收起：连接态一变列表就要重画，留着会跟着跳
 		listen(power, 'click', function () {
@@ -335,14 +335,14 @@
 		const box = mk('div', 'mdn-ports')
 		const list = mk('div', 'mdn-ports-list')
 		list.setAttribute('role', 'listbox')
-		list.setAttribute('aria-label', '串口设备')
+		list.setAttribute('aria-label', I18n.t('shell.serialDevice'))
 		const empty = mk('div', 'mdn-ports-empty')
 		const hint = mk('div', 'mdn-ports-hint')
 		const foot = mk('div', 'mdn-ports-foot')
-		const add = btn('btn btn-sm btn-outline-primary', '', '在浏览器的选择框里选一个串口设备并连接，选过的设备之后会一直列在这里')
-		add.append(icon('icon-usb'), document.createTextNode(' 选择设备…'))
-		const reload = btn('btn btn-sm btn-outline-secondary', '', '重新列出串口')
-		reload.append(icon('icon-rotate-cw'), document.createTextNode(' 刷新'))
+		const add = btn('btn btn-sm btn-outline-primary', '', I18n.t('shell.pickASerialDeviceInThe'))
+		add.append(icon('icon-usb'), document.createTextNode(I18n.t('shell.selectDevice4')))
+		const reload = btn('btn btn-sm btn-outline-secondary', '', I18n.t('shell.listPortsAgain'))
+		reload.append(icon('icon-rotate-cw'), document.createTextNode(I18n.t('shell.refresh')))
 		foot.append(add, reload)
 		const sources = window.AppPlatform && window.AppPlatform.service('connection-source')
 		box.append(list, empty, hint, foot)
@@ -418,7 +418,7 @@
 		rows.forEach(function (r) {
 			if (r.source) {
 				r.meta = { alias: null, defaultName: r.source.label, productName: r.source.label, portName: '', persistent: false }
-				r.title = r.source.label; r.sub = '无线连接入口'; r.state = { kind: 'source', tag: '选择', disabled: false }
+				r.title = r.source.label; r.sub = I18n.t('shell.wirelessConnections'); r.state = { kind: 'source', tag: I18n.t('shell.select'), disabled: false }
 				return
 			}
 			const m = lanes.portMeta(r.port)
@@ -463,7 +463,7 @@
 			if (r.state.disabled) row.setAttribute('aria-disabled', 'true')
 			else row.removeAttribute('aria-disabled')
 			row.tabIndex = -1
-			row.title = r.title + (r.meta.alias ? '（' + r.meta.defaultName + '）' : '') + (r.state.tag ? ' · ' + r.state.tag : '')
+			row.title = r.title + (r.meta.alias ? I18n.t('shell.s', { defaultName: r.meta.defaultName }) : '') + (r.state.tag ? ' · ' + r.state.tag : '')
 			const csig = JSON.stringify([r.absent, r.title, r.sub, !!r.meta.alias, r.meta.persistent, r.state.tag])
 			if (ent.sig !== csig) {
 				ent.sig = csig
@@ -486,10 +486,10 @@
 		}
 		st.list.hidden = !rows.length
 		st.empty.hidden = !!rows.length
-		st.empty.textContent = !st.loaded ? '正在查找串口…'
-			: (enumerable ? '未发现串口设备，插入后会自动出现' : '还没有选过串口设备。点「选择设备…」在浏览器的选择框里选择，之后它会一直列在这里')
+		st.empty.textContent = !st.loaded ? I18n.t('shell.lookingForPorts')
+			: (enumerable ? I18n.t('shell.noSerialDevicesFoundTheyAppear') : I18n.t('shell.noSerialDevicePickedYetClick'))
 		st.hint.hidden = !rows.length
-		st.hint.textContent = laneBusy ? '单击其它设备即切换过去（先断开当前设备）' : '单击设备即连接'
+		st.hint.textContent = laneBusy ? I18n.t('shell.clickAnotherDeviceToSwitchTo') : I18n.t('shell.clickADeviceToConnect')
 		st.add.hidden = enumerable
 		st.reload.hidden = !enumerable
 	}
@@ -505,34 +505,34 @@
 		if (r.source) {
 			// 无线入口不附带串口行内操作。
 		} else if (r.absent) {
-			const f = btn('mdn-port-act', '', '清除：本路不再记着这台设备')
+			const f = btn('mdn-port-act', '', I18n.t('shell.forgetThisLaneStopsRememberingThe'))
 			f.dataset.act = 'forget'
 			f.tabIndex = -1
-			f.setAttribute('aria-label', '清除 ' + r.title)
+			f.setAttribute('aria-label', I18n.t('shell.forget', { title: r.title }))
 			f.append(icon('icon-circle-x'))
 			acts.append(f)
 		} else {
-			const ren = btn('mdn-port-act', '', r.meta.persistent ? '重命名（保存在本机，下次打开仍显示）' : '重命名（设备无持久标识，仅本次有效）')
+			const ren = btn('mdn-port-act', '', r.meta.persistent ? I18n.t('shell.renameSavedOnThisMachineKept') : I18n.t('shell.renameTheDeviceHasNoPersistent'))
 			ren.dataset.act = 'rename'
 			ren.tabIndex = -1
-			ren.setAttribute('aria-label', '重命名 ' + r.title)
+			ren.setAttribute('aria-label', I18n.t('shell.rename', { title: r.title }))
 			ren.append(icon('icon-pencil'))
 			acts.append(ren)
 			if (r.meta.alias) {
-				const clr = btn('mdn-port-act', '', '清除别名，恢复默认名')
+				const clr = btn('mdn-port-act', '', I18n.t('shell.clearAliasAndRestoreTheDefault'))
 				clr.dataset.act = 'clear'
 				clr.tabIndex = -1
-				clr.setAttribute('aria-label', '清除别名 ' + r.title)
+				clr.setAttribute('aria-label', I18n.t('shell.clearAliasFor', { title: r.title }))
 				clr.append(icon('icon-x'))
 				acts.append(clr)
 			}
 			// 「取消选择」只对本路当前设备有意义(forgetPort 按路清)，且只在断开 / 关闭失败时给：
 			// 连着 / 连接中先走电源键(关闭失败时它就是「重试关闭」，forget 里的 closeSerial 也会重试)
 			if (r.state.kind === 'current' || r.state.kind === 'failed') {
-				const fg = btn('mdn-port-act', '', '取消选择：本路不再记着这台设备，恢复未连接状态')
+				const fg = btn('mdn-port-act', '', I18n.t('shell.deselectThisLaneForgetsTheDevice'))
 				fg.dataset.act = 'forget'
 				fg.tabIndex = -1
-				fg.setAttribute('aria-label', '取消选择 ' + r.title)
+				fg.setAttribute('aria-label', I18n.t('shell.deselect', { title: r.title }))
 				fg.append(icon('icon-circle-x'))
 				acts.append(fg)
 			}
@@ -639,7 +639,7 @@
 		input.maxLength = 32
 		input.value = orig
 		input.placeholder = r.meta.productName || r.meta.defaultName || ''
-		input.setAttribute('aria-label', '设备别名（留空 = 恢复默认名）')
+		input.setAttribute('aria-label', I18n.t('shell.deviceAliasEmptyDefaultName'))
 		nameEl.replaceWith(input)
 		st.editing = { port: r.port, input: input }
 		st.focusPort = r.port
@@ -690,7 +690,7 @@
 		const cb = hostEl(mk('div', 'mdn-connbar'), top, bar)
 		cb.id = 'mdn-connbar'
 		cb.setAttribute('role', 'toolbar')
-		cb.setAttribute('aria-label', '连接')
+		cb.setAttribute('aria-label', I18n.t('shell.connect'))
 		refs.connbar = cb
 		const main = makePop('main')
 		const b = makePop('B')
@@ -710,7 +710,7 @@
 		park(card, refs.paramsBox)
 		main.par.appendChild(refs.paramsBox)
 
-		const addB = btn('mdn-conn-btn mdn-conn-add mdn-single-only', '+ B 路', '进入双路：再接一路串口')
+		const addB = btn('mdn-conn-btn mdn-conn-add mdn-single-only', I18n.t('shell.laneB2'), I18n.t('shell.goDualConnectASecondPort'))
 		// 只有一路的平台(移动端)不给加 B 路的入口
 		addB.setAttribute('data-feature', 'lane.dual')
 		listen(addB, 'click', function () {
@@ -792,11 +792,11 @@
 	// 与通信页连接栏同在 #app-topbar 里，按当前视图(html[data-view])只显示其中一条；视觉与每路连接组同款(电源 · 设备 · 设置)，
 	// 设备下拉复用同一个串口列表(makePortList)，选用、连接、改名一律经 window.serialLanes 走 common.js 的同一套路径
 	const FW_FIELDS = [
-		{ key: 'baudRate', label: '波特率', icon: 'icon-gauge', list: [2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] },
-		{ key: 'dataBits', label: '数据位', icon: 'icon-hash', options: [['8', '8'], ['7', '7']] },
-		{ key: 'stopBits', label: '停止位', icon: 'icon-circle-stop', options: [['1', '1'], ['2', '2']] },
-		{ key: 'parity', label: '校验位', icon: 'icon-shield-check', options: [['none', '无'], ['even', '偶校验'], ['odd', '奇校验']] },
-		{ key: 'flowControl', label: '流控制', icon: 'icon-arrow-left-right', options: [['none', '无'], ['hardware', '硬件']] },
+		{ key: 'baudRate', label: I18n.t('html.baudRate'), icon: 'icon-gauge', list: [2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] },
+		{ key: 'dataBits', label: I18n.t('html.dataBits'), icon: 'icon-hash', options: [['8', '8'], ['7', '7']] },
+		{ key: 'stopBits', label: I18n.t('html.stopBits'), icon: 'icon-circle-stop', options: [['1', '1'], ['2', '2']] },
+		{ key: 'parity', label: I18n.t('html.parity'), icon: 'icon-shield-check', options: [['none', I18n.t('html.none')], ['even', I18n.t('html.even')], ['odd', I18n.t('html.odd')]] },
+		{ key: 'flowControl', label: I18n.t('html.flowControl'), icon: 'icon-arrow-left-right', options: [['none', I18n.t('html.none')], ['hardware', I18n.t('html.hardware')]] },
 	]
 	function makeFwConn() {
 		const wrap = mk('div', 'mdn-conn')
@@ -813,17 +813,17 @@
 		const more = btn('mdn-conn-more')
 		more.setAttribute('aria-haspopup', 'dialog')
 		more.setAttribute('aria-expanded', 'false')
-		more.setAttribute('aria-label', '固件连接的串口参数')
-		more.title = '串口参数'
+		more.setAttribute('aria-label', I18n.t('shell.fwLinkPortSettings'))
+		more.title = I18n.t('html.portSettings')
 		const moreParams = mk('span', 'mdn-conn-params')
 		more.append(icon('icon-sliders'), moreParams)
 		const pop = mk('div', 'mdn-pop')
 		pop.hidden = true
 		pop.setAttribute('role', 'dialog')
-		pop.setAttribute('aria-label', '固件连接的串口参数')
-		const head = mk('div', 'mdn-pop-title', '固件连接')
+		pop.setAttribute('aria-label', I18n.t('shell.fwLinkPortSettings'))
+		const head = mk('div', 'mdn-pop-title', I18n.t('shell.fwLink'))
 		const par = mk('div', 'mdn-pop-sec mdn-pop-params')
-		const parCap = mk('div', 'mdn-pop-cap', '串口参数')
+		const parCap = mk('div', 'mdn-pop-cap', I18n.t('html.portSettings'))
 		const card = mk('div', 'serial-settings-card mdn-fw-params')
 		const fields = {}
 		FW_FIELDS.forEach(function (f) {
@@ -863,13 +863,13 @@
 			card.appendChild(row)
 		})
 		par.append(parCap, card)
-		const wireless = mk('div', 'mdn-fw-conn-note', '无线连接不使用本地串口参数')
+		const wireless = mk('div', 'mdn-fw-conn-note', I18n.t('shell.wirelessNoLocalParams'))
 		wireless.hidden = true
 		pop.append(head, par, wireless)
 		const dd = mk('div', 'mdn-dd')
 		dd.hidden = true
 		dd.setAttribute('role', 'dialog')
-		dd.setAttribute('aria-label', '选择固件连接的设备')
+		dd.setAttribute('aria-label', I18n.t('shell.fwLinkSelectDevice'))
 		listen(power, 'click', function () {
 			const lanes = window.serialLanes
 			if (!lanes || power.disabled) return
@@ -905,10 +905,10 @@
 		const bar = hostEl(mk('div', 'mdn-connbar mdn-fw-connbar'), top)
 		bar.id = 'mdn-fw-connbar'
 		bar.setAttribute('role', 'toolbar')
-		bar.setAttribute('aria-label', '固件连接')
-		const cap = mk('span', 'mdn-fw-conn-cap', '固件连接')
+		bar.setAttribute('aria-label', I18n.t('shell.fwLink'))
+		const cap = mk('span', 'mdn-fw-conn-cap', I18n.t('shell.fwLink'))
 		const f = makeFwConn()
-		const note = mk('span', 'mdn-fw-conn-hint', '固件页自己的连接，与通信调试各路互不影响')
+		const note = mk('span', 'mdn-fw-conn-hint', I18n.t('shell.fwLinkHint'))
 		bar.append(cap, f.wrap, note)
 		refs.paths.F = f
 		refs.fwBar = bar
@@ -932,16 +932,16 @@
 		const transport = lanes.transportOf ? lanes.transportOf('F') : 'serial'
 		p.wrap.dataset.state = failed ? 'close-failed' : (opening ? 'opening' : (open ? 'open' : 'closed'))
 		const name = port ? portRowTitle(lanes.portMeta(port)) : ''
-		p.port.textContent = name || '选择设备'
+		p.port.textContent = name || I18n.t('shell.selectDevice3')
 		p.params.textContent = compactParams(lanes.summary('F'))
-		const st = failed ? '关闭失败，请重试' : (opening ? '正在连接' : (open ? '已连接' : '未连接'))
+		const st = failed ? I18n.t('shell.closeFailedRetry') : (opening ? I18n.t('shell.connecting') : (open ? I18n.t('shell.connected') : I18n.t('shell.disconnected')))
 		p.power.disabled = !port || (busy && !opening)
 		p.power.setAttribute('aria-pressed', String(!!open))
-		p.power.setAttribute('aria-label', '固件连接 ' + (failed ? '重试关闭串口' : (opening ? '正在连接，取消连接' : (open ? '断开串口' : '连接串口'))))
-		p.power.title = busy ? '固件升级进行中' : (failed ? '关闭失败，点此重试关闭' : (opening ? '正在连接，点此取消' : (open ? '已连接，点此断开' : (port ? '未连接，点此连接' : '先选择设备'))))
+		p.power.setAttribute('aria-label', I18n.t('shell.fwLink') + ' ' + (failed ? I18n.t('shell.retryClosingPort') : (opening ? I18n.t('shell.connectingCancel') : (open ? I18n.t('shell.disconnectPort') : I18n.t('shell.connectPort')))))
+		p.power.title = busy ? I18n.t('shell.fwUpgradeRunning') : (failed ? I18n.t('shell.closeFailedClickToRetry') : (opening ? I18n.t('shell.connectingClickToCancel') : (open ? I18n.t('shell.connectedClickToDisconnect') : (port ? I18n.t('shell.disconnectedClickToConnect') : I18n.t('shell.selectADeviceFirst')))))
 		p.btn.disabled = busy
-		p.btn.setAttribute('aria-label', '固件连接 ' + (name || '未选择设备') + ' · ' + st + ' · 选择设备')
-		p.btn.title = busy ? '固件升级进行中，暂不能更换设备' : '固件连接 · ' + st + ' · 选择设备'
+		p.btn.setAttribute('aria-label', I18n.t('shell.fwLink') + ' ' + (name || I18n.t('shell.noDeviceSelected')) + ' · ' + st + ' · ' + I18n.t('shell.selectDevice3'))
+		p.btn.title = busy ? I18n.t('shell.fwBusyCantChangeDevice') : I18n.t('shell.fwLink') + ' · ' + st + ' · ' + I18n.t('shell.selectDevice3')
 		p.par.hidden = transport !== 'serial'
 		p.wireless.hidden = transport === 'serial'
 		const lock = busy || opening
@@ -998,7 +998,10 @@
 		if (want && sel.value !== want) sel.value = want
 		const h = hub()
 		const main = !isDual() || (h && h.activeSendId === sid)
-		sel.title = (sid === 'S' ? '协议' : sid + ' 路协议') + '：决定这一路日志的解析' + (main ? '；也是协议下发与测试面板使用的协议' + (isDual() ? '（主发路）' : '') : '')
+		const what = sid === 'S' ? I18n.t('shell.protocol') : I18n.t('shell.laneProtocol', { sid })
+		sel.title = !main ? I18n.t('shell.parsesThisLaneSLog', { what })
+			: isDual() ? I18n.t('shell.parsesThisLaneSLogAlso2', { what })
+				: I18n.t('shell.parsesThisLaneSLogAlso', { what })
 	}
 
 	function refreshConn() {
@@ -1017,7 +1020,7 @@
 			const params = compactParams(lanes ? lanes.summary(sid) : ($('serial-params-summary-text') || {}).textContent)
 			const transport = lanes && lanes.transportOf ? lanes.transportOf(sid) : 'serial'
 			p.par.hidden = transport !== 'serial'
-			p.parCap.textContent = dual ? '本路串口参数' : '串口参数'
+			p.parCap.textContent = dual ? I18n.t('shell.thisLaneSPortSettings') : I18n.t('shell.portSettings2')
 			syncProtoSelect(p.proto, sid)
 			const chip = chipFor(key)
 			const open = h ? h.isOpen(sid) : !!(chip && chip.classList.contains('is-open'))
@@ -1028,24 +1031,24 @@
 			p.wrap.dataset.sid = sid
 			const nameEl = chip ? chip.querySelector('.serial-port-name') : null
 			const portName = nameEl ? nameEl.textContent.trim() : ''
-			const lbl = sid === 'S' ? '' : (sid === 'B' ? (h ? h.getLabelB() : 'B路') : (h ? h.getLabelA() : 'A路'))
+			const lbl = sid === 'S' ? '' : (sid === 'B' ? (h ? h.getLabelB() : I18n.t('shell.laneB')) : (h ? h.getLabelA() : I18n.t('shell.laneA')))
 			p.letter.textContent = sid === 'S' ? '' : sid
 			// 标签改过才显示(默认就是「A路」「B路」，再写一遍是噪声)
-			p.label.textContent = lbl && lbl !== sid + '路' ? lbl : ''
-			p.port.textContent = portName || '选择设备'
+			p.label.textContent = lbl && lbl !== sid + '路' && lbl !== I18n.t('common.laneDefault', { sid }) ? lbl : ''
+			p.port.textContent = portName || I18n.t('shell.selectDevice3')
 			p.params.textContent = params
-			const st = failed ? '关闭失败，请重试' : (opening ? '正在连接' : (open ? '已连接' : '未连接'))
-			const who = sid === 'S' ? '串口' : sid + ' 路' + (p.label.textContent ? '（' + p.label.textContent + '）' : '')
+			const st = failed ? I18n.t('shell.closeFailedRetry') : (opening ? I18n.t('shell.connecting') : (open ? I18n.t('shell.connected') : I18n.t('shell.disconnected')))
+			const who = sid === 'S' ? I18n.t('shell.port') : p.label.textContent ? I18n.t('shell.lane3', { sid, textContent: p.label.textContent }) : I18n.t('shell.lane2', { sid })
 			// 电源键：有记住的设备才能按；状态与文案随连接态
 			const lane = sid === 'S' ? '' : who + ' '
 			p.power.disabled = !hasPort
 			p.power.setAttribute('aria-pressed', String(!!open))
-			p.power.setAttribute('aria-label', lane + (failed ? '重试关闭串口' : (opening ? '正在连接，取消连接' : (open ? '断开串口' : '连接串口'))))
-			p.power.title = lane + (failed ? '关闭失败，点此重试关闭' : (opening ? '正在连接，点此取消' : (open ? '已连接，点此断开' : (hasPort ? '未连接，点此连接' : '先选择设备'))))
-			p.btn.setAttribute('aria-label', who + ' ' + (portName || '未选择设备') + ' · ' + st + ' · 选择设备')
-			p.btn.title = who + ' · ' + st + ' · 选择设备'
-			p.more.title = sid === 'S' ? '串口设置：参数' : '串口设置：路标签 · 参数'
-			p.head.textContent = sid === 'S' ? '单路串口' : sid + ' 路'
+			p.power.setAttribute('aria-label', lane + (failed ? I18n.t('shell.retryClosingPort') : (opening ? I18n.t('shell.connectingCancel') : (open ? I18n.t('shell.disconnectPort') : I18n.t('shell.connectPort')))))
+			p.power.title = lane + (failed ? I18n.t('shell.closeFailedClickToRetry') : (opening ? I18n.t('shell.connectingClickToCancel') : (open ? I18n.t('shell.connectedClickToDisconnect') : (hasPort ? I18n.t('shell.disconnectedClickToConnect') : I18n.t('shell.selectADeviceFirst')))))
+			p.btn.setAttribute('aria-label', I18n.t('shell.selectDevice2', { who, v: portName || I18n.t('shell.noDeviceSelected'), st }))
+			p.btn.title = I18n.t('shell.selectDevice', { who, st })
+			p.more.title = sid === 'S' ? I18n.t('shell.portSettings') : I18n.t('shell.portSettingsLaneLabelParameters')
+			p.head.textContent = sid === 'S' ? I18n.t('shell.singlePort') : I18n.t('shell.lane2', { sid })
 		})
 		// 开着的设备下拉：状态(当前设备 / 已连接 / 被另一路占用)跟着刷新，内容没变不重建
 		if (refs.ddKey && refs.paths[refs.ddKey]) renderPorts(refs.paths[refs.ddKey].ports)
@@ -1060,7 +1063,7 @@
 		const bar = hostEl(mk('div', 'mdn-logbar'), header.parentNode, header)
 		bar.id = 'mdn-logbar'
 		bar.setAttribute('role', 'toolbar')
-		bar.setAttribute('aria-label', '日志工具条')
+		bar.setAttribute('aria-label', I18n.t('shell.logToolbar'))
 		const grp = function (cls, label) {
 			const g = mk('span', 'mdn-grp ' + cls)
 			if (label) g.appendChild(mk('span', 'mdn-grp-label', label))
@@ -1073,23 +1076,23 @@
 		park($('serial-log-legend'), chatG)
 		const fmt = grp('mdn-grp-fmt')
 		fmt.setAttribute('role', 'group')
-		fmt.setAttribute('aria-label', '显示格式')
+		fmt.setAttribute('aria-label', I18n.t('shell.format'))
 		mountLogFormat(fmt)
-		const split = grp('mdn-grp-split', '分包')
+		const split = grp('mdn-grp-split', I18n.t('shell.framing'))
 		park(document.querySelector('#serial-log-settings-popover .serial-split-seg'), split)
 		const tw = mk('span', 'mdn-num')
 		split.appendChild(tw)
 		park($('serial-timer-out'), tw)
 		tw.appendChild(mk('span', 'mdn-unit', 'ms'))
-		const rows = grp('mdn-grp-rows', '行数')
+		const rows = grp('mdn-grp-rows', I18n.t('shell.lines'))
 		park($('serial-max-rows'), rows)
 		const flt = grp('mdn-grp-filter')
 		const input = mk('input', 'form-control mdn-filter')
 		input.type = 'search'
 		input.id = 'mdn-log-filter'
-		input.placeholder = '过滤：tx / rx / 关键字 / 68 10 AA'
-		input.setAttribute('aria-label', '过滤日志（方向 / 关键字 / 字节序列，空格分隔表示同时满足）')
-		input.title = '只隐藏不匹配的行，不删日志；复制、导出仍是全部行'
+		input.placeholder = I18n.t('shell.filterTxRxKeyword6810')
+		input.setAttribute('aria-label', I18n.t('shell.filterLogDirectionKeywordByteSequence'))
+		input.title = I18n.t('shell.onlyHidesNonMatchingLinesNothing')
 		input.spellcheck = false
 		input.autocomplete = 'off'
 		const count = mk('span', 'mdn-filter-count')
@@ -1106,8 +1109,8 @@
 		const more = mk('button', 'mdn-logbar-toggle')
 		more.type = 'button'
 		more.setAttribute('aria-expanded', 'false')
-		more.title = '显示格式、分包与行数设置'
-		more.append(icon('icon-sliders'), mk('span', 'mdn-logbar-toggle-label', '设置'))
+		more.title = I18n.t('shell.formatFramingAndLineLimit')
+		more.append(icon('icon-sliders'), mk('span', 'mdn-logbar-toggle-label', I18n.t('shell.settings')))
 		listen(more, 'click', function () {
 			const open = bar.getAttribute('data-open') === '1'
 			if (open) bar.removeAttribute('data-open')
@@ -1172,7 +1175,7 @@
 				const l = lanes[sid]
 				l.name.textContent = info.label
 				l.val.textContent = info.format
-				l.cap.title = info.label + ' 日志格式：' + info.format + (info.term ? '（终端视图下不生效）' : '')
+				l.cap.title = info.term ? I18n.t('shell.logFormatIgnoredInTerminalView', { label: info.label, format: info.format }) : I18n.t('shell.logFormat', { label: info.label, format: info.format })
 			})
 		}
 		listen(document, 'serial-log-format-change', refresh)
@@ -1232,8 +1235,8 @@
 			if (!n.classList.contains(FLT_CLS)) shown++
 		}
 		r.count.hidden = false
-		r.count.textContent = '已过滤 ' + shown + '/' + total
-		r.count.title = '显示 ' + shown + ' 行，共 ' + total + ' 行；复制、导出仍是全部行'
+		r.count.textContent = I18n.t('shell.filtered', { shown, total })
+		r.count.title = I18n.t('shell.showingOfLinesCopyExportStill', { shown, total })
 	}
 	function mountFilter() {
 		const r = refs.filter
@@ -1290,7 +1293,7 @@
 		const syncTerm = function () {
 			const isTerm = !!(term && term.getAttribute('aria-pressed') === 'true')
 			r.input.disabled = isTerm
-			r.input.title = isTerm ? '终端视图不支持过滤' : '只隐藏不匹配的行，不删日志；复制、导出仍是全部行'
+			r.input.title = isTerm ? I18n.t('shell.filteringIsnTAvailableInTerminal') : I18n.t('shell.onlyHidesNonMatchingLinesNothing')
 		}
 		observe(term, { attributes: true, attributeFilter: ['aria-pressed'] }, syncTerm)
 		syncTerm()
@@ -1311,12 +1314,12 @@
 		const row = hostEl(mk('div', 'mdn-quickrow'), panel, panel.firstChild)
 		row.id = 'mdn-quickrow'
 		const sel = mk('select', 'form-select form-select-sm mdn-quick-group')
-		sel.setAttribute('aria-label', '快捷发送分组')
-		sel.title = '快捷发送分组（与右栏「快捷发送」同一份）'
+		sel.setAttribute('aria-label', I18n.t('shell.quickSendGroup'))
+		sel.title = I18n.t('shell.quickSendGroupSameAsThe')
 		const list = mk('span', 'mdn-quick-list')
 		list.setAttribute('role', 'group')
-		list.setAttribute('aria-label', '快捷发送')
-		const manage = btn('mdn-chip mdn-quick-manage', '管理…', '在右栏打开「快捷发送」：编辑、增删、分组、导入导出')
+		list.setAttribute('aria-label', I18n.t('shell.quickSend'))
+		const manage = btn('mdn-chip mdn-quick-manage', I18n.t('shell.manage'), I18n.t('shell.openQuickSendInTheRight'))
 		listen(manage, 'click', function () {
 			if (window.Workbench) window.Workbench.open('quick-send')
 		})
@@ -1329,10 +1332,10 @@
 		row.append(sel, list, manage, grow)
 		// 发往哪一路：可选的分段，只在双路显示；与连接栏「主发」是同一状态
 		const sendTo = hostEl(mk('span', 'mdn-send-to mdn-dual-only'), row)
-		sendTo.appendChild(mk('span', 'mdn-send-to-cap', '发往'))
+		sendTo.appendChild(mk('span', 'mdn-send-to-cap', I18n.t('shell.to')))
 		const seg = mk('div', 'ctl-seg mdn-send-seg')
 		seg.setAttribute('role', 'group')
-		seg.setAttribute('aria-label', '发送到')
+		seg.setAttribute('aria-label', I18n.t('shell.sendTo'))
 		sendTo.appendChild(seg)
 		refs.sendTo = sendTo
 		refs.sendSeg = seg
@@ -1395,8 +1398,8 @@
 		if (!q || !panel) return
 		const collapsed = panel.classList.contains('collapsed')
 		q.fold.setAttribute('aria-expanded', String(!collapsed))
-		q.fold.setAttribute('aria-label', collapsed ? '展开发送区' : '收起发送区')
-		q.fold.title = collapsed ? '展开发送区' : '收起发送区'
+		q.fold.setAttribute('aria-label', collapsed ? I18n.t('shell.expandSendArea') : I18n.t('shell.collapseSendArea'))
+		q.fold.title = collapsed ? I18n.t('shell.expandSendArea') : I18n.t('shell.collapseSendArea')
 	}
 
 	function syncSendSeg() {
@@ -1410,9 +1413,9 @@
 			const sid = b.dataset.sid
 			b.hidden = o.hidden
 			b.setAttribute('aria-pressed', String(o.classList.contains('active')))
-			const name = sid === 'S' ? '单路串口' : (h ? (sid === 'B' ? h.getLabelB() : h.getLabelA()) : sid + '路')
+			const name = sid === 'S' ? I18n.t('shell.singlePort') : (h ? (sid === 'B' ? h.getLabelB() : h.getLabelA()) : I18n.t('shell.lane', { sid }))
 			b.textContent = name
-			b.title = '发送到 ' + name + '（与顶栏「主发」同一设置）'
+			b.title = I18n.t('shell.sendToSameAsMainSend', { name })
 		})
 	}
 
@@ -1441,20 +1444,20 @@
 			const s = it.querySelector('.quick-send')
 			const c = it.querySelector('.quick-content')
 			const hex = it.querySelector('.quick-hex input')
-			return { name: s ? s.textContent.trim() : '发送', content: c ? c.value : '', hex: !!(hex && hex.checked), idx: Array.prototype.indexOf.call(content.children, it) }
+			return { name: s ? s.textContent.trim() : I18n.t('shell.send'), content: c ? c.value : '', hex: !!(hex && hex.checked), idx: Array.prototype.indexOf.call(content.children, it) }
 		})
 		const sig2 = JSON.stringify(want)
 		if (q.sig2 !== sig2) {
 			q.sig2 = sig2
 			q.list.textContent = ''
 			want.forEach(function (w) {
-				const b = btn('mdn-chip' + (w.hex ? ' mdn-chip--hex' : ''), w.name || '发送', '发送: ' + (w.name || '发送') + (w.content ? '\n' + (w.hex ? 'HEX ' : '') + w.content : '（内容为空）'))
+				const b = btn('mdn-chip' + (w.hex ? ' mdn-chip--hex' : ''), w.name || I18n.t('shell.send'), (w.content ? I18n.t('shell.send2', { v: w.name || I18n.t('shell.send'), v2: w.hex ? 'HEX ' : '', content: w.content }) : I18n.t('shell.sendEmpty', { v: w.name || I18n.t('shell.send') })))
 				b.dataset.idx = String(w.idx)
 				q.list.appendChild(b)
 			})
 		}
 		const more = items.length - want.length
-		q.more.textContent = more > 0 ? '管理…（另 ' + more + ' 条）' : '管理…'
+		q.more.textContent = more > 0 ? I18n.t('shell.manageMore', { more }) : I18n.t('shell.manage')
 	}
 
 	// ========== 6. 日志缩放(列表与聊天共用) ==========
@@ -1467,14 +1470,14 @@
 		const box = hostEl(mk('div', 'mdn-zoom'), panes)
 		box.id = 'mdn-log-zoom'
 		box.setAttribute('role', 'group')
-		box.setAttribute('aria-label', '日志缩放')
-		const out = btn('mdn-zoom-btn', '', '缩小日志')
+		box.setAttribute('aria-label', I18n.t('shell.logZoom'))
+		const out = btn('mdn-zoom-btn', '', I18n.t('shell.zoomOut'))
 		out.appendChild(icon('icon-minus'))
-		out.setAttribute('aria-label', '缩小日志')
-		const val = btn('mdn-zoom-val', '100%', '恢复 100%（也可 Ctrl/⌘ + 滚轮缩放）')
-		const inn = btn('mdn-zoom-btn', '', '放大日志')
+		out.setAttribute('aria-label', I18n.t('shell.zoomOut'))
+		const val = btn('mdn-zoom-val', '100%', I18n.t('shell.resetTo100OrCtrlScroll'))
+		const inn = btn('mdn-zoom-btn', '', I18n.t('shell.zoomIn'))
 		inn.appendChild(icon('icon-plus'))
-		inn.setAttribute('aria-label', '放大日志')
+		inn.setAttribute('aria-label', I18n.t('shell.zoomIn'))
 		box.append(out, val, inn)
 		let zoom = 1
 		try { zoom = clampZoom(localStorage.getItem(ZOOM_KEY) || 1) } catch (e) {}
@@ -1482,7 +1485,7 @@
 			zoom = clampZoom(z)
 			panes.style.setProperty('--mdn-log-zoom', String(zoom))
 			val.textContent = Math.round(zoom * 100) + '%'
-			val.setAttribute('aria-label', '日志缩放 ' + val.textContent + '，点击恢复 100%')
+			val.setAttribute('aria-label', I18n.t('shell.logZoomClickToResetTo', { textContent: val.textContent }))
 			out.disabled = zoom <= ZOOM_MIN
 			inn.disabled = zoom >= ZOOM_MAX
 			try { localStorage.setItem(ZOOM_KEY, String(zoom)) } catch (e) {}

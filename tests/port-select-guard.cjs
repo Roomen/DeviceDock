@@ -4,6 +4,7 @@
 // `// ===== 现代布局连接栏的串口列表` 到 `// 列表行要显示的东西`(lanePortOwner / laneSelectBlock / selectLanePort)，这几行注释是锚点，别删。
 // 选择框路径(「添加设备…」、芯片)与列表路径都要拒绝：事务钉扎的这一路、正在增减路、另一路已选着(哪怕关着)的口；
 // 关旧口期间目标口被预留，另一路选不到；关完再查一次才绑定
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

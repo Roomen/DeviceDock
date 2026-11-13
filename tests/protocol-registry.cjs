@@ -1,6 +1,7 @@
 // Run: node tests/protocol-registry.cjs
 // 协议注册表（js/protocol-registry.js）的纯逻辑回归：内置 / 外部同一张表、下拉分组、
 // pending 登记（启动时未知协议回退不能清掉还没加载完的外部协议）、extend 与卸载。
+require('./i18n-env.cjs')
 'use strict'
 const assert = require('node:assert/strict')
 const path = require('node:path')

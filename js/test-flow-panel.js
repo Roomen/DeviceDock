@@ -50,10 +50,10 @@
 	// 不能跑的具体原因：没注册 / 没字段目录 / 没构帧钩子。曲线只吃 metrics，流程只吃构帧钩子，互不替代
 	function unsupportedReason() {
 		const p = getActiveProto()
-		if (!p) return '未注册'
-		if (!Array.isArray(p.fields) || !p.fields.length) return '未提供字段目录'
-		if (typeof p.buildWrite !== 'function') return '未提供字段写入（buildWrite）'
-		if (typeof p.matchResponse !== 'function') return '未提供应答匹配（matchResponse）'
+		if (!p) return I18n.t('flowPanel.isnTRegistered')
+		if (!Array.isArray(p.fields) || !p.fields.length) return I18n.t('flowPanel.providesNoFieldCatalog')
+		if (typeof p.buildWrite !== 'function') return I18n.t('flowPanel.providesNoFieldWritesBuildwrite')
+		if (typeof p.matchResponse !== 'function') return I18n.t('flowPanel.providesNoReplyMatchingMatchresponse')
 		return ''
 	}
 	function isProtoSupported() { return !unsupportedReason() }
@@ -194,7 +194,7 @@
 			pump.waiters.splice(i, 1)
 			clearTimeout(w.timer)
 			if (verdict && typeof verdict === 'object' && verdict.ok === false) {
-				const e = new Error(verdict.message || '应答不匹配')
+				const e = new Error(verdict.message || I18n.t('flowPanel.replyMismatch'))
 				if (verdict.unsupported) e.unsupported = true
 				w.reject(e)
 			} else {
@@ -262,7 +262,7 @@
 	function send(bytes, request, timeoutMs) {
 		// 故障占用（写入未确认收尾）期间一律拒绝新业务写：钉扎保持，等手动释放
 		if (pump.writeUnclosed) {
-			const e = new Error('写入未确认收尾')
+			const e = new Error(I18n.t('flowPanel.writeNotConfirmedComplete'))
 			e.unclosed = true
 			return Promise.reject(e)
 		}
@@ -270,7 +270,7 @@
 		// 超时 / 取消只取消应答等待，物理写单独记录（未收尾任务保留引用）、由重试 / 恢复 / 收尾统一等待
 		return settleWriteTask().then(function (settled) {
 			if (!settled) {
-				const e = new Error('写入未确认收尾')
+				const e = new Error(I18n.t('flowPanel.writeNotConfirmedComplete'))
 				e.unclosed = true
 				throw e
 			}
@@ -286,7 +286,7 @@
 				timer: setTimeout(function () {
 					const idx = pump.waiters.indexOf(w)
 					if (idx !== -1) pump.waiters.splice(idx, 1)
-					const e = new Error('等待响应超时(' + timeoutMs + 'ms)')
+					const e = new Error(I18n.t('flowPanel.replyTimedOutMs', { timeoutMs }))
 					e.timeout = true
 					reject(e)
 				}, timeoutMs),
@@ -315,7 +315,7 @@
 		return waiter
 	}
 	function cancelWaiters(reason) {
-		const msg = reason || '已停止'
+		const msg = reason || I18n.t('flowPanel.stopped')
 		while (pump.waiters.length) {
 			const w = pump.waiters.pop()
 			clearTimeout(w.timer)
@@ -367,7 +367,7 @@
 		const fields = fieldsList().filter(function (f) { return f.write !== false })
 		const groups = {}
 		fields.forEach(function (f) {
-			const g = f.group || '字段'
+			const g = f.group || I18n.t('flowPanel.field')
 			if (!groups[g]) groups[g] = []
 			groups[g].push(f)
 		})
@@ -426,7 +426,7 @@
 			const field = idx.get(item.field)
 			const row = mk('div', 'sk-flow-item-row')
 			row.appendChild(mk('span', 'sk-flow-item-no', String(i + 1)))
-			const nameText = field ? field.name : '(未知字段: ' + item.field + ')'
+			const nameText = field ? field.name : I18n.t('flowPanel.unknownField', { field: item.field })
 			const nameSpan = mk('span', 'sk-flow-item-name', nameText)
 			nameSpan.title = nameText + (field && field.desc ? '\n' + field.desc : '')
 			row.appendChild(nameSpan)
@@ -444,7 +444,7 @@
 				step.type = 'number'
 				step.className = 'form-control form-control-sm sk-flow-item-step'
 				step.min = '0'
-				step.title = '步进(逐台累加)，0=固定不累加；{n} 为台号'
+				step.title = I18n.t('flowPanel.stepAddedPerUnit0Fixed')
 				step.value = item.step != null ? item.step : '0'
 				step.addEventListener('change', function () {
 					item.step = step.value
@@ -454,7 +454,7 @@
 			} else {
 				row.appendChild(mk('span', 'sk-flow-item-step-ph'))
 			}
-			const up = btn('sk-flow-item-btn', '↑', '上移')
+			const up = btn('sk-flow-item-btn', '↑', I18n.t('flowPanel.moveUp'))
 			up.addEventListener('click', function () {
 				if (i === 0) return
 				const t = draft.batch.steps[i - 1]
@@ -463,7 +463,7 @@
 				saveState()
 				renderBatchList()
 			})
-			const down = btn('sk-flow-item-btn', '↓', '下移')
+			const down = btn('sk-flow-item-btn', '↓', I18n.t('flowPanel.moveDown'))
 			down.addEventListener('click', function () {
 				if (i >= draft.batch.steps.length - 1) return
 				const t = draft.batch.steps[i + 1]
@@ -472,7 +472,7 @@
 				saveState()
 				renderBatchList()
 			})
-			const del = btn('sk-flow-item-btn', '✕', '删除')
+			const del = btn('sk-flow-item-btn', '✕', I18n.t('flowPanel.delete'))
 			del.addEventListener('click', function () {
 				draft.batch.steps.splice(i, 1)
 				saveState()
@@ -482,7 +482,7 @@
 			box.appendChild(row)
 		})
 		if (!draft.batch.steps.length) {
-			box.appendChild(mk('div', 'sk-flow-list-empty', '清单为空：从上方选择可写字段后点「添加」'))
+			box.appendChild(mk('div', 'sk-flow-list-empty', I18n.t('flowPanel.theListIsEmptyChooseA')))
 		}
 	}
 
@@ -491,7 +491,7 @@
 		if (!box) return
 		box.textContent = ''
 		if (!randomPlan) {
-			box.appendChild(mk('div', 'sk-flow-list-empty', '还没生成：填好参数后点「生成步骤」，相同 seed 生成相同序列'))
+			box.appendChild(mk('div', 'sk-flow-list-empty', I18n.t('flowPanel.nothingGeneratedYetFillInThe')))
 			return
 		}
 		const idx = fieldsIndex()
@@ -500,15 +500,15 @@
 			row.appendChild(mk('span', 'sk-flow-item-no', String(i + 1)))
 			const field = idx.get(step.field)
 			let label = ''
-			if (step.kind === 'send-raw') label = '查询 ' + (step.query || '')
-			else if (step.kind === 'read') label = '读 ' + (field ? field.name : step.field)
-			else if (step.kind === 'verify') label = '回读比对 ' + (field ? field.name : step.field)
-			else if (step.kind === 'write') label = '写 ' + (field ? field.name : step.field)
+			if (step.kind === 'send-raw') label = I18n.t('flowPanel.query', { v: (step.query || '') })
+			else if (step.kind === 'read') label = I18n.t('flowPanel.read', { v: (field ? field.name : step.field) })
+			else if (step.kind === 'verify') label = I18n.t('flowPanel.verify', { v: (field ? field.name : step.field) })
+			else if (step.kind === 'write') label = I18n.t('flowPanel.write', { v: (field ? field.name : step.field) })
 			const name = mk('span', 'sk-flow-item-name', label)
-			name.title = label + (step.kind === 'write' ? '（值在量程 / 枚举内随机生成）' : '')
+			name.title = label + (step.kind === 'write' ? I18n.t('flowPanel.valueRandomizedWithinRangeEnum') : '')
 			row.appendChild(name)
-			const val = mk('span', 'sk-flow-item-value sk-flow-item-static', step.kind === 'write' ? '随机' : '')
-			if (step.kind === 'write') val.title = '值在运行时按量程 / 枚举随机生成，与当前值不同'
+			const val = mk('span', 'sk-flow-item-value sk-flow-item-static', step.kind === 'write' ? I18n.t('flowPanel.random') : '')
+			if (step.kind === 'write') val.title = I18n.t('flowPanel.randomizedAtRunTimeWithinRange')
 			row.appendChild(val)
 			box.appendChild(row)
 		})
@@ -521,12 +521,12 @@
 		sel.textContent = ''
 		const opt0 = document.createElement('option')
 		opt0.value = ''
-		opt0.textContent = '已保存流程…'
+		opt0.textContent = I18n.t('flowPanel.savedFlows')
 		sel.appendChild(opt0)
 		flows.list.forEach(function (f, i) {
 			const opt = document.createElement('option')
 			opt.value = String(i)
-			opt.textContent = f.name + '（' + (f.kind === 'random' ? '随机' : '批量') + ' · ' + ((f.flow && f.flow.steps) || []).length + ' 步）'
+			opt.textContent = I18n.t('flowPanel.steps', { name: f.name, v: (f.kind === 'random' ? I18n.t('flowPanel.random') : I18n.t('flowPanel.batch')), length: ((f.flow && f.flow.steps) || []).length })
 			sel.appendChild(opt)
 		})
 	}
@@ -534,7 +534,7 @@
 		if (mode === 'random') {
 			if (!randomPlan) return null
 			return {
-				name: '随机读写 ' + new Date().toISOString().slice(0, 10),
+				name: I18n.t('flowPanel.randomRW2', { toISOString: new Date().toISOString().slice(0, 10) }),
 				kind: 'random',
 				defaults: draft.defaults,
 				counter: { value: 0, step: 1 },
@@ -543,7 +543,7 @@
 			}
 		}
 		return {
-			name: '批量配置 ' + new Date().toISOString().slice(0, 10),
+			name: I18n.t('flowPanel.batchConfig2', { toISOString: new Date().toISOString().slice(0, 10) }),
 			kind: 'batch',
 			defaults: draft.defaults,
 			counter: { value: current, step: 1 },
@@ -555,17 +555,17 @@
 	function saveNamedFlow() {
 		const flow = currentFlowObject()
 		if (!flow) {
-			setStatus(mode === 'random' ? '先「生成步骤」再保存' : '清单为空，先添加步骤', 'err')
+			setStatus(mode === 'random' ? I18n.t('flowPanel.generateStepsBeforeSaving') : I18n.t('flowPanel.theListIsEmptyAddSteps'), 'err')
 			return
 		}
-		window.AppDialog.prompt('流程名称：', flow.name, { title: '保存流程' }).then(function (name) {
+		window.AppDialog.prompt(I18n.t('flowPanel.flowName'), flow.name, { title: I18n.t('flowPanel.saveFlow') }).then(function (name) {
 			if (name == null || !String(name).trim()) return
 			flow.name = String(name).trim().slice(0, 60)
 			flows.list.push({ id: 'f' + Date.now().toString(36), name: flow.name, kind: flow.kind, flow: flow })
 			if (flows.list.length > 50) flows.list = flows.list.slice(-50)
 			saveFlows()
 			renderFlows()
-			setStatus('已保存「' + flow.name + '」', 'ok')
+			setStatus(I18n.t('flowPanel.saved', { name: flow.name }), 'ok')
 		})
 	}
 	function loadNamedFlow() {
@@ -598,13 +598,13 @@
 		syncModeUi()
 		renderBatchList()
 		renderRandomList()
-		setStatus('已载入「' + f.name + '」', 'ok')
+		setStatus(I18n.t('flowPanel.loaded', { name: f.name }), 'ok')
 	}
 	function deleteNamedFlow() {
 		const i = parseInt(el.flowSelect.value, 10)
 		if (isNaN(i) || !flows.list[i]) return
 		const f = flows.list[i]
-		window.AppDialog.confirm('删除流程「' + f.name + '」？').then(function (ok) {
+		window.AppDialog.confirm(I18n.t('flowPanel.deleteFlow', { name: f.name })).then(function (ok) {
 			if (!ok) return
 			flows.list.splice(i, 1)
 			saveFlows()
@@ -614,7 +614,7 @@
 	function exportFlow() {
 		const flow = currentFlowObject()
 		if (!flow) {
-			setStatus(mode === 'random' ? '先「生成步骤」再导出' : '清单为空', 'err')
+			setStatus(mode === 'random' ? I18n.t('flowPanel.generateStepsBeforeExporting') : I18n.t('flowPanel.theListIsEmpty'), 'err')
 			return
 		}
 		const blob = new Blob([JSON.stringify(flow, null, 2)], { type: 'application/json' })
@@ -634,7 +634,7 @@
 			let flow = null
 			try { flow = JSON.parse(String(reader.result)) } catch (e) { flow = null }
 			if (!flow || !Array.isArray(flow.steps) || !flow.steps.length) {
-				setStatus('导入失败：不是有效的流程 JSON', 'err')
+				setStatus(I18n.t('flowPanel.importFailedNotAValidFlow'), 'err')
 				return
 			}
 			try {
@@ -686,9 +686,9 @@
 				syncModeUi()
 				renderBatchList()
 				renderRandomList()
-				setStatus('已导入「' + (flow.name || '未命名') + '」', 'ok')
+				setStatus(I18n.t('flowPanel.imported', { v: (flow.name || I18n.t('flowPanel.untitled')) }), 'ok')
 			} catch (e) {
-				setStatus('导入失败：' + (e && e.message ? e.message : e), 'err')
+				setStatus(I18n.t('flowPanel.importFailed', { v: (e && e.message ? e.message : e) }), 'err')
 			}
 		}
 		reader.readAsText(file)
@@ -714,12 +714,12 @@
 			box.appendChild(row)
 		})
 		if (!report.results.length) {
-			box.appendChild(mk('div', 'sk-flow-list-empty', report.fatal || '没有执行任何步骤'))
+			box.appendChild(mk('div', 'sk-flow-list-empty', report.fatal || I18n.t('flowPanel.noStepsWereRun')))
 		}
 	}
 	function exportReport(kind) {
 		if (!lastReport) {
-			setStatus('还没有运行结果', 'err')
+			setStatus(I18n.t('flowPanel.noResultsYet'), 'err')
 			return
 		}
 		const text = kind === 'csv' ? T.toCSV(lastReport) : T.toJSON(lastReport)
@@ -771,14 +771,14 @@
 			const s = steps[i]
 			if (s.kind !== 'write') continue
 			const field = idx.get(s.field)
-			if (!field) return '第 ' + (i + 1) + ' 步字段不存在：' + s.field
+			if (!field) return I18n.t('flowPanel.stepFieldNotFound', { v: (i + 1), field: s.field })
 			const value = effectiveValue(s, field, current)
 			const problem = T.checkValue(field, value)
-			if (problem) return '第 ' + (i + 1) + ' 步 ' + field.name + ' ' + problem
+			if (problem) return I18n.t('flowPanel.step2', { v: (i + 1), name: field.name, problem })
 			try {
 				getActiveProto().buildWrite(field, value)
 			} catch (e) {
-				return '第 ' + (i + 1) + ' 步 ' + field.name + ' ' + (e && e.message ? e.message : e)
+				return I18n.t('flowPanel.step', { v: (i + 1), name: field.name, v2: (e && e.message ? e.message : e) })
 			}
 		}
 		return ''
@@ -802,11 +802,11 @@
 		if (running) return
 		const reason = unsupportedReason()
 		if (reason) {
-			setStatus('当前协议' + reason + '，无法运行测试流程', 'err')
+			setStatus(I18n.t('flowPanel.theCurrentProtocolSoTestFlows2', { reason }), 'err')
 			return
 		}
 		if (!window.serialApi || !window.serialApi.isOpen()) {
-			setStatus('请先打开串口', 'err')
+			setStatus(I18n.t('flowPanel.openThePortFirst'), 'err')
 			return
 		}
 		let steps = null
@@ -819,12 +819,12 @@
 				return
 			}
 			if (!steps.length) {
-				setStatus('清单为空，先添加步骤', 'err')
+				setStatus(I18n.t('flowPanel.theListIsEmptyAddSteps'), 'err')
 				return
 			}
 		} else {
 			if (!randomPlan) {
-				setStatus('先「生成步骤」', 'err')
+				setStatus(I18n.t('flowPanel.generateStepsFirst'), 'err')
 				return
 			}
 			steps = randomPlan.steps
@@ -836,7 +836,7 @@
 		try {
 			const proto = getActiveProto()
 			flow = T.normalizeFlow({
-				name: mode === 'batch' ? '批量配置' : '随机读写',
+				name: mode === 'batch' ? I18n.t('flowPanel.batchConfig') : I18n.t('flowPanel.randomRW'),
 				kind: mode === 'random' ? 'random' : 'batch',
 				seed: mode === 'random' ? (randomPlan.seed >>> 0) : null,
 				defaults: defaults,
@@ -845,12 +845,12 @@
 				queries: (proto && Array.isArray(proto.queries)) ? proto.queries : [],
 			})
 		} catch (e) {
-			setStatus('流程无效：' + (e && e.message ? e.message : e), 'err')
+			setStatus(I18n.t('flowPanel.invalidFlow', { v: (e && e.message ? e.message : e) }), 'err')
 			return
 		}
 		const errors = T.validateFlow(flow, fieldsList())
 		if (errors.length) {
-			setStatus('流程校验未通过：' + errors[0].message + (errors.length > 1 ? '（共 ' + errors.length + ' 处）' : ''), 'err')
+			setStatus(I18n.t('flowPanel.flowValidationFailed', { message: errors[0].message, v: (errors.length > 1 ? I18n.t('flowPanel.issues', { length: errors.length }) : '') }), 'err')
 			return
 		}
 
@@ -861,15 +861,15 @@
 		lastReport = null
 		el.start.disabled = true
 		el.stop.disabled = false
-		setStatus('运行中…', 'run')
+		setStatus(I18n.t('flowPanel.running'), 'run')
 		watchRx()
 		pump.late = 0
 		// 整轮独占主发口（owner=flow）：与固件升级等其它事务互斥——运行期间对方入口被拒，反之亦然
 		try {
 			flowTxToken = window.serialApi.pinSession(window.serialApi.getActiveSendSid(), 'flow')
-			if (!flowTxToken) throw new Error('另一事务正在进行，暂不能开始流程')
+			if (!flowTxToken) throw new Error(I18n.t('flowPanel.anotherTransactionIsRunningCanT'))
 		} catch (e) {
-			setStatus('无法开始：' + (e && e.message ? e.message : e), 'err')
+			setStatus(I18n.t('flowPanel.canTStart', { v: (e && e.message ? e.message : e) }), 'err')
 			running = false
 			el.start.disabled = !isProtoSupported()
 			el.stop.disabled = true
@@ -881,34 +881,32 @@
 			lastReport = report
 			renderReport(report)
 			const st = report.stats
-			const sum = (report.stopped ? '已停止' : '完成') + '：成功 ' + st.success + ' / 失败 ' + st.fail +
-				' / 超时 ' + st.timeout + ' / 不匹配 ' + st.mismatch + ' / 不支持 ' + st.unsupported +
-				'，总耗时 ' + (report.durationMs / 1000).toFixed(1) + 's'
+			const sum = I18n.t('flowPanel.passFailTimeoutMismatchUnsupportedTotal', { v: (report.stopped ? I18n.t('flowPanel.stopped') : I18n.t('flowPanel.done')), success: st.success, fail: st.fail, timeout: st.timeout, mismatch: st.mismatch, unsupported: st.unsupported, v2: (report.durationMs / 1000).toFixed(1) })
 			if (el.summary) {
-				el.summary.textContent = sum + (report.restore && report.restore.failed.length ? ' · 恢复失败 ' + report.restore.failed.length : '')
+				el.summary.textContent = sum + (report.restore && report.restore.failed.length ? I18n.t('flowPanel.restoreFailures', { length: report.restore.failed.length }) : '')
 				el.summary.className = 'sk-rw-summary' + (st.failed || (report.restore && report.restore.failed.length) ? ' is-fail' : ' is-pass')
 			}
 			if (mode === 'batch' && !st.failed && !report.stopped && !report.fatal) {
 				// 产线计数：这一台 PASS 才前进
 				current = current + 1
 				saveState()
-				setStatus('第 ' + current + ' 台 PASS，下一台起始索引 ' + current, 'ok')
-				if (el.counterLabel) el.counterLabel.textContent = '已配 ' + current + ' 台'
+				setStatus(I18n.t('flowPanel.unitPassNextUnitStartsAt', { current }), 'ok')
+				if (el.counterLabel) el.counterLabel.textContent = I18n.t('flowPanel.unitsConfigured', { current })
 			} else if (mode === 'batch') {
-				setStatus('第 ' + (current + 1) + ' 台未通过，请重试', 'err')
+				setStatus(I18n.t('flowPanel.unitFailedRetry', { v: (current + 1) }), 'err')
 			} else {
-				setStatus(report.stopped ? '已停止' : (st.failed ? '完成（有失败）' : '完成'), report.stopped ? 'warn' : (st.failed ? 'err' : 'ok'))
+				setStatus(report.stopped ? I18n.t('flowPanel.stopped') : (st.failed ? I18n.t('flowPanel.doneWithFailures') : I18n.t('flowPanel.done')), report.stopped ? 'warn' : (st.failed ? 'err' : 'ok'))
 			}
 			setProgress(st.total, st.total)
 		} catch (e) {
-			logLine('fail', '异常：' + (e && e.message ? e.message : e))
-			setStatus('异常：' + (e && e.message ? e.message : e), 'err')
+			logLine('fail', I18n.t('flowPanel.error2', { v: (e && e.message ? e.message : e) }))
+			setStatus(I18n.t('flowPanel.error2', { v: (e && e.message ? e.message : e) }), 'err')
 		} finally {
 			// 等在飞物理写收尾（有上限）：未确认就保持故障占用（钉扎不解，状态栏 / 面板可见，停止键=手动释放）
 			const unclosed = pump.writeUnclosed
 			try { await settleWriteTask() } catch (e) { /* */ }
 			if (unclosed || pump.writeUnclosed) {
-				setStatus('写入未确认收尾：串口保持占用，点「停止」手动释放', 'err')
+				setStatus(I18n.t('flowPanel.writeNotConfirmedCompleteThePort'), 'err')
 				running = true
 				el.start.disabled = true
 				el.stop.disabled = false
@@ -920,7 +918,7 @@
 				el.stop.disabled = true
 			}
 			if (pump.late > 0) {
-				logLine('warn', '已丢弃迟到应答 ' + pump.late + ' 帧（超时请求的迟到响应不会计入任何步骤）')
+				logLine('warn', I18n.t('flowPanel.droppedLateRepliesLateRepliesTo', { late: pump.late }))
 			}
 		}
 	}
@@ -940,15 +938,15 @@
 			}
 		}
 		stopFlag = true
-		setStatus('正在停止…', 'warn')
-		cancelWaiters('已停止')
+		setStatus(I18n.t('flowPanel.stopping'), 'warn')
+		cancelWaiters(I18n.t('flowPanel.stopped'))
 	}
 
 	// 故障终态的手动释放：先作废旧执行代次（停止标记 + 撤掉等待者）→ 关端口确认释放；
 	// 本事务的钉扎会让关闭被拒，按归属与令牌释放后再试一次；失败则取回占用并如实提示
 	async function releaseFaultyHold() {
 		stopFlag = true
-		cancelWaiters('已停止')
+		cancelWaiters(I18n.t('flowPanel.stopped'))
 		// 故障路固定：用进入故障终态时记下的物理路，不读当前主发路（用户可能已经切走）
 		const sid = pump.faultSid || window.serialApi.getActiveSendSid()
 		let closed = false
@@ -969,7 +967,7 @@
 				const next = window.serialApi.pinSession(sid, 'flow')
 				if (next) flowTxToken = next
 			} catch (e) { /* 保持原令牌 */ }
-			setStatus('端口未确认释放，保持占用；请重试关闭或手动断开该路', 'err')
+			setStatus(I18n.t('flowPanel.portReleaseNotConfirmedAndIt'), 'err')
 			return
 		}
 		// 端口已确认释放：这些任务都属于已作废的执行代次，直接清掉，再解锁（若还没解）
@@ -981,7 +979,7 @@
 			try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
 			flowTxToken = null
 		}
-		setStatus('事务占用已手动释放', 'ok')
+		setStatus(I18n.t('flowPanel.transactionHoldReleasedManually'), 'ok')
 		running = false
 		el.start.disabled = !isProtoSupported()
 		el.stop.disabled = true
@@ -1003,7 +1001,7 @@
 			? writableAll
 			: writableAll.filter(function (f) { return canReadBack(proto, f) })
 		if (!readable.length && !writable.length) {
-			setStatus('当前协议没有可读 / 可写字段', 'err')
+			setStatus(I18n.t('flowPanel.theCurrentProtocolHasNoReadable'), 'err')
 			return
 		}
 		// 传给随机生成器的目录：读 / 写都只挑能回读的（buildRead 能构出读请求）；
@@ -1027,7 +1025,7 @@
 		randomPlan = plan
 		saveState()
 		renderRandomList()
-		setStatus('已生成 ' + plan.steps.length + ' 步（seed=' + seed + '，相同 seed 可复现）', 'ok')
+		setStatus(I18n.t('flowPanel.generatedStepsSeedTheSameSeed', { length: plan.steps.length, seed }), 'ok')
 	}
 
 	// ---------- 界面同步 ----------
@@ -1042,7 +1040,7 @@
 		if (el.batchBox) el.batchBox.hidden = mode !== 'batch'
 		if (el.randomBox) el.randomBox.hidden = mode !== 'random'
 		if (el.counterBtn) el.counterBtn.hidden = mode !== 'batch'
-		if (el.counterLabel) el.counterLabel.textContent = '已配 ' + current + ' 台'
+		if (el.counterLabel) el.counterLabel.textContent = I18n.t('flowPanel.unitsConfigured', { current })
 	}
 	function refreshProtoUi() {
 		if (el.protoBadge) el.protoBadge.textContent = protoName()
@@ -1050,8 +1048,8 @@
 		const reason = unsupportedReason()
 		if (el.hint) {
 			el.hint.textContent = reason
-				? '当前协议「' + protoName() + '」' + reason + '，无法运行测试流程'
-				: '协议 ' + protoName() + ' · 批量配置逐台下发并回读，随机读写按字段量程随机取值（seed 可复现）'
+				? I18n.t('flowPanel.theCurrentProtocolSoTestFlows', { protoName: protoName(), reason })
+				: I18n.t('flowPanel.protocolBatchConfigWritesAndReads', { protoName: protoName() })
 		}
 		if (el.start && !running) el.start.disabled = !!reason
 		if (el.card) el.card.classList.toggle('is-disabled', !!reason)
@@ -1191,8 +1189,8 @@
 		})
 		el.start.addEventListener('click', function () {
 			runAll().catch(function (e) {
-				logLine('fail', '异常：' + (e && e.message ? e.message : e))
-				setStatus('异常', 'err')
+				logLine('fail', I18n.t('flowPanel.error2', { v: (e && e.message ? e.message : e) }))
+				setStatus(I18n.t('flowPanel.error'), 'err')
 				running = false
 				el.start.disabled = !isProtoSupported()
 				el.stop.disabled = true
@@ -1205,7 +1203,7 @@
 			current = 0
 			saveState()
 			syncModeUi()
-			setStatus('已重置计数为 0', 'ok')
+			setStatus(I18n.t('flowPanel.counterResetTo0'), 'ok')
 		})
 		el.resultCsv.addEventListener('click', function () { exportReport('csv') })
 		el.resultJson.addEventListener('click', function () { exportReport('json') })

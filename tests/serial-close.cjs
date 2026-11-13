@@ -1,4 +1,5 @@
 // Synthetic streams, bytes and timers only: no real device identities or captured logs.
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')

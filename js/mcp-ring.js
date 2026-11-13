@@ -102,11 +102,11 @@
 
 	// HEX：允许空格分隔；奇数字节、非 hex 字符一律拒绝(不猜、不截断)
 	function parseHex(text) {
-		if (typeof text !== 'string') return { ok: false, message: 'data 必须是字符串' }
+		if (typeof text !== 'string') return { ok: false, message: I18n.t('mcpRing.dataMustBeAString') }
 		const clean = text.replace(/[\s]/g, '')
-		if (!clean.length) return { ok: false, message: 'data 不能为空' }
-		if (!/^[0-9a-fA-F]+$/.test(clean)) return { ok: false, message: 'HEX 数据包含非十六进制字符' }
-		if (clean.length % 2 !== 0) return { ok: false, message: 'HEX 数据必须是整数字节(长度为偶数)' }
+		if (!clean.length) return { ok: false, message: I18n.t('mcpRing.dataMustNotBeEmpty') }
+		if (!/^[0-9a-fA-F]+$/.test(clean)) return { ok: false, message: I18n.t('mcpRing.hexDataContainsNonHexCharacters') }
+		if (clean.length % 2 !== 0) return { ok: false, message: I18n.t('mcpRing.hexDataMustBeWholeBytes') }
 		const bytes = new Uint8Array(clean.length / 2)
 		for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.substr(i * 2, 2), 16)
 		return { ok: true, bytes: bytes }

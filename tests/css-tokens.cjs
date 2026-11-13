@@ -1,6 +1,7 @@
 // Run: node tests/css-tokens.cjs
 // 静态契约：css/style.css 只允许一层令牌、字号只取 7 档、颜色不写裸 hex、不用 transition: all、不叠无限脉冲。
 // 这是 P1.5 界面重做（.claude/skills/unslop）留下的护栏，防止 9 个 pass 之后又漂回去。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

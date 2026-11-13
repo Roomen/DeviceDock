@@ -1,4 +1,5 @@
 // Real bundled WASM, synthetic firmware only; browser Worker API adapted to worker_threads.
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')

@@ -1,6 +1,7 @@
 // Run: node tests/test-flow-import.cjs — synthetic data only.
 // 回修 7 · 3：importFlow 面板入口——批量 JSON 导入成功、全局间隔与计数器生效、失败保持草稿。
 // 按锚点截取 test-flow-panel.js 的 importFlow，配假 DOM / 假 FileReader（真实入口，不是纯函数）。
+require('./i18n-env.cjs')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
