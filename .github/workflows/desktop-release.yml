@@ -115,21 +115,21 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       # Windows 便携包要编 helper，所以三个 workspace 一起进缓存。
-      # shared-key 与 ci 按 OS 对齐（同一平台的 registry 与依赖包只存一份），
-      # key 带 release 与 target：release profile 的产物与 ci 的 debug/test 互不覆盖，
-      # 交叉编译 target 也各自独立。发布的安装包、签名文件不在 workspace 内，不会进缓存。
-      # 只有 main 正式版发布才写缓存（tag 触发已取消，正式版就是 main 的推送），
-      # dev 分支构建与手动派发只读恢复。
+      # 设了 shared-key 时缓存键只有 prefix-key + shared-key + 运行环境/锁文件哈希，key 输入
+      # 不参与，所以 profile 与 target 都得写进 shared-key：-release-<target> 与 ci 的 -debug
+      # 各占一条条目，release 不会恢复到 debug 产物，交叉编译 target 也各自独立。
+      # 发布的安装包、签名文件不在 workspace 内，不会进缓存。
+      # 只有 main 上的构建才写缓存（push 与手动触发都算；tag 触发已取消，正式版就是 main 的推送），
+      # dev 分支构建只读恢复。
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             desktop/src-tauri
             desktop/portable-update-common
             desktop/portable-updater
-          shared-key: cargo-${{ runner.os }}
-          key: release-${{ matrix.target }}
+          shared-key: cargo-${{ runner.os }}-release-${{ matrix.target }}
           cache-on-failure: true
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Import Developer ID certificate into temporary keychain
         if: runner.os == 'macOS' && needs.prepare.outputs.apple == 'true'
         env:
