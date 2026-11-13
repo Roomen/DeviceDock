@@ -311,8 +311,36 @@ fn repair_path(root: &Path, id: &str) -> PathBuf {
 }
 
 fn write_tx(root: &Path, id: &str, rec: &TxRecord) -> Result<(), String> {
+    // 权限 / 只读目录在不同平台上不代表「写不进去」，注入落盘失败不能靠它们，只能用探针。
+    #[cfg(test)]
+    if tx_write_probe::take_failure() {
+        return Err("注入的事务记录落盘失败".to_string());
+    }
     let body = serde_json::to_vec(rec).map_err(|e| format!("插件事务记录序列化失败：{e}"))?;
     write_atomic(&tx_path(root, id), &body)
+}
+
+// 测试探针：只用于证明「推进 committed 落盘失败时记录不前进、副本一律保留」。
+// 仅在 cfg(test) 下存在，产品构建里没有这些静态变量与分支。
+#[cfg(test)]
+pub(crate) mod tx_write_probe {
+    // thread_local：cargo test 默认多线程跑，探针必须按线程隔离，否则互相覆盖
+    use std::cell::Cell;
+    thread_local! {
+        // 还要注入失败的 write_tx 次数；0 = 不注入
+        static FAILURES: Cell<u32> = Cell::new(0);
+    }
+    pub fn reset() { FAILURES.with(|c| c.set(0)); }
+    pub fn fail_next_writes(n: u32) { FAILURES.with(|c| c.set(n)); }
+    // 每次 write_tx 调用取一次：命中就少一次，取完即恢复真实写入
+    pub fn take_failure() -> bool {
+        FAILURES.with(|c| {
+            let left = c.get();
+            if left == 0 { return false; }
+            c.set(left - 1);
+            true
+        })
+    }
 }
 
 fn read_tx(path: &Path) -> Result<TxRecord, String> {
@@ -1762,8 +1790,13 @@ mod tests {
     fn cleanup_staging_respects_owner_pid_age_and_active_tx() {
         let root = setup("staging-clean");
         let old = now_unix().saturating_sub(STAGING_MAX_AGE_SECS + 60);
-        // 活 pid → 保留
+        // 活的所有者 → 保留。Unix 由 pid 判断表达「还活着」；Windows 不查 pid，
+        // 唯一判据是同级 .lock 是否被持有（所有者进程排他持有到进程结束），所以要在 Windows 上真持锁。
         manual_staging(&root, ".staging-live-a", Some(StagingOwner { pid: std::process::id(), created_at: old }));
+        #[cfg(windows)]
+        let live_lock = lock_file(&staging_lock_path(&root, ".staging-live-a")).unwrap();
+        // 活 pid 但 .lock 空闲：Unix 靠 pid 保留，Windows 按「时间 + 锁」当过期副本清理
+        manual_staging(&root, ".staging-live-f", Some(StagingOwner { pid: std::process::id(), created_at: old }));
         // 死 pid + 超时 → 删除
         manual_staging(&root, ".staging-dead-b", Some(StagingOwner { pid: 999999, created_at: old }));
         // 死 pid 但未超时 → 保留
@@ -1774,10 +1807,17 @@ mod tests {
         manual_staging(&root, ".staging-active-e", Some(StagingOwner { pid: 999999, created_at: old }));
         cleanup_staging(&root, &[".staging-active-e".to_string()]);
         assert!(root.join(".staging-live-a").exists(), "活进程不能删");
+        #[cfg(unix)]
+        assert!(root.join(".staging-live-f").exists(), "Unix：pid 存活才保留");
+        #[cfg(windows)]
+        assert!(!root.join(".staging-live-f").exists(), "Windows：不查 pid，只认 .lock 与时间（活的所有者一定持锁）");
         assert!(!root.join(".staging-dead-b").exists(), "死进程且超时才删");
         assert!(root.join(".staging-fresh-c").exists(), "未超时保留");
         assert!(root.join(".staging-noowner-d").exists(), "归属不明保留");
         assert!(root.join(".staging-active-e").exists(), "事务引用保留");
+        // Windows 上打开着的锁文件不能留着删目录
+        #[cfg(windows)]
+        drop(live_lock);
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1941,7 +1981,12 @@ mod tests {
     #[test]
     fn pid_judgement_only_treats_esrch_as_gone() {
         assert!(!pid_definitely_gone(std::process::id()), "当前进程必须视为存活");
+        // Unix 有可靠的进程探测：只有 ESRCH 才算退出；Windows 不实现 pid 查询（一律 false），
+        // 判定完全交给 PidPolicy::Windows 的「时间 + .lock」，见 reclaimable_policy_differs_for_windows。
+        #[cfg(unix)]
         assert!(pid_definitely_gone(999_999), "不存在的 pid 视为已退出");
+        #[cfg(not(unix))]
+        assert!(!pid_definitely_gone(999_999), "Windows 不查 pid，不能凭 pid 断言已退出");
         // EPERM / 其它错误按「无法确认」= 存活处理：reclaimable 只看 pid_gone
         assert!(!reclaimable(STAGING_MAX_AGE_SECS + 60, PidPolicy::Unix, false, false), "Unix：无法确认存活必须保留");
         assert!(reclaimable(STAGING_MAX_AGE_SECS + 60, PidPolicy::Unix, true, false), "Unix：pid 已退出且锁空闲才可清理");
@@ -2225,22 +2270,18 @@ mod tests {
         r.backup_identity = old_id.clone();
         put_tx(&root, &r);
 
-        // 把插件子目录设成只读：write_atomic 无法在里面创建临时文件 → 推进 committed 落盘失败
-        let plugin_root = plugin_dir(&root, "hello");
-        let orig = fs::metadata(&plugin_root).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = orig.clone();
-            perms.set_mode(0o555);
-            fs::set_permissions(&plugin_root, perms).unwrap();
-        }
+        // 注入「推进 committed 落盘失败」：只读目录 / 权限位在 Windows 上不阻止创建临时文件，
+        // 跨平台可靠的办法是探针（写记录这一处失败，写 .repair.json 与 state 仍照常成功）。
+        tx_write_probe::reset();
+        tx_write_probe::fail_next_writes(1);
 
         let out = recover_transactions(&root);
 
-        fs::set_permissions(&plugin_root, orig).unwrap();
+        tx_write_probe::reset();
 
         assert_eq!(out.problems.len(), 1, "落盘失败要隔离");
+        assert!(out.blocked.is_empty(), "只注入写记录失败：.repair.json 或 state 仍能落盘");
+        assert!(read_repair(&root, "hello").is_some(), "隔离标记要落盘");
         assert!(backup.join("index.html").exists(), "记录落盘失败时备份必须保留");
         assert!(version_dir(&root, "hello", "1.0.0").exists(), "target 不动");
         let leftover = read_tx(&tx_path(&root, "hello")).unwrap();
