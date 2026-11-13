@@ -16,7 +16,7 @@
 	"integrity": {
 		"index.html": "sha256-9cb950b8d33e996eeb4f28b7e5badda931af03dbd8c85ad1d66052ed565a2d7d",
 		"app.js": "sha256-e10b1f32e88fcca6a65e1ee21ce243c50d26abcbe026fb8494cd4a964bfb1297",
-		"sdk/devicedock-plugin.js": "sha256-9cde71620d27ceaf2dbcdcd80b7af49e455b5833b27aa9272a6ee9cc26231a3b"
+		"sdk/devicedock-plugin.js": "sha256-d21518c8f2e82791a67ad1351950b594ef0efc1b9bd854cc0b74d7c3d9e202b7"
 	},
 	"homepage": "https://github.com/Roomen/DeviceDock",
 	"license": "MIT"

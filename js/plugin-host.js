@@ -316,9 +316,9 @@
 			}
 			return
 		}
-		// claim.rx 是宿主按 claim 合批后的事件（≤ ~60 条/秒，单条最大 8 MiB），
-		// 不再计入每秒 120 条的数据事件配额：功耗分析这类高采样场景不能丢样本。
-		if (Rpc.isBatchedEvent(name)) {
+		// 直发事件（claim.rx 合批、claim.gap 丢弃报告）不经过任何配额：
+		// 功耗分析这类高采样场景不能丢样本，缺口通知也必须送达。
+		if (Rpc.isDirectEvent(name)) {
 			post(view, envelope)
 			return
 		}
@@ -380,15 +380,21 @@
 		const view = viewBySource(event.source)
 		if (!view || view.closed) return
 		const data = event.data
-		// O(1) 轻量准入先做：无效 / 超大 / 高频消息都要先计数限流，
-		// 不能等遍历完整条消息（甚至整个大数组）才判断是否拒绝
+		// claim.ack 是每个 claim.rx 的回执，量级与批次同阶：不计入每秒 60 次 RPC 配额，
+		// 但仍要过下面的 validateRequest / authorize（能力、参数与大小校验一个不少）。
 		const quickId = data && typeof data === 'object' && typeof data.id === 'string' ? data.id : ''
-		const adm = Rpc.admission(view.admission, Date.now(), Rpc.LIMITS)
-		if (!adm.ok) {
-			if (quickId) post(view, Rpc.errorEnvelope(quickId, adm.error.code, adm.error.message))
-			return
+		const exempt = data && typeof data === 'object' && Rpc.isQuotaExemptMethod(data.method)
+		const fastPath = !!exempt
+		if (!fastPath) {
+			// O(1) 轻量准入先做：无效 / 超大 / 高频消息都要先计数限流，
+			// 不能等遍历完整条消息（甚至整个大数组）才判断是否拒绝
+			const adm = Rpc.admission(view.admission, Date.now(), Rpc.LIMITS)
+			if (!adm.ok) {
+				if (quickId) post(view, Rpc.errorEnvelope(quickId, adm.error.code, adm.error.message))
+				return
+			}
+			view.admission = adm.state
 		}
-		view.admission = adm.state
 		try {
 			const req = Rpc.validateRequest(data)
 			if (!req.ok) {
@@ -410,7 +416,7 @@
 				post(view, Rpc.errorEnvelope(req.id, code, message))
 			}
 		} finally {
-			view.admission = Rpc.releaseInflight(view.admission)
+			if (!fastPath) view.admission = Rpc.releaseInflight(view.admission)
 		}
 	}
 // ---------- 原始字节 / 解析帧 / 设备事件 ----------

@@ -250,6 +250,13 @@
 			notifyClaimState(ctx)
 			return { closed: true }
 		},
+		async 'claim.ack'(params, ctx) {
+			const rec = ctx.claimRecord(params.claimId)
+			// 未知 claim / 旧 gen / 超前 seq 一律忽略，不报错
+			if (!rec) return { ack: false }
+			ackClaimRx(rec, Number(params.gen), Number(params.seq))
+			return { ack: true }
+		},
 		async 'claim.write'(params, ctx) {
 			const rec = ctx.claimRecord(params.claimId)
 			if (!rec) throw fail('not_found', '占用声明不存在')
@@ -456,6 +463,12 @@
 			})
 			rec.portOpened = true
 			if (rec.cancelled) return false
+			// 每次 claim.open 开一个新 gen：gen 记在 rec 上（跨 close 保留），
+			// 该 gen 的 seq 与 offset 从 0 重新起算（第一个批次 seq=1、offset=0）。
+			rec.gen = (rec.gen || 0) + 1
+			rec.rxSeq = 0
+			rec.rxOffset = 0
+			rec.rx = null
 			rec.open = true
 			rec.reading = true
 			rec.readTask = readClaim(rec)
@@ -476,45 +489,86 @@
 	// ---------- claim.rx 合批 ----------
 	// 每个 claim 一个接收缓冲：读循环把块追加进去，按时间窗（16 ms）或字节阈值（256 KiB）刷一次。
 	// 一条 claim.rx 可能包含多次 read 的数据，插件必须按字节流解析、不能假设「一事件一帧」。
-	// 缓冲上界 8 MiB：超过时丢最早的字节并发 events.dropped（带 claimId 与字节数），绝不静默丢。
+	//
+	// 事件形状（定稿）：
+	//   claim.rx   { claimId, gen, seq, offset, at, bytes: Uint8Array }
+	//     gen    = 该 claim 第几次 claim.open（从 1 起，每次 open +1）
+	//     seq    = 同一 gen 内从 1 单调递增
+	//     offset = 本批首字节在该 gen 字节流中的绝对偏移（含已丢弃的字节）
+	//   插件判断缺口：offset !== 上一批 offset + 上一批 bytes.length
+	//   claim.gap  { claimId, gen, offset, bytes, reason }  reason: 'overflow' | 'closing'
+	//     offset = 被丢字节的起点，与 claim.rx 一起走「直发」路径（不受任何配额）。
 	const CLAIM_RX_WINDOW_MS = 16
 	const CLAIM_RX_FLUSH_BYTES = 256 * 1024
 	const CLAIM_RX_MAX_BYTES = 8 * 1024 * 1024
+	// 背压：每个 claim 允许 4 批「已发未确认」在途；到上限就不再发，数据继续留在缓冲里
+	const CLAIM_RX_INFLIGHT_MAX = 4
+
+	// gen / seq / offset 都存在 claim 记录上（rec.gen / rec.rxSeq / rec.rxOffset），
+	// 不随 rec.rx（缓冲状态）清空而丢；每次 claim.open 开新 gen 时三者一起重置。
+	function ensureGen(rec) {
+		if (!rec.gen) rec.gen = 1
+		if (typeof rec.rxSeq !== 'number') rec.rxSeq = 0
+		if (typeof rec.rxOffset !== 'number') rec.rxOffset = 0
+		return rec.gen
+	}
 
 	function claimRxState(rec) {
-		if (!rec.rx) rec.rx = { chunks: [], bytes: 0, seq: 0, at: 0, timer: 0 }
+		ensureGen(rec)
+		if (!rec.rx) rec.rx = { chunks: [], bytes: 0, at: 0, timer: 0, inflight: 0 }
 		return rec.rx
 	}
 
-	// 把一块字节追加进缓冲；返回是否到了需要立刻刷的字节阈值
+	function reportClaimGap(rec, offset, bytes, reason) {
+		if (!bytes) return
+		rec.ctx.send('claim.gap', { claimId: rec.id, gen: ensureGen(rec), offset: offset, bytes: bytes, reason: reason })
+	}
+
+	// 把一块字节追加进缓冲；返回是否到了需要立刻刷的字节阈值。
+	// 溢出规则：始终丢**最早**的字节（含单个超过上限的新块，截掉它的前缀、保留最新），
+	// 实际丢弃字节全部计入一条 claim.gap，offset 是这批被丢字节的起点。
 	function appendClaimRx(rec, value) {
 		const st = claimRxState(rec)
 		if (!st.at) st.at = Date.now()
-		const grow = st.bytes + value.length - CLAIM_RX_MAX_BYTES
-		if (grow > 0) {
-			// 先丢最老的字节，保证「丢掉的是最早的样本」；丢弃量按实际需要计算（含本块溢出）
-			let need = grow
+		let chunks = st.chunks
+		let bytes = st.bytes
+		let need = bytes + value.length - CLAIM_RX_MAX_BYTES
+		if (need > 0) {
+			const gapStart = rec.rxOffset
 			let dropped = 0
-			while (need > 0 && st.chunks.length) {
-				const head = st.chunks[0]
+			// 1) 先从缓冲区最老的块丢
+			while (need > 0 && chunks.length) {
+				const head = chunks[0]
 				if (head.length <= need) {
-					st.chunks.shift()
-					st.bytes -= head.length
+					chunks.shift()
+					bytes -= head.length
 					need -= head.length
 					dropped += head.length
 				} else {
-					st.chunks[0] = head.subarray(need)
-					st.bytes -= need
+					chunks[0] = head.subarray(need)
+					bytes -= need
 					dropped += need
 					need = 0
 				}
 			}
+			// 2) 缓冲清空了还有剩余需求：截掉新块的前缀（保留最新），单个超上限的块也走这里
+			if (need > 0) {
+				const cut = Math.min(need, value.length)
+				value = value.subarray(cut)
+				need -= cut
+				dropped += cut
+			}
 			if (dropped > 0) {
-				rec.ctx.send('events.dropped', { reason: 'claim-rx-overflow', claimId: rec.id, bytes: dropped, at: Date.now() })
+				rec.rxOffset = gapStart + dropped
+				reportClaimGap(rec, gapStart, dropped, 'overflow')
 			}
 		}
-		st.chunks.push(value)
-		st.bytes += value.length
+		if (value.length) {
+			chunks.push(value)
+			bytes += value.length
+		}
+		st.chunks = chunks
+		st.bytes = bytes
 		return st.bytes >= CLAIM_RX_FLUSH_BYTES
 	}
 
@@ -528,23 +582,32 @@
 		return out
 	}
 
-	// 刷出缓冲：bytes 用 Uint8Array（structured clone 支持，不再 Array.from），
-	// seq 每个 claim 单调递增，at 是本批第一块的到达时间。
+	// 刷出缓冲。opts.force：关闭时的最后一批，忽略在途上限（插件仍在，必须把残余交出去）。
+	// opts.discard：iframe 已销毁，直接丢弃且不报告（无人可收）。
 	function flushClaimRx(rec, opts) {
 		const st = rec.rx
 		if (!st) return false
 		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
 		if (!st.bytes) return false
+		const force = !!(opts && opts.force)
+		if (opts && opts.discard) {
+			st.chunks = []
+			st.bytes = 0
+			st.at = 0
+			return false
+		}
+		// 背压：在途未确认的批次数到上限就不再发，数据留在缓冲里等 claim.ack
+		if (!force && st.inflight >= CLAIM_RX_INFLIGHT_MAX) return false
 		const bytes = concatChunks(st.chunks, st.bytes)
 		const at = st.at || Date.now()
+		const offset = rec.rxOffset
 		st.chunks = []
 		st.bytes = 0
 		st.at = 0
-		// iframe 已销毁 / 插件停用：直接丢弃，不再发事件
-		if (!opts || opts.discard !== true) {
-			st.seq += 1
-			rec.ctx.send('claim.rx', { claimId: rec.id, at: at, seq: st.seq, bytes: bytes })
-		}
+		rec.rxOffset = offset + bytes.length
+		rec.rxSeq += 1
+		st.inflight += 1
+		rec.ctx.send('claim.rx', { claimId: rec.id, gen: ensureGen(rec), seq: rec.rxSeq, offset: offset, at: at, bytes: bytes })
 		return true
 	}
 
@@ -557,12 +620,25 @@
 		}, CLAIM_RX_WINDOW_MS)
 	}
 
-	// 定时器随 claim 释放
+	// 累计确认：ack(seq) 表示已处理到 seq。未知 claim / 旧 gen / 超前 seq 一律忽略。
+	function ackClaimRx(rec, gen, seq) {
+		if (!rec || !rec.rx) return false
+		if (ensureGen(rec) !== gen) return false
+		const st = rec.rx
+		if (!Number.isInteger(seq) || seq <= 0 || seq > rec.rxSeq) return false
+		st.inflight = Math.max(0, rec.rxSeq - seq)
+		// 有残留且腾出了在途额度就继续发
+		if (st.bytes) flushClaimRx(rec)
+		return true
+	}
+
+	// 定时器随 claim 释放；关闭时先把残余刷出（force），iframe 已销毁则丢弃
 	function disposeClaimRx(rec, opts) {
 		const st = rec.rx
 		if (!st) return
 		if (st.timer) { clearTimeout(st.timer); st.timer = 0 }
-		flushClaimRx(rec, opts)
+		if (opts && opts.discard) flushClaimRx(rec, { discard: true })
+		else flushClaimRx(rec, { force: true })
 		rec.rx = null
 	}
 
@@ -587,11 +663,14 @@
 			try {
 				while (rec.reading) {
 					const { value, done } = await reader.read()
-					if (done || !rec.reading) break
-					if (!value || !value.length) continue
-					// 合批：累积到字节阈值立刻刷，否则等 16 ms 窗口
-					if (appendClaimRx(rec, value)) flushClaimRx(rec)
-					else scheduleClaimFlush(rec)
+					if (done) break
+					// 关闭可能已经把 rec.reading 置 false，但这一块字节**已经读到了**：
+					// 先入缓冲（含溢出报告），再判断是否退出，绝不静默丢。
+					if (value && value.length) {
+						if (appendClaimRx(rec, value)) flushClaimRx(rec)
+						else scheduleClaimFlush(rec)
+					}
+					if (!rec.reading) break
 				}
 			} catch (e) {
 				// 设备丢失 / 读错误：交给下面的换流判断或结束
@@ -602,7 +681,7 @@
 			if (!rec.port.readable) break
 		}
 		rec.reading = false
-		// 读循环结束时把残余刷出（插件仍在时）
+		// 读循环结束时把残余刷出（受在途上限约束；吃不下的留给 close 的 force 刷）
 		flushClaimRx(rec)
 	}
 
@@ -671,10 +750,13 @@
 		CLAIM_RX_FLUSH_BYTES: CLAIM_RX_FLUSH_BYTES,
 		CLAIM_RX_MAX_BYTES: CLAIM_RX_MAX_BYTES,
 		// 测试注入：直接驱动合批（不经过真串口）
+		CLAIM_RX_INFLIGHT_MAX: CLAIM_RX_INFLIGHT_MAX,
 		_appendClaimRx: appendClaimRx,
 		_scheduleClaimFlush: scheduleClaimFlush,
 		_flushClaimRx: flushClaimRx,
 		_disposeClaimRx: disposeClaimRx,
+		_ackClaimRx: ackClaimRx,
+		_reportClaimGap: reportClaimGap,
 		call: async function (method, params, ctx) {
 			const fn = api[method]
 			if (typeof fn !== 'function') throw fail('unknown_method', '宿主不支持这个方法：' + method)

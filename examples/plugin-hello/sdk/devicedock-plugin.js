@@ -135,11 +135,36 @@
 			if (Array.isArray(v)) return Uint8Array.from(v)
 			return new Uint8Array(0)
 		}
+		// 合批事件：bytes 为 Uint8Array，gen / seq / offset 用于判断缺口
+		// （offset !== 上一批 offset + 上一批长度 即有缺口，缺口通知见 claim.gap）。
+		// 回调同步返回或返回的 Promise 结束后自动 claim.ack(seq)，宿主据此继续发送下一批。
 		function onClaimRx(fn) {
 			if (typeof fn !== 'function') return function () {}
 			return on('claim.rx', function (pkt) {
 				const p = pkt && typeof pkt === 'object' ? pkt : {}
-				fn({ claimId: p.claimId, at: p.at || 0, seq: p.seq || 0, bytes: bytesView(p.bytes) })
+				const pktView = { claimId: p.claimId, gen: p.gen || 0, at: p.at || 0, seq: p.seq || 0, offset: p.offset || 0, bytes: bytesView(p.bytes) }
+				const ack = function () {
+					if (!pktView.claimId || !pktView.seq) return
+					try { call('claim.ack', { claimId: pktView.claimId, gen: pktView.gen, seq: pktView.seq }).catch(function () {}) } catch (e) {}
+				}
+				let out
+				try {
+					out = fn(pktView)
+				} catch (e) {
+					ack()
+					throw e
+				}
+				if (out && typeof out.then === 'function') out.then(ack, ack)
+				else ack()
+			})
+		}
+
+		// 缺口通知（overflow / closing）：offset 是被丢字节的起点，插件据此知道样本缺了哪些
+		function onClaimGap(fn) {
+			if (typeof fn !== 'function') return function () {}
+			return on('claim.gap', function (p) {
+				const g = p && typeof p === 'object' ? p : {}
+				fn({ claimId: g.claimId, gen: g.gen || 0, offset: g.offset || 0, bytes: g.bytes || 0, reason: g.reason || '' })
 			})
 		}
 
@@ -157,6 +182,7 @@
 			getTheme: function () { return Object.assign({}, currentTheme, { tokens: Object.assign({}, currentTheme.tokens) }) },
 			// 测试注入入口
 			_handleMessage: onMessage,
+			bytesView: bytesView,
 			bytesView: bytesView,
 			device: {
 				listPorts: function () { return call('device.listPorts', {}) },
@@ -177,8 +203,9 @@
 				open: function (claimId, opts) { return call('claim.open', Object.assign({ claimId: claimId }, opts || {})) },
 				close: function (claimId) { return call('claim.close', { claimId: claimId }) },
 				write: function (claimId, bytes) { return call('claim.write', { claimId: claimId, bytes: bytes }) },
-				// 合批事件：bytes 为 Uint8Array，seq 每个 claim 单调递增，at 是本批第一块时间
 				onRx: onClaimRx,
+				onGap: onClaimGap,
+				ack: function (claimId, gen, seq) { return call('claim.ack', { claimId: claimId, gen: gen, seq: seq }) },
 			},
 			protocol: {
 				info: function (lane) { return call('protocol.info', { lane: lane }) },

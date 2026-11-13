@@ -34,6 +34,7 @@
 		'claim.list': 'serial.claim',
 		'claim.open': 'serial.claim',
 		'claim.close': 'serial.claim',
+		'claim.ack': 'serial.claim',
 		'claim.write': 'serial.claim',
 		'protocol.info': 'protocol.read',
 		'protocol.call': 'protocol.read',
@@ -53,7 +54,7 @@
 	}
 
 	// 宿主 → 插件的事件名(插件端订阅前不需要授权，内容本身来自已授权的方法)
-	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'claim.state', 'app.busy', 'events.dropped']
+	const EVENTS = ['ready', 'theme', 'theme-change', 'device.ports', 'device.lane', 'device.ble', 'device.ble-error', 'serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'claim.gap', 'claim.state', 'app.busy', 'events.dropped']
 
 	const ERROR_TEXT = {
 		bad_request: '请求格式不正确',
@@ -77,10 +78,13 @@
 		'device.ble-error', 'claim.state', 'app.busy',
 	]
 	const DATA_EVENTS = ['serial.rx', 'serial.tx', 'protocol.frame', 'claim.rx', 'device.ble']
-	// claim.rx 是宿主按 claim 合批后的数据事件（一条含多块、≤ ~60 条/秒、单条上限 8 MiB），
-	// 不计入上面每秒 120 条的数据事件配额，避免高采样场景丢样本。
-	const BATCHED_EVENTS = ['claim.rx']
-	function isBatchedEvent(name) { return BATCHED_EVENTS.indexOf(name) !== -1 }
+	// 直发事件（DIRECT_EVENTS）：宿主合批 / 缺口通知本身就是可靠通道，不经过任何配额——
+	// claim.rx 由宿主按 claim 合批（≤ ~60 条/秒、单条上限 8 MiB），claim.gap 是丢弃报告（必须送达）。
+	const DIRECT_EVENTS = ['claim.rx', 'claim.gap']
+	// 兼容旧名（P5 首个提交里叫 BATCHED_EVENTS）
+	const BATCHED_EVENTS = DIRECT_EVENTS
+	function isBatchedEvent(name) { return DIRECT_EVENTS.indexOf(name) !== -1 }
+	function isDirectEvent(name) { return DIRECT_EVENTS.indexOf(name) !== -1 }
 	function isStateEvent(name) { return STATE_EVENTS.indexOf(name) !== -1 }
 	function isDataEvent(name) { return DATA_EVENTS.indexOf(name) !== -1 }
 	// 状态事件合并键：device.lane 按 lane 分键（A/B 各自最新），device.ports 是
@@ -198,6 +202,9 @@
 		const s = state || newAdmissionState()
 		return { windowStart: s.windowStart, windowCount: s.windowCount, inflight: Math.max(0, s.inflight - 1) }
 	}
+
+	// claim.ack 是每个 claim.rx 的回执，不计入每秒 60 次 RPC 配额（仍走能力 / 参数 / 大小校验）
+	function isQuotaExemptMethod(method) { return method === 'claim.ack' }
 
 	function isObject(v) {
 		return !!v && typeof v === 'object' && !Array.isArray(v)
@@ -338,7 +345,8 @@
 
 	const lib = {
 		PROTOCOL, CAPABILITIES, CAPABILITY_TEXT, METHODS, EVENTS, ERROR_TEXT,
-		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, BATCHED_EVENTS, isStateEvent, isDataEvent, isBatchedEvent, stateEventKey, coalesceState,
+		LIMITS, EVENT_LIMITS, STATE_EVENTS, DATA_EVENTS, DIRECT_EVENTS, BATCHED_EVENTS,
+		isStateEvent, isDataEvent, isBatchedEvent, isDirectEvent, isQuotaExemptMethod, stateEventKey, coalesceState,
 		estimateSize, newEventState, eventAdmission, newStateEventState, stateEventPlan,
 		newAdmissionState, admission, releaseInflight,
 		isObject, isEnvelope, isEvent, validateRequest, capabilityFor, authorize,
