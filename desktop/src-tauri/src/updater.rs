@@ -148,6 +148,7 @@ const SESSION_KEYS: &[&str] = &[
     "appInstanceId", "serialHubMode", "serialActiveSendId", "serialSessionLabelA", "serialSessionLabelB",
     "serialLogCache", "serialWantOpen", "serialWantOpenS", "serialWantOpenA", "serialWantOpenB",
     "serialWantPortKeyA", "serialWantPortKeyS", "serialWantPortKeyDualA", "serialWantPortKeyB",
+    "serialWantOpenF", "serialWantPortKeyF",
 ];
 fn sanitize_session(session: HashMap<String, String>) -> Option<HashMap<String, String>> {
     if session.len() > 64 { return None; }
@@ -342,6 +343,20 @@ mod tests {
         assert_eq!(saved.len(), 1);
         assert_eq!(saved["serialHubMode"], "dual");
         assert!(sanitize_session(HashMap::from([("serialLogCache".into(), "x".repeat(SESSION_LIMIT))])).is_none());
+    }
+
+    #[test]
+    fn session_handoff_keeps_reconnect_intent_of_every_connection() {
+        // 每个连接(单路 S、双路 A/B、固件页 F)的重连意图与设备身份都要跨更新保留，否则更新后该连接不再自动重连
+        let keys = [
+            "serialWantOpenS", "serialWantOpenA", "serialWantOpenB", "serialWantOpenF",
+            "serialWantPortKeyS", "serialWantPortKeyDualA", "serialWantPortKeyB", "serialWantPortKeyF",
+        ];
+        let input: HashMap<String, String> = keys.iter().map(|k| (k.to_string(), "1".to_string())).collect();
+        let saved = sanitize_session(input).unwrap();
+        for k in keys { assert_eq!(saved.get(k).map(String::as_str), Some("1"), "{k} 未进交接文件"); }
+        let script = session_script(&saved);
+        assert!(script.contains("serialWantOpenF") && script.contains("serialWantPortKeyF"));
     }
 
     #[test]
