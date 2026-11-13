@@ -84,7 +84,6 @@
 	let randomPlan = null // 随机模式生成的计划（{ seed, steps }）
 	let running = false
 	let flowTxToken = null
-	let runAllGen = 0
 	let stopFlag = false
 
 	// ---------- 状态持久化 ----------
@@ -854,7 +853,6 @@
 		}
 
 		running = true
-		runAllGen++
 		stopFlag = false
 		if (el.log) el.log.textContent = ''
 		el.results.textContent = ''
@@ -932,7 +930,6 @@
 			// 失败时如实提示（钉扎已解，用户可重试关闭或手动断开）
 			stopFlag = true
 			cancelWaiters('已停止')
-			runAllGen++
 			const sid = window.serialApi.getActiveSendSid()
 			// 先沿现有关闭路径关闭并确认释放（closeLane 自带 3s 释放上限）；
 			// 本事务的钉扎会让关闭被拒（lane_blocked / lane_busy），这时按归属与令牌释放后再试一次
@@ -940,7 +937,9 @@
 			let res = null
 			try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
 			closed = !!(res && res.ok)
-			if (!closed && res && (res.code === 'lane_blocked' || res.code === 'lane_busy')) {
+			// 本事务的钉扎会让关闭被拒（transaction_pinned / lane_blocked / lane_busy）：
+			// 按归属与令牌释放后重试一次；owner / token 校验由 forceReleaseTransaction 自己把关
+			if (!closed && res && (res.code === 'transaction_pinned' || res.code === 'lane_blocked' || res.code === 'lane_busy')) {
 				try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
 				flowTxToken = null
 				try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
