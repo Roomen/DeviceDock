@@ -25,6 +25,7 @@ const bindSrc = slice('\t// opts.openAfterSelect: 无口时点', '\t//屏幕唤�
 const laneSrc = slice('\t// ===== 现代布局连接栏的串口列表', '\t// 列表行要显示的东西')
 const apiSrc = slice('\t// 固件连接的占用者', '\tvar ansi_up')
 const wantSrc = slice('\tconst SERIAL_WANT_OPEN_KEY = ', '\t// reload 自动重连已整体移到')
+const releaseSrc = slice('\tfunction portHeldByOther(', '\tfunction randAliasId(') + slice('\tasync function releasePort(sid) {', '\t//页面销毁时释放串口句柄')
 
 let nextId = 0
 function makePort(vid, pid) {
@@ -49,6 +50,9 @@ function harness(mode, opts) {
 		laneMoving: false,
 		readGenBySid: { S: 0, A: 0, B: 0, F: 0 },
 		rxWatch() { return { lastRxAt: 0, backoff: 0 } },
+		resetRxWatch() {},
+		flushSerialPack() {},
+		addLogErrSafe(m) { msgs.push(m) },
 		WeakSet, Map, Promise, console, setTimeout, clearTimeout, JSON,
 		platformHasSid: (sid) => (sid === 'F' ? !opts.mobile : true),
 		notifyFirmwareConn() {},
@@ -73,8 +77,8 @@ function harness(mode, opts) {
 	}
 	ctx.window.serialPortClaims = { ownerOf: (p) => (claims.has(p) ? 'plugin:' + claims.get(p) : null) }
 	vm.createContext(ctx)
-	vm.runInContext([hubSrc, conflictSrc, bindSrc, laneSrc, wantSrc, apiSrc].join('\n') +
-		'\nthis.SerialHub = SerialHub; this.api = { selectLanePort, lanePortOwner, laneSelectBlock, laneBlockReason: typeof laneBlockReason === "function" ? laneBlockReason : null, getSerialWantOpen, setSerialWantOpen, setSerialWantPortKey, getSerialWantPortKey }', ctx)
+	vm.runInContext([hubSrc, conflictSrc, bindSrc, laneSrc, wantSrc, apiSrc, releaseSrc].join('\n') +
+		'\nthis.SerialHub = SerialHub; this.api = { releasePort, selectLanePort, lanePortOwner, laneSelectBlock, laneBlockReason: typeof laneBlockReason === "function" ? laneBlockReason : null, getSerialWantOpen, setSerialWantOpen, setSerialWantPortKey, getSerialWantPortKey }', ctx)
 	const hub = ctx.SerialHub
 	hub.mode = mode
 	ctx.window.serialApi.isPinned = function () { return !!this.pinned }
@@ -130,6 +134,45 @@ test('插件声明的口：固件连接选不到；固件连接开着的口算�
 	assert.equal(h.hub.sessionOwnerOfPort(q), null, '关着记着的口不算占用')
 	h.hub._sess('F').releaseFailed = true
 	assert.equal(h.hub.sessionOwnerOfPort(q), 'F', '未确认释放仍算占用')
+})
+
+test('固件连接关着记着的口被插件声明并打开后，换口不关插件的口(读流锁着也不让换口失败)', async () => {
+	const h = harness('single')
+	// 走真实的 releasePort：关闭 = 置未打开 + 释放
+	h.ctx.closeSerial = async function (sid) { h.hub.setOpen(sid, false); return h.api.releasePort(sid) }
+	const p = makePort()
+	let pClosed = 0
+	p.readable = { locked: true }
+	p.writable = {}
+	p.close = async function () { pClosed++; throw Object.assign(new Error('locked'), { name: 'TypeError' }) }
+	// 1. 固件连接选口但保持关闭
+	assert.equal(await h.api.selectLanePort('F', p, { open: false }), true)
+	assert.equal(h.hub.isOpen('F'), false)
+	// 2. 插件声明并打开该口(插件自己 open，口上挂着流)
+	h.claims.set(p, '功耗')
+	// 3. 固件连接改选另一个口
+	const q = makePort()
+	assert.equal(await h.api.selectLanePort('F', q, { open: false }), true)
+	assert.equal(pClosed, 0, '插件声明着的口不能被固件连接关掉')
+	assert.equal(h.hub.getPort('F'), q)
+	assert.equal(h.hub.isReleaseFailed('F'), false)
+	// 通信页单路同理：关着记着的口被插件拿去后，单路换口也不关它
+	h.hub.setPort('S', makePort())
+	const s = h.hub.getPort('S')
+	s.readable = {}; s.writable = {}
+	let sClosed = 0
+	s.close = async () => { sClosed++ }
+	h.claims.set(s, '功耗')
+	assert.equal(await h.api.selectLanePort('S', makePort(), { open: false }), true)
+	assert.equal(sClosed, 0)
+	// 没被别处持有的口照旧关(本会话自己的脏状态口)
+	h.claims.clear()
+	const own = h.hub.getPort('S')
+	own.readable = {}; own.writable = {}
+	let ownClosed = 0
+	own.close = async () => { ownClosed++ }
+	assert.equal(await h.api.releasePort('S'), true)
+	assert.equal(ownClosed, 1)
 })
 
 test('固件连接不受通信页增减路、主发路事务钉扎影响', async () => {

@@ -3837,6 +3837,7 @@
 			session.writeSeq = (session.writeSeq || 0) + 1
 			resetRxWatch(sid)
 			const port = SerialHub.getPort(sid)
+			// 物理口被别处持有(另一会话或插件声明)就只放下本会话的 reader/writer，不关口
 			const closePort = port && !portHeldByOther(port, sid)
 			const r = SerialHub.getReader(sid)
 			const writer = session.writer
@@ -4395,8 +4396,11 @@
 		return '该口已被其它会话占用'
 	}
 
+	// 释放时判断这个物理口是不是别人的：通信 S/A/B、固件连接 F 开着或未确认释放，或插件声明着(插件自己开关它)。
+	// 本会话只是选着(关着记着)而别人打开了同一个口时，releasePort 不能去关它：可关则把别人的连接掐断，读流被锁则让换口失败
 	function portHeldByOther(port, exceptSid) {
 		if (!port) return false
+		if (window.serialPortClaims && window.serialPortClaims.ownerOf && window.serialPortClaims.ownerOf(port)) return true
 		const all = SerialHub.allPhys()
 		for (let i = 0; i < all.length; i++) {
 			if (all[i] === exceptSid) continue
