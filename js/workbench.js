@@ -1,0 +1,776 @@
+// 串口调试工作台：每个工具是一个面板，停靠在右栏或底栏(与协议解析共用)，由最右侧停靠栏开合
+// 面板 DOM 原样搬运(不克隆)，面板内控件的 id 与已绑定事件不受影响
+// 扩展新工具：Workbench.registerPanel({ id, title, label, icon, el })，el 为面板根节点，其余由本模块接管；
+// 是否注册由平台功能 panel.<id> 决定(js/platform.js)，新面板默认只在桌面画像出现，移动端要显式加进画像
+;(function () {
+	'use strict'
+
+	// 面板分布沿用现代布局原来的键；不带后缀的 workbenchState 是已删除的经典布局的键，只在本键缺失时读一次作起点、从不写
+	const STATE_KEY = 'workbenchStateModern'
+	const LEGACY_STATE_KEY = 'workbenchState'
+	const DOCKS = ['right', 'bottom']
+	const DOCK_NAME = { right: '右侧', bottom: '底部' }
+
+	const panels = []
+	let state = loadState()
+	let ready = false
+
+	function $(id) { return document.getElementById(id) }
+
+	// 没存过时从旧键的分布起步(只读)；解析固定是右栏的检查器
+	function loadState() {
+		let st = null
+		try { st = JSON.parse(localStorage.getItem(STATE_KEY) || 'null') } catch (e) { st = null }
+		if (!st || typeof st !== 'object') {
+			let base = null
+			try { base = JSON.parse(localStorage.getItem(LEGACY_STATE_KEY) || 'null') } catch (e) { base = null }
+			st = { right: 'parse', bottom: null, docks: {} }
+			if (base && base.docks && typeof base.docks === 'object') {
+				Object.keys(base.docks).forEach(function (id) {
+					if (id !== 'parse' && id !== 'firmware') st.docks[id] = base.docks[id]
+				})
+			}
+		}
+		if (!st.docks || typeof st.docks !== 'object') st.docks = {}
+		return st
+	}
+
+	function saveState() {
+		try { localStorage.setItem(STATE_KEY, JSON.stringify(state)) } catch (e) { /* 忽略 */ }
+	}
+
+	function find(id) {
+		for (let i = 0; i < panels.length; i++) {
+			if (panels[i].id === id) return panels[i]
+		}
+		return null
+	}
+
+	function sorted(list) {
+		return list.slice().sort(function (a, b) { return a.order - b.order })
+	}
+
+	// hidden: 不进停靠区的面板(固件升级并进了固件页)
+	function inDock(dock) {
+		return sorted(panels.filter(function (p) { return p.dock === dock && !p.hidden }))
+	}
+
+	// 两个停靠区的开合沿用 common.js 里已有的右栏拖拽条 / 协议解析面板状态
+	function dockApi(dock) {
+		return dock === 'right' ? window.serialRightPane : window.parsePanelDock
+	}
+
+	function isDockCollapsed(dock) {
+		const api = dockApi(dock)
+		return api ? api.isCollapsed() : false
+	}
+
+	function setDockCollapsed(dock, v) {
+		const api = dockApi(dock)
+		if (api) api.setCollapsed(v)
+	}
+
+	function isAvailable(p) {
+		return !p.hidden && (!p.available || !!p.available())
+	}
+
+	function isShown(p) {
+		return state[p.dock] === p.id && isAvailable(p) && !isDockCollapsed(p.dock)
+	}
+
+	// 平台画像没开 panel.<id> 的面板不注册，节点原地隐藏(移动端只留协议、解析与固件升级)。
+	// 用 data-feature 交给平台层注入的 !important 样式隐藏：协议模块会改卡片的 style.display，hidden 属性压不住
+	function panelGatedOff(id, el) {
+		if (!window.AppPlatform || window.AppPlatform.has('panel.' + id)) return false
+		window.AppPlatform.gate(el, 'panel.' + id)
+		return true
+	}
+
+	function registerPanel(def) {
+		if (!def || !def.id || !def.el || find(def.id)) return null
+		if (panelGatedOff(def.id, def.el)) return null
+		const docks = Array.isArray(def.docks) && def.docks.length ? def.docks.filter(function (d) { return DOCKS.indexOf(d) !== -1 }) : DOCKS
+		// base 是注册时给的面板定义；PROFILE 覆盖其中几项(见 applyProfile)
+		const base = {
+			title: def.title || def.id,
+			label: def.label || def.title || def.id,
+			icon: def.icon || 'icon-layout-grid',
+			el: def.el,
+			order: typeof def.order === 'number' ? def.order : 100 + panels.length,
+			docks: docks,
+			defDock: def.dock,
+			// fixed: 节点本身就在停靠区里(协议解析)，不搬运
+			fixed: !!def.fixed,
+			hidden: false,
+			view: '',
+		}
+		const p = {
+			id: def.id,
+			base: base,
+			// available: 返回 false 时面板不可打开(如当前协议不支持)，停靠栏按钮禁用
+			available: typeof def.available === 'function' ? def.available : null,
+			unavailableHint: def.unavailableHint || '',
+		}
+		def.el.classList.add('wb-pane')
+		def.el.dataset.dockPanel = p.id
+		panels.push(p)
+		applyProfile(p)
+		if (ready) render()
+		return { id: p.id }
+	}
+
+	// 把面板的生效属性(节点、标题、可停靠位置、停靠位置等)从 base / 覆盖项里取出来
+	function applyProfile(p) {
+		const over = PROFILE[p.id] ? PROFILE[p.id]() : null
+		const o = over ? Object.assign({}, p.base, over) : p.base
+		p.el = o.el
+		p.title = o.title
+		p.label = o.label
+		p.icon = o.icon
+		p.order = o.order
+		p.docks = o.docks
+		p.fixed = o.fixed
+		p.hidden = o.hidden
+		p.view = o.view
+		const saved = state.docks[p.id]
+		if (p.docks.indexOf(saved) !== -1) p.dock = saved
+		else if (p.docks.indexOf(o.defDock) !== -1) p.dock = o.defDock
+		else p.dock = p.docks[0]
+	}
+
+	function ensureSerialView() {
+		const rail = document.querySelector('.rail-item[data-view="view-serial"]')
+		if (rail && !rail.classList.contains('active')) rail.click()
+	}
+
+	function open(id) {
+		const p = find(id)
+		// 放在别的视图上的面板(固件升级在固件页)：切到那个视图
+		if (p && p.hidden && p.view) {
+			const rail = document.querySelector('.rail-item[data-view="' + p.view + '"]')
+			if (rail && !rail.classList.contains('active')) rail.click()
+			if (p.el.scrollIntoView) p.el.scrollIntoView({ block: 'nearest' })
+			return true
+		}
+		if (!p || !isAvailable(p)) return false
+		ensureSerialView()
+		state[p.dock] = p.id
+		render()
+		setDockCollapsed(p.dock, false)
+		renderBar()
+		return true
+	}
+
+	function toggle(id) {
+		const p = find(id)
+		if (!p) return
+		if (isShown(p)) {
+			setDockCollapsed(p.dock, true)
+			renderBar()
+		} else {
+			open(id)
+		}
+	}
+
+	function move(id, dock) {
+		const p = find(id)
+		if (!p || !isAvailable(p) || p.docks.indexOf(dock) === -1 || p.dock === dock) return
+		const from = p.dock
+		p.dock = dock
+		state.docks[p.id] = dock
+		state[dock] = p.id
+		render()
+		setDockCollapsed(dock, false)
+		// 右栏搬空了就收起，免得留一块空白
+		if (from === 'right' && !inDock('right').length) setDockCollapsed('right', true)
+		renderBar()
+	}
+
+	// ---------- 渲染 ----------
+
+	function render() {
+		const hosts = { right: $('nav-tabContent'), bottom: $('wb-bottom-body') }
+		DOCKS.forEach(function (dock) {
+			const list = inDock(dock).filter(isAvailable)
+			const has = list.some(function (p) { return p.id === state[dock] })
+			if (!has) state[dock] = list.length ? list[0].id : null
+		})
+		panels.forEach(function (p) {
+			if (p.fixed || p.hidden) return
+			const host = hosts[p.dock]
+			if (host && p.el.parentElement !== host) host.appendChild(p.el)
+			const active = state[p.dock] === p.id
+			p.el.classList.toggle('active', active)
+			p.el.classList.toggle('show', active)
+		})
+		renderRightHead()
+		renderBottomHead()
+		renderBar()
+		saveState()
+	}
+
+	function iconEl(icon) {
+		const i = document.createElement('i')
+		i.className = 'icon ' + icon
+		i.setAttribute('aria-hidden', 'true')
+		return i
+	}
+
+	function renderRightHead() {
+		const title = $('wb-right-title')
+		const moveBtn = $('wb-right-move')
+		const p = find(state.right)
+		if (title) {
+			title.textContent = ''
+			if (p) title.append(iconEl(p.icon), document.createTextNode(p.title))
+		}
+		if (moveBtn) moveBtn.hidden = !p || p.docks.indexOf('bottom') === -1
+	}
+
+	function renderBottomHead() {
+		const box = $('wb-bottom-tabs')
+		const panel = $('serial-parse-panel')
+		const p = find(state.bottom)
+		if (box) {
+			box.textContent = ''
+			inDock('bottom').filter(isAvailable).forEach(function (q) {
+				const b = document.createElement('button')
+				b.type = 'button'
+				b.className = 'wb-bottom-tab'
+				b.dataset.dockPanel = q.id
+				b.setAttribute('role', 'tab')
+				b.setAttribute('aria-selected', String(q.id === state.bottom))
+				b.append(iconEl(q.icon), document.createTextNode(q.title))
+				box.appendChild(b)
+			})
+		}
+		const parseActive = !p || p.id === 'parse'
+		if (panel) {
+			panel.classList.toggle('wb-alt', !parseActive)
+			// 解析在右栏检查器里：底栏没有面板时整条收掉，不留空壳
+			panel.classList.toggle('wb-bottom-none', !inDock('bottom').some(isAvailable))
+		}
+		const moveBtn = $('wb-bottom-move')
+		if (moveBtn) moveBtn.hidden = !p || p.docks.indexOf('right') === -1
+	}
+
+	function renderBar() {
+		const bar = $('wb-dock-bar')
+		if (!bar) return
+		const live = panels.filter(function (p) { return !p.hidden })
+		const list = sorted(live.filter(function (p) { return !p.fixed })).concat(sorted(live.filter(function (p) { return p.fixed })))
+		const sig = list.map(function (p) { return p.id + ':' + p.dock + ':' + isAvailable(p) }).join('|')
+		if (bar.dataset.sig !== sig) {
+			bar.dataset.sig = sig
+			bar.textContent = ''
+			list.forEach(function (p, idx) {
+				if (p.fixed && idx > 0 && !list[idx - 1].fixed) {
+					const sep = document.createElement('div')
+					sep.className = 'wb-dock-sep'
+					bar.appendChild(sep)
+				}
+				const b = document.createElement('button')
+				b.type = 'button'
+				b.className = 'wb-dock-btn'
+				b.dataset.dockPanel = p.id
+				b.dataset.dock = p.dock
+				const ok = isAvailable(p)
+				b.disabled = !ok
+				b.title = ok ? p.title + '（' + DOCK_NAME[p.dock] + '）' : (p.unavailableHint || p.title + '当前不可用')
+				const label = document.createElement('span')
+				label.className = 'wb-dock-label'
+				label.textContent = p.label
+				b.append(iconEl(p.icon), label)
+				bar.appendChild(b)
+			})
+		}
+		bar.querySelectorAll('.wb-dock-btn').forEach(function (b) {
+			const p = find(b.dataset.dockPanel)
+			b.setAttribute('aria-pressed', String(!!(p && isShown(p))))
+		})
+	}
+
+	// ---------- 内置面板 ----------
+
+	// 独立成面板的卡片：协议不支持时卡片被协议模块隐藏，面板里显示说明
+	function standalonePanel(id, title, label, icon, cardId, order, hint) {
+		const card = $(cardId)
+		if (!card) return
+		// 先判平台：不注册就不把卡片搬进游离的面板节点，各模块按 id 仍取得到它
+		if (panelGatedOff(id, card)) return
+		const pane = document.createElement('div')
+		pane.className = 'tab-pane d-flex flex-column wb-pane-scroll'
+		pane.id = 'wb-pane-' + id
+		pane.setAttribute('role', 'tabpanel')
+		const tip = document.createElement('div')
+		tip.className = 'wb-pane-unavailable'
+		tip.append(iconEl('icon-info'), document.createTextNode(hint))
+		pane.append(tip, card)
+		registerPanel({
+			id: id, title: title, label: label, icon: icon, el: pane, order: order,
+			// 协议模块切协议时用 style.display 隐藏不支持的卡片，以此为准
+			available: function () { return card.style.display !== 'none' },
+			unavailableHint: hint,
+		})
+		// 协议模块改卡片显隐后同步：禁用按钮，正在显示的面板让位给同停靠区的其它面板
+		new MutationObserver(refreshAvailability).observe(card, { attributes: true, attributeFilter: ['style'] })
+	}
+
+	function refreshAvailability() {
+		if (!ready) return
+		const collapse = DOCKS.filter(function (dock) {
+			const p = find(state[dock])
+			return p && !isAvailable(p) && !isDockCollapsed(dock) && !inDock(dock).some(isAvailable)
+		})
+		render()
+		collapse.forEach(function (dock) { setDockCollapsed(dock, true) })
+		renderBar()
+	}
+
+	function registerBuiltins() {
+		const qs = $('nav-quick-send')
+		if (qs) registerPanel({ id: 'quick-send', title: '快捷发送', icon: 'icon-zap', el: qs, order: 10 })
+		const proto = $('nav-protocol')
+		if (proto) registerPanel({ id: 'protocol', title: '协议设置与下发', label: '协议', icon: 'icon-braces', el: proto, order: 20 })
+		standalonePanel('flow', '测试流程（批量配置 / 随机读写）', '测试流程', 'icon-list-check', 'sk-flow-card', 30, '当前协议没有提供字段目录与构帧钩子，无法运行测试流程')
+		const fw = $('nav-firmware')
+		if (fw) registerPanel({ id: 'firmware', title: '固件升级', icon: 'icon-cpu', el: fw, order: 50 })
+		const parse = $('serial-parse-body')
+		if (parse) registerPanel({ id: 'parse', title: '协议解析', label: '解析', icon: 'icon-workflow', el: parse, order: 0, docks: ['bottom'], fixed: true })
+	}
+
+	// ---------- 顶栏：命令面板入口 ----------
+
+	function initConnectBarTools() {
+		const pal = $('wb-palette-btn')
+		if (pal) {
+			pal.addEventListener('click', function () {
+				if (window.serialCommandPalette) window.serialCommandPalette.open()
+			})
+		}
+	}
+
+	// ---------- 状态栏 ----------
+
+	// 后台任务：面板任务以停止键可用视为运行中；循环发送看勾选框。blocksUpdate(默认 true)为 false 的任务不阻止应用更新
+	function panelTask(panel, stopId, progressId, label) {
+		return {
+			label: label,
+			title: '打开' + label + '面板',
+			blocksUpdate: true,
+			running: function () {
+				const stop = $(stopId)
+				return !!(stop && !stop.disabled)
+			},
+			text: function () {
+				const prog = $(progressId)
+				const txt = prog ? prog.textContent.trim() : ''
+				return label + (txt ? ' ' + txt : '') + ' 运行中'
+			},
+			open: function () { open(panel) },
+		}
+	}
+	const TASKS = [
+		panelTask('flow', 'sk-flow-stop', 'sk-flow-progress-bar', '测试流程'),
+		panelTask('firmware', 'fw-stop', 'fw-progress', '固件升级'),
+		{
+			label: '循环发送',
+			title: '定位到串口发送',
+			blocksUpdate: false,
+			running: function () {
+				const cb = $('serial-loop-send')
+				return !!(cb && cb.checked)
+			},
+			text: function () {
+				const t = $('serial-loop-send-time')
+				return '循环发送 每 ' + (t ? t.value : '?') + ' ms'
+			},
+			open: function () {
+				ensureSerialView()
+				if (typeof window.expandSendPanel === 'function') window.expandSendPanel()
+				const input = $('serial-send-content')
+				if (input) input.focus()
+			},
+		},
+		{
+			// 本地 MCP 服务(js/mcp-service.js)：只有平台提供了服务且已启用才显示，未启用不占位。
+			// 常驻服务绝不能阻止应用更新：blocksUpdate: false。异常 / 等待 / 运行用彩色小点区分
+			label: 'MCP',
+			title: '打开本地 MCP 服务面板',
+			noSpin: true,
+			blocksUpdate: false,
+			stateDot: true,
+			dotState: function () {
+				const s = window.McpServiceStatus
+				return s ? s.state() : 'off'
+			},
+			running: function () {
+				const s = window.McpServiceStatus
+				return !!(s && s.state() !== 'off')
+			},
+			text: function () {
+				const s = window.McpServiceStatus
+				if (!s) return 'MCP'
+				const st = s.state()
+				if (st === 'running') return 'MCP :' + s.port()
+				if (st === 'error') return 'MCP 服务异常'
+				return 'MCP 等待启动'
+			},
+			open: function () {
+				const s = window.McpServiceStatus
+				if (s) s.open()
+			},
+		},
+	]
+
+	function fmtBytes(n) {
+		if (n < 1024) return n + ' B'
+		if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+		return (n / 1024 / 1024).toFixed(2) + ' MB'
+	}
+
+	function fmtDuration(ms) {
+		const t = Math.max(0, Math.floor(ms / 1000))
+		const h = Math.floor(t / 3600)
+		const m = Math.floor(t / 60) % 60
+		const s = t % 60
+		const pad = function (v) { return (v < 10 ? '0' : '') + v }
+		return (h ? h + ':' : '') + pad(m) + ':' + pad(s)
+	}
+
+	function span(cls, text) {
+		const el = document.createElement('span')
+		if (cls) el.className = cls
+		if (text != null) el.textContent = text
+		return el
+	}
+
+	const statusRefs = { sig: '', sessions: {}, tasks: [] }
+
+	function buildStatusBar(bar, sids) {
+		// 首次反馈提示（js/app-boot.js 插进来的）跟着重建保留：模式切换会清空状态栏重建
+		const issueTip = document && typeof document.getElementById === 'function'
+			? document.getElementById('issue-tip')
+			: null
+		bar.textContent = ''
+		statusRefs.sessions = {}
+		const left = span('sb-group')
+		sids.forEach(function (sid) {
+			const seg = span('sb-session')
+			const dot = span('sb-dot')
+			const name = span('sb-name')
+			const stateEl = span('sb-state')
+			const tx = span('sb-num')
+			const rx = span('sb-num')
+			const txWrap = span('sb-metric')
+			txWrap.append(span('sb-k', 'TX'), tx)
+			const rxWrap = span('sb-metric')
+			rxWrap.append(span('sb-k', 'RX'), rx)
+			const lastRx = span('sb-last-rx')
+			const rebuild = document.createElement('button')
+			rebuild.type = 'button'
+			rebuild.className = 'sb-receive-reset'
+			rebuild.textContent = '重建接收'
+			rebuild.title = '释放并重新打开此串口'
+			rebuild.addEventListener('click', async function () {
+				if (rebuild.disabled || !window.serialApi) return
+				rebuild.disabled = true
+				try { await window.serialApi.rebuildReceive(sid) }
+				finally { updateStatusBar() }
+			})
+			seg.append(dot, name, stateEl, txWrap, rxWrap, lastRx, rebuild)
+			left.appendChild(seg)
+			statusRefs.sessions[sid] = { seg: seg, name: name, state: stateEl, tx: tx, rx: rx, txWrap: txWrap, rxWrap: rxWrap, lastRx: lastRx, rebuild: rebuild }
+		})
+		const tasks = span('sb-group sb-tasks')
+		statusRefs.tasks = TASKS.map(function (t, idx) {
+			const b = document.createElement('button')
+			b.type = 'button'
+			b.className = 'sb-task'
+			b.hidden = true
+			b.dataset.task = String(idx)
+			b.title = t.title
+			const text = span('', '')
+			let dot = null
+			if (t.stateDot) {
+				dot = span('sb-dot-run')
+				b.append(dot)
+			}
+			if (t.noSpin) b.append(text)
+			else b.append(span('sb-spin'), text)
+			tasks.appendChild(b)
+			return { def: t, btn: b, text: text, dot: dot }
+		})
+		const hint = span('sb-hint')
+		hint.append(span('', 'Ctrl/⌘+Enter 发送'), span('', 'Ctrl/⌘+K 命令'))
+		bar.append(left, tasks, hint)
+		if (issueTip) bar.appendChild(issueTip)
+	}
+
+	function updateStatusBar() {
+		const bar = $('serial-statusbar')
+		const hub = window.SerialHub
+		if (!bar || !hub || typeof hub.getStats !== 'function') return
+		const sids = hub.mode === 'dual' ? ['A', 'B'] : ['S']
+		const sig = sids.join(',')
+		if (statusRefs.sig !== sig) {
+			statusRefs.sig = sig
+			buildStatusBar(bar, sids)
+		}
+		const now = Date.now()
+		const logMain = $('log-main')
+		if (logMain) logMain.classList.toggle('wb-connected', sids.some(function (sid) { return hub.getStats(sid).open }))
+		sids.forEach(function (sid) {
+			const r = statusRefs.sessions[sid]
+			const st = hub.getStats(sid)
+			const label = sid === 'S' ? '串口' : (sid === 'A' ? hub.getLabelA() : hub.getLabelB())
+			r.seg.classList.toggle('is-open', !!st.open)
+			r.seg.dataset.sid = sid
+			r.name.textContent = label
+			r.state.textContent = st.open ? fmtDuration(now - st.openedAt) : '未连接'
+			const showNums = st.open || st.txBytes > 0 || st.rxBytes > 0
+			r.txWrap.hidden = !showNums
+			r.rxWrap.hidden = !showNums
+			r.tx.textContent = fmtBytes(st.txBytes)
+			r.rx.textContent = fmtBytes(st.rxBytes)
+			r.lastRx.hidden = !st.open
+			if (st.open) {
+				const age = st.lastRxAt ? '上次接收 ' + Math.max(0, Math.floor((now - st.lastRxAt) / 1000)) + 's 前' : '未收到'
+				r.lastRx.textContent = age + (st.receivePaused ? ' · 接收暂缓' : '')
+			}
+			r.rebuild.disabled = !st.open || hub.isOpening(sid)
+			r.rebuild.setAttribute('aria-label', label + '：重建接收')
+		})
+		statusRefs.tasks.forEach(function (t) {
+			const running = t.def.running()
+			t.btn.hidden = !running
+			if (running) {
+				t.text.textContent = t.def.text()
+				if (t.dot && t.def.dotState) {
+					const st = t.def.dotState()
+					t.dot.dataset.state = st
+					t.btn.title = t.def.title + (st === 'running' ? ' · 运行中' : st === 'error' ? ' · 异常' : ' · 等待')
+				}
+			}
+		})
+	}
+
+	// ---------- 外壳 ----------
+	// index.html 里的节点是来源：启动时把要用的节点原样搬到新宿主(不克隆，事件绑定与控件状态跟着节点走)，只搬一次
+
+	// 固件升级面板并进固件打包页；平台没有固件打包视图(移动端)时留在停靠区
+	function fwInPackView() {
+		return !window.AppPlatform || window.AppPlatform.has('view.firmware-pack')
+	}
+
+	// 对注册定义的覆盖：解析变成右栏第一个标签「检查器」，固件升级并进固件打包页
+	const PROFILE = {
+		parse: function () {
+			return { el: inspectorEl(), title: '检查器', label: '检查器', icon: 'icon-search', order: -1, docks: ['right'], defDock: 'right', fixed: false }
+		},
+		firmware: function () {
+			return fwInPackView() ? { hidden: true, view: 'view-fw-pack' } : null
+		},
+	}
+
+	let inspector = null
+
+	function mk(tag, cls, text) {
+		const n = document.createElement(tag)
+		if (cls) n.className = cls
+		if (text != null) n.textContent = text
+		return n
+	}
+
+	function inspectorEl() {
+		if (inspector) return inspector.pane
+		const pane = mk('div', 'tab-pane d-flex flex-column wb-pane wb-inspector')
+		pane.id = 'wb-pane-inspector'
+		pane.setAttribute('role', 'tabpanel')
+		pane.dataset.dockPanel = 'parse'
+		const bar = mk('div', 'wb-inspector-bar')
+		const tools = mk('span', 'wb-inspector-tools')
+		bar.append(mk('span', 'wb-inspector-hint', '点选日志行即解析该行'), tools)
+		const actions = mk('div', 'wb-inspector-actions')
+		actions.setAttribute('role', 'group')
+		actions.setAttribute('aria-label', '基于此帧')
+		const resend = mk('button', 'btn btn-sm btn-outline-secondary')
+		resend.type = 'button'
+		resend.id = 'wb-frame-resend'
+		resend.append(iconEl('icon-refresh-cw'), document.createTextNode(' 重发此帧'))
+		const save = mk('button', 'btn btn-sm btn-outline-secondary')
+		save.type = 'button'
+		save.id = 'wb-frame-save'
+		save.append(iconEl('icon-zap'), document.createTextNode(' 存为快捷发送'))
+		actions.append(mk('span', 'wb-inspector-actions-title', '基于此帧'), resend, save)
+		// 结构化视图由 js/modern-inspector.js 往 view 里画；原协议解析面板(HEX 输入区 + 输出)放进可折叠的「原始输出」
+		const view = mk('div', 'wb-insp-view')
+		view.id = 'wb-insp-view'
+		view.tabIndex = -1
+		const raw = mk('details', 'wb-insp-raw')
+		raw.id = 'wb-insp-raw'
+		raw.appendChild(mk('summary', 'wb-insp-raw-sum', '原始输出 / 手动粘贴 HEX'))
+		const rawBody = mk('div', 'wb-insp-raw-body')
+		raw.appendChild(rawBody)
+		pane.append(bar, view, actions, raw)
+		resend.addEventListener('click', async function () {
+			const api = window.serialFrameActions
+			if (!api || resend.disabled) return
+			// 口没开时 writeRaw 自己记错误行/弹提示，这里只兜住异常
+			try { await api.resend() } catch (e) { /* 已由串口层提示 */ }
+		})
+		save.addEventListener('click', function () {
+			const api = window.serialFrameActions
+			if (api && !save.disabled) api.saveQuick()
+			syncFrameActions()
+		})
+		inspector = { pane: pane, tools: tools, actions: actions, resend: resend, save: save, view: view, rawBody: rawBody }
+		return pane
+	}
+
+	// 「基于此帧」按钮跟着日志选中行走：重发只认 TX 行
+	function syncFrameActions() {
+		if (!inspector) return
+		const api = window.serialFrameActions
+		const f = api ? api.selected() : null
+		inspector.resend.disabled = !f || f.dir !== 'tx'
+		inspector.save.disabled = !f
+		inspector.resend.title = !f ? '先在日志里点选一行' : (f.dir === 'tx' ? '把这一帧原样发到当前主发口（不追加 CRLF）' : '只有发送(TX)行可以重发')
+		inspector.save.title = f ? '把这一帧的 HEX 加入当前快捷发送分组' : '先在日志里点选一行'
+	}
+
+	function park(node, parent, before) {
+		if (!node || !node.parentNode || !parent) return
+		parent.insertBefore(node, before || null)
+	}
+
+	function host(tag, id, cls) {
+		const n = mk(tag, cls)
+		n.id = id
+		return n
+	}
+
+	function mountShell() {
+		const views = $('views')
+		// S1/S2：连接条、状态栏挪到三个视图共用的全局顶栏/底栏(#app-shell 的网格行)
+		if (views) {
+			const top = host('div', 'app-topbar')
+			const bottom = host('div', 'app-statusbar')
+			views.before(top)
+			views.after(bottom)
+			park($('serial-connect-bar'), top)
+			park($('serial-statusbar'), bottom)
+		}
+		// S3：解析正文与锁定/清空进检查器
+		inspectorEl()
+		park($('serial-parse-lock'), inspector.tools)
+		park($('serial-parse-clear'), inspector.tools)
+		park($('serial-parse-body'), inspector.rawBody)
+		// S4：固件升级面板放进固件打包页
+		const fwView = $('view-fw-pack')
+		const fw = find('firmware')
+		if (fwView && fw && fwInPackView()) {
+			const sec = host('section', 'fw-pack-upgrade', 'fw-pack-upgrade')
+			sec.setAttribute('aria-label', '固件升级')
+			const head = mk('div', 'fw-pack-upgrade-head')
+			head.append(iconEl('icon-cpu'), mk('span', 'fw-pack-upgrade-title', '固件升级'), mk('span', 'view-bar-sub', '经顶部串口连接收发'))
+			sec.appendChild(head)
+			fwView.appendChild(sec)
+			sec.appendChild(fw.base.el)
+		}
+	}
+
+	// ---------- 初始化 ----------
+
+	function init() {
+		registerBuiltins()
+		// 面板已按覆盖项注册，这里只搬非面板节点
+		mountShell()
+		ready = true
+		render()
+		// 右栏没有面板时不保留空栏
+		if (!inDock('right').length) setDockCollapsed('right', true)
+
+		const bar = $('wb-dock-bar')
+		if (bar) {
+			bar.addEventListener('click', function (e) {
+				const b = e.target.closest('.wb-dock-btn')
+				if (b) toggle(b.dataset.dockPanel)
+			})
+		}
+		const tabs = $('wb-bottom-tabs')
+		if (tabs) {
+			tabs.addEventListener('click', function (e) {
+				const b = e.target.closest('.wb-bottom-tab')
+				if (b) open(b.dataset.dockPanel)
+			})
+		}
+		const on = function (id, fn) {
+			const el = $(id)
+			if (el) el.addEventListener('click', fn)
+		}
+		on('wb-right-close', function () { setDockCollapsed('right', true); renderBar() })
+		on('wb-right-move', function () { move(state.right, 'bottom') })
+		on('wb-bottom-close', function () { setDockCollapsed('bottom', true); renderBar() })
+		on('wb-bottom-move', function () { move(state.bottom, 'right') })
+		const sb = $('serial-statusbar')
+		if (sb) {
+			sb.addEventListener('click', function (e) {
+				const b = e.target.closest('.sb-task')
+				const def = b && TASKS[Number(b.dataset.task)]
+				if (def) def.open()
+			})
+		}
+
+		// 拖拽条 / 解析面板标题栏 / 命令面板也会开合停靠区，按钮高亮跟着走
+		const watch = new MutationObserver(function () { renderBar() })
+		const main = $('main')
+		const parsePanel = $('serial-parse-panel')
+		if (main) watch.observe(main, { attributes: true, attributeFilter: ['class'] })
+		if (parsePanel) watch.observe(parsePanel, { attributes: true, attributeFilter: ['class'] })
+
+		initConnectBarTools()
+		updateStatusBar()
+		// 复用后台任务/连接状态的现有 1s 刷新，不另建接收计时器。
+		// 状态栏是三个视图共用的，不在串口视图时也要刷新
+		setInterval(function () {
+			if (document.hidden) return
+			updateStatusBar()
+			syncFrameActions()
+		}, 1000)
+
+		document.addEventListener('serial-log-select', syncFrameActions)
+		syncFrameActions()
+	}
+
+	window.Workbench = {
+		// 安装更新前复用后台任务的真实运行判据，不依赖状态栏是否可见。blocksUpdate 为 false 的任务(循环发送、常驻的 MCP 服务)不阻止更新
+		updateBlockers: function () {
+			return TASKS.filter(function (t) { return t.blocksUpdate !== false && t.running() }).map(function (t) { return t.label })
+		},
+		refreshStatus: function () { if (ready) updateStatusBar() },
+		// 检查器里放结构化视图的节点(还没建过时为 null)
+		inspectorView: function () { return inspector ? inspector.view : null },
+		registerPanel: registerPanel,
+		open: open,
+		toggle: toggle,
+		move: move,
+		// 协议变化影响面板可用性（曲线依赖 metrics）：非卡片面板手动触发重算
+		refreshAvailability: function () { if (ready) refreshAvailability() },
+		isShown: function (id) {
+			const p = find(id)
+			return !!(p && isShown(p))
+		},
+		list: function () {
+			return sorted(panels.filter(function (p) { return !p.hidden })).map(function (p) {
+				return { id: p.id, title: p.title, dock: p.dock, docks: p.docks.slice(), shown: isShown(p), available: isAvailable(p) }
+			})
+		},
+	}
+
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', init)
+	} else {
+		init()
+	}
+})()

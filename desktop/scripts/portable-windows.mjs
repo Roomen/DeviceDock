@@ -81,8 +81,8 @@ export function packageWindows({ desktop, version, channel, target, debug = fals
 		writeFileSync(join(staging, README_ENTRY), readmeText(version), 'utf8')
 		// 路径经环境变量传给 PowerShell，避免空格、引号等进入脚本语法。
 		const archive = join(staging, name)
-		const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Compress-Archive -LiteralPath (Join-Path $env:DEVICEDOCK_ZIP_STAGE "DeviceDock.exe"),(Join-Path $env:DEVICEDOCK_ZIP_STAGE "devicedock-updater.exe"),(Join-Path $env:DEVICEDOCK_ZIP_STAGE "README.txt") -DestinationPath $env:DEVICEDOCK_ZIP_OUT -CompressionLevel Optimal -Force'], {
-			stdio: 'inherit', env: { ...env, DEVICEDOCK_ZIP_STAGE: staging, DEVICEDOCK_ZIP_OUT: archive }
+		const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Compress-Archive -LiteralPath (Join-Path $env:SERIAL_ZIP_STAGE "DeviceDock.exe"),(Join-Path $env:SERIAL_ZIP_STAGE "devicedock-updater.exe"),(Join-Path $env:SERIAL_ZIP_STAGE "README.txt") -DestinationPath $env:SERIAL_ZIP_OUT -CompressionLevel Optimal -Force'], {
+			stdio: 'inherit', env: { ...env, SERIAL_ZIP_STAGE: staging, SERIAL_ZIP_OUT: archive }
 		})
 		if (result.error || result.status !== 0 || !existsSync(archive)) throw new Error('Windows ZIP 打包失败', { cause: result.error })
 		// 只有配了更新签名才签：本地无签名构建仍可手动解压使用，但不会被客户端当成可安装的更新

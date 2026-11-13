@@ -1,7 +1,0 @@
-# Example packages carry fixed content digests: manifest.integrity for page plugins and
-# generated .ddnative package integrity over ui.html. A checkout that rewrites line endings
-# (core.autocrlf on Windows runners) would change those bytes and fail integrity verification,
-# so these sources are pinned to LF in every checkout.
-examples/page-plugin/* text eol=lf
-examples/native-process/* text eol=lf
-examples/native-process/**/* text eol=lf

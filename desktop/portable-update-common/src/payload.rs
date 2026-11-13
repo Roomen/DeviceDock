@@ -139,7 +139,7 @@ mod tests {
 	#[test]
 	fn names_are_matched_exactly_not_case_insensitively() {
 		// Windows 文件系统不分大小写，所以白名单按字节精确比对：名字写法一变就当缺文件处理
-		let zip = build(&[("serial debug.exe", b"exe")]);
+		let zip = build(&[("devicedock.exe", b"exe")]);
 		assert!(extract(&zip, &["DeviceDock.exe"], &LIMITS).is_err());
 	}
 

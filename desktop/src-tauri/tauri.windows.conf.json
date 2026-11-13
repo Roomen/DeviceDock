@@ -1,0 +1,7 @@
+{
+	"bundle": {
+		"active": false,
+		"targets": [],
+		"createUpdaterArtifacts": false
+	}
+}

@@ -152,6 +152,9 @@ pub fn release_destroyed(state: &ClassicState, label: &str) {
 		let _ = drain(release);
 	});
 }
+pub fn release_owner(state: &ClassicState, label: &str) -> Result<(), String> {
+	drain(state.release(label))
+}
 #[tauri::command]
 pub async fn classic_release_owned(webview: tauri::Webview, state: State<'_, ClassicState>) -> Result<u64, String> {
 	let release = state.release(webview.label());

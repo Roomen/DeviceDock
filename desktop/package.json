@@ -1,13 +1,13 @@
 {
-  "name": "devicedock-desktop",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "node scripts/tauri.mjs build",
-    "dev": "node scripts/tauri.mjs dev",
-    "check": "cargo test --manifest-path src-tauri/Cargo.toml --lib"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "2.12.2"
-  }
+	"name": "devicedock-desktop",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "node scripts/tauri.mjs dev",
+		"build": "node scripts/tauri.mjs build",
+		"tauri": "node scripts/tauri.mjs"
+	},
+	"devDependencies": {
+		"@tauri-apps/cli": "2.12.2"
+	}
 }

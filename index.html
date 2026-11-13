@@ -1,101 +1,1124 @@
-<!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' devicedock-extension: http://devicedock-extension.localhost; style-src 'self' 'unsafe-inline'; connect-src 'self' devicedock-extension: http://devicedock-extension.localhost https: ipc: http://ipc.localhost; img-src 'self' data:; worker-src 'self' blob:; frame-src 'self' devicedock-native: http://devicedock-native.localhost; object-src 'none'; base-uri 'self'"><title>DeviceDock · 通信工作台</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="vendor/xterm.css"><script src="vendor/xterm.js"></script><script src="vendor/xterm-fit.js"></script><script src="vendor/ansi_up.js"></script><script type="module" src="src/app.js"></script></head>
+<!DOCTYPE html>
+<html lang="en" data-layout="modern">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#1c1c1e" media="(prefers-color-scheme: dark)">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <title>DeviceDock · 通信调试</title>
+
+    <link href="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.2.3/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/lucide-static@1.62.0/font/lucide.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css" rel="stylesheet">
+
+    <script src="https://cdn.bootcdn.net/ajax/libs/twitter-bootstrap/5.2.3/js/bootstrap.bundle.min.js"></script>
+
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/icons.css">
+    <link rel="stylesheet" href="css/fonts.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+    <link rel="icon" href="imgs/logo.svg" type="image/svg+xml">
+    <link rel="mask-icon" href="imgs/logo.svg" color="#007aff">
+    <script src="js/platform.js"></script>
+    <script>
+        (function () {
+            // 主题三档：light / dark 为手动选择，其余(未设置)跟随系统；首屏前就定下，避免闪烁
+            var t = localStorage.getItem('serial-debug-theme')
+            if (t !== 'light' && t !== 'dark') {
+                t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+            }
+            document.documentElement.setAttribute('data-theme', t)
+            // 视图(列表/聊天)：同样首屏前定下；缺省即列表。单双路共用这一份偏好，存储键与 data-dual-view 属性沿用旧名。
+            // 界面布局只有一套，html 上的 data-layout 固定为 modern
+            var dualView = 'list'
+            try {
+                if (localStorage.getItem('serial-debug-dual-view') === 'bubble') dualView = 'bubble'
+            } catch (e) { /* 存储不可用时按默认 */ }
+            document.documentElement.dataset.dualView = dualView
+            // 布局切换已移除：老用户存的布局选择不再有人读，清掉免得排查时误以为它还生效
+            try { localStorage.removeItem('serial-debug-layout') } catch (e) { /* 忽略 */ }
+        })()
+    </script>
+    <script>
+        hideTop = function () {
+            var header = document.querySelector('.bd-header');
+            header.remove();
+            document.documentElement.style.setProperty('--top-height', '0px');
+        }
+    </script>
+</head>
+
 <body>
-<header><a class="brand" href="./">D<span>DeviceDock</span></a><span class="subtitle">通信工作台</span><span id="platform" class="badge"></span><button id="open-commands">命令面板</button><span class="version">v0.2.0</span></header>
-<main>
-<nav id="main-nav" aria-label="主导航"></nav>
-<div class="workspace">
-<section id="workbench" class="page workbench">
- <div class="workbench-bar">
-  <strong class="bar-title">通信调试</strong>
-  <label id="dual-label" class="switch"><input id="dual" type="checkbox"><span>B 路</span></label>
- </div>
- <div id="lanes"></div>
-</section>
+    <div id="issue-tip" class="issue-tip" data-feature="shell.browser" hidden>
+        <span class="issue-tip-text">发现 Bug 或有改进建议，到
+            <a href="https://github.com/Roomen/DeviceDock/issues" target="_blank" rel="noopener">GitHub Issues</a>
+            提交
+        </span>
+        <button type="button" id="issue-tip-close" class="issue-tip-close" title="关闭" aria-label="关闭">
+            <i class="icon icon-x"></i>
+        </button>
+    </div>
+    <header class="bd-header bg-dark py-3 d-flex align-items-stretch border-bottom border-dark">
+        <div class="container-fluid d-flex align-items-center">
+            <h1 class="d-flex align-items-center fs-4 text-white mb-0">
+                <img src="imgs/logo.svg" width="38" height="30" class="me-3" alt="DeviceDock">
+                DeviceDock
+            </h1>
+            <span class="ms-auto">
+                <a href="javascript:hideTop()" class="link-light ml-2">隐藏头部</a>
+            </span>
+        </div>
+    </header>
 
-<section id="extensions" class="page" hidden>
- <div class="page-heading"><div><small>EXTENSIONS</small><h1>扩展管理</h1><p>安装只保存包；逐包信任该版本后才能启用。启用后每个带界面的插件拥有独立页面入口。</p></div></div>
- <div class="panel">
-  <div class="actions"><label class="file-button">导入本地扩展包 <input id="package-file" type="file" accept=".json"></label><span class="muted">本地 JSON 包由集成工具生成；也可在设置的“插件与来源”中安装仓库版本。</span></div>
-  <div id="package-list"></div>
- </div>
- <div class="panel">
-  <h2>信任记录</h2>
-  <p class="muted">信任按「来源 + 包 ID + 版本 + 内容摘要」分别记录。新版本或不同来源必须重新授权；撤销信任会同时停用该包。参数导入不会恢复信任。</p>
-  <div id="trust-list"></div>
- </div>
-</section>
+    <div id="app-shell" class="d-flex">
+        <!--最左侧工具导航栏-->
+        <nav id="activity-rail">
+            <div class="rail-top">
+                <button class="rail-item active" data-view="view-serial" title="通信调试">
+                    <i class="icon icon-lg icon-terminal"></i>
+                    <span class="rail-label">通信调试</span>
+                </button>
+                <button class="rail-item" data-view="view-fw-pack" data-feature="view.firmware-pack" title="固件打包">
+                    <i class="icon icon-lg icon-package"></i>
+                    <span class="rail-label">固件打包</span>
+                </button>
+                <button class="rail-item" data-view="view-ble" data-feature="view.ble" title="USB BLE 桥 · 外置桥连接与 GATT 配置"><i class="icon icon-lg icon-bluetooth"></i><span class="rail-label">USB BLE 桥</span></button>
+            </div>
+            <div class="rail-bottom">
+                <div class="dropend rail-config">
+                    <button class="rail-item" id="rail-config-btn" type="button" title="配置：导入 / 导出 / 重置"
+                        data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="icon icon-lg icon-sliders"></i>
+                        <span class="rail-label">配置</span>
+                    </button>
+                    <ul class="dropdown-menu rail-config-menu" aria-labelledby="rail-config-btn">
+                        <li><button class="dropdown-item" type="button" id="serial-import"><i class="icon icon-folder-plus"></i> 导入配置…</button></li>
+                        <li><button class="dropdown-item" type="button" id="serial-export"><i class="icon icon-folder-symlink"></i> 导出配置</button></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><button class="dropdown-item" type="button" id="serial-protocol-sources" data-feature="panel.protocol-sources"><i class="icon icon-plug"></i> 协议来源…</button></li>
+                        <li data-feature="plugins"><button class="dropdown-item" type="button" id="serial-plugins-manage" data-feature="plugins"><i class="icon icon-layout-grid"></i> 插件…</button></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><button class="dropdown-item text-danger" type="button" id="serial-reset"><i class="icon icon-rotate-ccw"></i> 重置所有参数…</button></li>
+                    </ul>
+                </div>
+                <div class="dropend rail-theme">
+                    <button class="rail-item" id="rail-theme-btn" type="button" title="主题：跟随系统"
+                        data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="icon icon-lg icon-contrast"></i><span class="rail-label">主题</span>
+                    </button>
+                    <div class="dropdown-menu rail-theme-menu" aria-labelledby="rail-theme-btn">
+                        <div id="theme-switch" role="radiogroup" aria-label="主题">
+                            <button type="button" role="radio" data-theme-choice="auto"><i class="icon icon-contrast"></i><span>跟随系统</span><i class="icon icon-check theme-check"></i></button>
+                            <button type="button" role="radio" data-theme-choice="light"><i class="icon icon-sun"></i><span>浅色</span><i class="icon icon-check theme-check"></i></button>
+                            <button type="button" role="radio" data-theme-choice="dark"><i class="icon icon-moon-star"></i><span>深色</span><i class="icon icon-check theme-check"></i></button>
+                        </div>
+                    </div>
+                </div>
+                <a href="https://github.com/Roomen/DeviceDock/issues/new" target="_blank" rel="noopener" class="rail-item" data-feature="shell.browser" title="提交建议 / Bug">
+                    <i class="icon icon-lg icon-message-circle-more"></i>
+                    <span class="rail-label">反馈</span>
+                </a>
+                <a href="https://github.com/Roomen/DeviceDock" target="_blank" rel="noopener" class="rail-item" data-feature="shell.browser" title="GitHub 仓库">
+                    <i class="icon icon-lg icon-globe"></i>
+                    <span class="rail-label">GitHub</span>
+                </a>
+                <a href="https://github.com/Roomen/DeviceDock/releases" target="_blank" rel="noopener" class="rail-item" id="rail-download" data-feature="shell.browser" title="下载客户端">
+                    <i class="icon icon-lg icon-download"></i>
+                    <span class="rail-label">客户端</span>
+                </a>
+                <div class="rail-version" id="app-version" title="应用版本"></div>
+            </div>
+        </nav>
 
-<section id="settings" class="page" hidden>
- <div class="page-heading"><div><small>SETTINGS</small><h1>设置</h1><p>MCP 服务、应用更新、插件来源、参数预设与备份。</p></div></div>
- <div class="settings-layout">
-  <nav class="subnav" id="settings-nav" aria-label="设置分组">
-   <button data-settings="appearance" aria-pressed="true">界面</button>
-   <button data-settings="presets" aria-pressed="false">参数与备份</button>
-   <button data-settings="sources" aria-pressed="false">插件与来源</button>
-   <button data-settings="services" aria-pressed="false">客户端服务</button>
-   <button data-settings="native" aria-pressed="false">原生插件</button>
-  </nav>
-  <div class="settings-panels">
-   <div data-settings-panel="appearance">
-    <div class="panel"><h2>主题</h2>
-     <div class="theme-choice" id="theme-choice">
-      <label><input type="radio" name="theme" value="auto">跟随系统</label>
-      <label><input type="radio" name="theme" value="light">浅色</label>
-      <label><input type="radio" name="theme" value="dark">深色</label>
-     </div>
-     <p class="muted">主题立即生效并保存。命令面板中的切换与这里使用同一份设置。</p>
-    </div>
-    <div class="panel"><h2>界面密度</h2>
-     <div class="theme-choice" id="density-choice">
-      <label><input type="radio" name="density" value="compact">紧凑</label>
-      <label><input type="radio" name="density" value="comfortable">舒适</label>
-     </div>
-     <p class="muted">紧凑模式缩小行高与内边距，便于在双路分屏下同时观察日志。</p>
-    </div>
-   </div>
-   <div data-settings-panel="presets" hidden>
-    <div class="panel"><h2>参数预设</h2>
-     <div class="actions"><select id="preset-list" aria-label="参数预设"></select><input id="preset-name" placeholder="预设名称"><button id="preset-save">保存当前配置</button><button id="preset-apply">套用</button><button id="preset-rename">重命名</button><button id="preset-delete">删除</button><button id="preset-export">导出</button><label>导入新旧预设 JSON<input id="preset-import" type="file" accept=".json"></label></div>
-     <p class="muted">单路 / 双路预设保存串口参数、协议与路标签，不包含设备授权。</p>
-    </div>
-    <div class="panel"><h2>参数导入与备份</h2>
-     <div class="actions"><button id="settings-export">导出核心参数</button><label>导入 DeviceDock / 旧版参数<input id="settings-import" type="file" accept=".json"></label><button id="settings-reset">重置核心参数</button></div>
-     <p class="muted">只包含界面、路参数、日志显示与快捷指令。信任决定、已启用包、发送历史和设备别名不在备份范围内。</p>
-    </div>
-   </div>
-   <div data-settings-panel="sources" hidden>
-    <div class="panel"><h2>仓库来源</h2>
-     <p class="muted">来源只提供目录，不会在添加后执行任何代码。离线时保留最近验证的目录。</p>
-     <form id="source-form" class="source-form"><select id="source-kind"><option value="protocol">协议仓库</option><option value="plugin">插件仓库</option></select><input id="source-url" type="url" required placeholder="https://github.com/组织/仓库" aria-label="仓库 URL"><button>添加来源</button></form>
-    </div>
-    <div id="source-list"></div>
-   </div>
-   <div data-settings-panel="services" hidden>
-    <div class="panel"><h2>客户端服务</h2><div id="native-controls"><p id="shell-info">原生 MCP 与应用更新仅在桌面客户端提供。</p><div class="actions"><label>MCP 端口<input id="mcp-port" type="number" min="1024" max="65535" value="32123"></label><button id="mcp-start">启动 MCP</button><button id="mcp-stop">停止 MCP</button></div><p id="mcp-state">未启动</p><label>持久令牌<input id="mcp-token" type="password" readonly autocomplete="off"></label><button id="mcp-reveal">显示 / 隐藏令牌</button><button id="mcp-regenerate">重新生成令牌</button><p>只允许本机非浏览器客户端访问。工具目录按窗口同步；已有调用继续执行，停用所属扩展会中止其调用。</p><div class="actions"><button id="update-check">检查应用更新</button><button id="update-install" disabled>安装已检查的更新</button><button id="new-window">新建窗口</button></div><p id="update-state">尚未检查更新</p></div></div>
-   </div>
-   <div data-settings-panel="native" hidden>
-    <div class="panel"><h2>原生插件进程</h2><div id="native-plugin-list" class="native-plugin-list"><p class="muted">正在检测原生插件支持…</p></div></div>
-   </div>
-  </div>
- </div>
-</section>
+        <!--视图容器-->
+        <div id="views">
+            <!--通信调试视图-->
+            <div id="view-serial" class="app-view active">
+                <!--顶部连接条-->
+                <div id="serial-connect-bar">
+                    <!-- 单路/双路模式切换 -->
+                    <div class="connect-bar-section connect-bar-mode" data-feature="lane.dual">
+                        <div class="serial-mode-toggle ctl-seg">
+                            <button class="serial-mode-btn active" data-mode="single" id="serial-mode-single">单路</button>
+                            <button class="serial-mode-btn" data-mode="dual" id="serial-mode-dual">双路</button>
+                        </div>
+                    </div>
 
-<div id="plugin-pages" class="plugin-pages"></div>
-<div id="native-plugin-pages" class="plugin-pages"></div>
-<div id="extension-mounts" hidden></div>
-</div>
-</main>
-<div id="status" role="status" aria-live="polite">就绪 · 尚未连接设备</div>
-<dialog id="command-dialog"><form method="dialog"><button>关闭</button></form><input id="command-search" placeholder="查找命令"><div id="command-list"></div></dialog>
-<dialog id="port-dialog"><form method="dialog"><h2>选择串口</h2><select id="native-port" aria-label="可用串口"></select><div class="actions"><button value="cancel">取消</button><button value="open">选择</button></div></form></dialog>
-<template id="lane-template"><article class="lane"><header class="lane-heading"><h2>A 路</h2><input class="lane-label" maxlength="8" placeholder="标签"><span class="device-name"></span><span class="connection-state">未连接</span><select class="transport" aria-label="传输方式"></select><button class="connect primary">连接设备</button></header>
-<div class="lane-config settings"><label>波特率<input class="baud" type="number" min="1" max="4000000" value="115200"></label><label>协议<select class="protocol"><option value="">原始数据</option></select></label><details class="inline-details"><summary>串口参数</summary><div class="param-grid"><label>数据位<select class="data-bits"><option>8</option><option>7</option></select></label><label>停止位<select class="stop-bits"><option>1</option><option>2</option></select></label><label>校验<select class="parity"><option value="none">无</option><option value="even">偶校验</option><option value="odd">奇校验</option></select></label><label>流控<select class="flow-control"><option value="none">无</option><option value="hardware">硬件</option></select></label><label>接收缓冲区<input class="buffer-size" type="number" min="1" max="16777216" value="1024"></label><label class="switch"><input class="auto-reconnect" type="checkbox">插回后自动重连</label></div></details></div>
-<div class="log-bar"><strong>收发日志</strong><select class="display" aria-label="日志格式"><option value="hex">HEX</option><option value="text">TEXT</option><option value="both">HEX + TEXT</option><option value="parse">解析</option><option value="hexparse">HEX + 解析</option><option value="ansi">ANSI 文本</option><option value="term">交互终端</option></select><input class="log-search" placeholder="搜索 HEX / 文本" aria-label="搜索日志"><select class="log-direction" aria-label="日志方向"><option value="all">全部方向</option><option value="rx">RX</option><option value="tx">TX</option><option value="system">系统</option></select><label class="switch"><input class="auto-scroll" type="checkbox" checked>自动滚动</label><button class="clear">清空</button><button class="export">导出</button><details class="inline-details log-more"><summary>日志工具</summary><div class="tool-grid"><label>分行<select class="split-mode" aria-label="日志分行"><option value="chunk">原始接收块</option><option value="time">按间隔合并</option><option value="line">按换行符分行</option></select></label><label>合并间隔 ms<input class="split-time" type="number" aria-label="合并间隔 ms" value="200" min="0" max="60000"></label><label>保留行数<input class="max-rows" type="number" min="100" max="100000" value="10000"></label><label>导出格式<select class="log-export-format" aria-label="导出格式"><option value="jsonl">JSONL（可重放）</option><option value="text">文本日志</option></select></label><button class="replay">重新解析</button><label class="switch"><input class="pause-log" type="checkbox">暂停显示</label><label>导入日志<input class="import-log" type="file" accept=".ndjson,.jsonl"></label><button class="live-log">返回实时日志</button><button class="copy-log">复制日志</button><button class="select-all">选择全部可见日志</button><button class="select-none">取消选择</button><span class="selection-info"></span></div></details></div>
-<div class="logs" aria-label="收发日志"><p class="empty">连接设备后，这里将显示原始收发数据。</p></div>
-<div class="terminal" hidden></div>
-<form class="send-form"><select class="send-format" aria-label="发送格式"><option value="hex">HEX</option><option value="text">TEXT</option></select><input class="send-input" placeholder="输入待发送数据，如 68 01 02 16" aria-label="待发送内容"><div class="send-suffix"><label><input class="crlf" type="checkbox">CRLF</label><label><input class="append-cr" type="checkbox">CR</label><label><input class="append-lf" type="checkbox">LF</label><label><input class="append-nul" type="checkbox">NUL</label></div><button class="primary">发送</button></form>
-<details class="send-extra"><summary>发送历史 · 循环 / 文件发送</summary><div class="send-meta"><select class="send-history" aria-label="发送历史"></select><button class="clear-history">清空历史</button><label>间隔 ms<input class="send-interval" type="number" value="1000" min="20"></label><label>次数（0 为持续）<input class="send-count" type="number" value="0" min="0"></label><button class="repeat-send">循环发送</button><button class="stop-send">停止任务</button><label class="file-button">发送原始文件<input class="send-file" type="file"></label></div></details>
-<details class="lane-advanced"><summary>高级工具</summary><div class="advanced-grid"><section><h3>设备与预设</h3><div class="actions"><input class="device-alias" placeholder="设备别名（强身份可持久保存）"><button class="save-alias">保存别名</button><button class="save-preset">保存参数预设</button><button class="load-preset">套用参数预设</button><label><input class="dtr" type="checkbox">DTR</label><label><input class="rts" type="checkbox">RTS</label><label><input class="break" type="checkbox">BREAK</label><button class="set-signals">设置控制信号</button></div></section><section><h3>快捷发送</h3><div class="actions"><select class="quick-group" aria-label="快捷分组"></select><input class="quick-group-name" placeholder="分组名称"><button class="quick-group-add">新增分组</button><button class="quick-group-rename">重命名分组</button><button class="quick-group-delete">删除分组</button><button class="quick-export">导出指令</button><label>导入新旧指令 JSON<input class="quick-import" type="file" accept=".json"></label><input class="quick-name" placeholder="快捷指令名称"><button class="quick-add">保存当前发送</button></div><div class="quick-list"></div></section></div></details>
-</article></template>
-</body></html>
+                    <!-- 串口参数卡：启动时由 js/modern-shell.js 搬进连接栏的每路菜单(双路两路参数各自独立)；摘要键本身不显示，只作命令面板入口 -->
+                    <div class="connect-bar-section connect-bar-params">
+                        <div class="dropdown" id="serial-params-dropdown">
+                            <button type="button" class="serial-params-summary" id="serial-params-summary"
+                                data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                                title="串口参数">
+                                <i class="icon icon-sliders-horizontal"></i>
+                                <span id="serial-params-summary-text">115200 8-N-1</span>
+                                <i class="icon icon-chevron-down serial-params-summary-arrow"></i>
+                            </button>
+                            <div class="dropdown-menu" id="serial-params-popover">
+                                <div class="serial-settings-card">
+                                    <div class="serial-settings-title">
+                                        <i class="icon icon-sliders-horizontal"></i> 串口参数
+                                    </div>
+                                    <div class="serial-field">
+                                        <label class="serial-field-label"><i class="icon icon-gauge"></i> 波特率</label>
+                                        <div class="serial-baud-combo" id="baud-combo">
+                                            <input type="text" id="serial-baud" class="form-control serial-field-input" placeholder="选择或输入" value="115200" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
+                                            <i class="icon icon-chevron-down serial-baud-arrow"></i>
+                                            <ul class="serial-baud-dropdown" id="baud-dropdown">
+                                                <li data-value="2400">2400</li>
+                                                <li data-value="4800">4800</li>
+                                                <li data-value="9600">9600</li>
+                                                <li data-value="14400">14400</li>
+                                                <li data-value="19200">19200</li>
+                                                <li data-value="28800">28800</li>
+                                                <li data-value="38400">38400</li>
+                                                <li data-value="57600">57600</li>
+                                                <li data-value="76800">76800</li>
+                                                <li data-value="115200">115200</li>
+                                                <li data-value="230400">230400</li>
+                                                <li data-value="460800">460800</li>
+                                                <li data-value="921600">921600</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                    <div class="serial-field">
+                                        <label class="serial-field-label"><i class="icon icon-hash"></i> 数据位</label>
+                                        <select class="form-select serial-field-input" id="serial-data-bits">
+                                            <option>8</option><option>7</option>
+                                        </select>
+                                    </div>
+                                    <div class="serial-field">
+                                        <label class="serial-field-label"><i class="icon icon-circle-stop"></i> 停止位</label>
+                                        <select class="form-select serial-field-input" id="serial-stop-bits">
+                                            <option>1</option><option>2</option>
+                                        </select>
+                                    </div>
+                                    <div class="serial-field">
+                                        <label class="serial-field-label"><i class="icon icon-shield-check"></i> 校验位</label>
+                                        <select class="form-select serial-field-input" id="serial-parity">
+                                            <option value="none">无</option><option value="even">偶校验</option><option value="odd">奇校验</option>
+                                        </select>
+                                    </div>
+                                    <div class="serial-field">
+                                        <label class="serial-field-label"><i class="icon icon-database"></i> 缓冲区</label>
+                                        <input type="number" id="serial-buffer-size" class="form-control serial-field-input" placeholder="1024" list="buffer-size-list" max="1677216" value="1024">
+                                        <datalist id="buffer-size-list">
+                                            <option>255</option><option>512</option><option>1024</option><option>2048</option><option>4096</option><option>8192</option>
+                                        </datalist>
+                                    </div>
+                                    <div class="serial-field">
+                                        <label class="serial-field-label"><i class="icon icon-arrow-left-right"></i> 流控制</label>
+                                        <select class="form-select serial-field-input" id="serial-flow-control">
+                                            <option value="none">无</option><option value="hardware">硬件</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 单路模式控件 -->
+                    <div class="connect-bar-section connect-bar-main" id="serial-single-ctrl">
+                        <div class="serial-device-chip is-empty" id="serial-chip">
+                            <div id="serial-status">
+                                <div class="serial-status-indicator disconnected">
+                                    <span class="serial-status-dot"></span>
+                                    <span class="serial-status-text">未连接</span>
+                                </div>
+                            </div>
+                            <button class="btn serial-port-btn" id="serial-select-port">
+                                <i class="icon icon-usb"></i> 选择设备
+                            </button>
+                            <button class="btn serial-open-btn" id="serial-open-or-close" title="连接" aria-label="连接" hidden>
+                                <i class="icon icon-plug"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 双路模式控件（默认隐藏） -->
+                    <div class="connect-bar-section connect-bar-dual" id="serial-dual-ctrl" style="display:none">
+                        <!-- 会话 A -->
+                        <div class="dual-session-row">
+                            <input class="dual-session-label" id="serial-session-a-label" data-session="A" value="A路" maxlength="8" title="A路 标签（可编辑）">
+                            <div class="serial-device-chip is-empty" id="serial-chip-a">
+                                <div class="dual-status" id="serial-status-a">
+                                    <div class="serial-status-indicator disconnected">
+                                        <span class="serial-status-dot"></span>
+                                        <span class="serial-status-text">未连接</span>
+                                    </div>
+                                </div>
+                                <button class="btn serial-port-btn dual-port-btn" id="serial-select-port-a">
+                                    <i class="icon icon-usb"></i> 选择
+                                </button>
+                                <button class="btn serial-open-btn dual-open-btn" id="serial-open-or-close-a" title="连接" aria-label="A路 连接" hidden>
+                                    <i class="icon icon-plug"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- 会话 B -->
+                        <div class="dual-session-row">
+                            <input class="dual-session-label" id="serial-session-b-label" data-session="B" value="B路" maxlength="8" title="B路 标签（可编辑）">
+                            <div class="serial-device-chip is-empty" id="serial-chip-b">
+                                <div class="dual-status" id="serial-status-b">
+                                    <div class="serial-status-indicator disconnected">
+                                        <span class="serial-status-dot"></span>
+                                        <span class="serial-status-text">未连接</span>
+                                    </div>
+                                </div>
+                                <button class="btn serial-port-btn dual-port-btn" id="serial-select-port-b">
+                                    <i class="icon icon-usb"></i> 选择
+                                </button>
+                                <button class="btn serial-open-btn dual-open-btn" id="serial-open-or-close-b" title="连接" aria-label="B路 连接" hidden>
+                                    <i class="icon icon-plug"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- 主发口（与 A/B 同行靠右） -->
+                        <div class="dual-active-send">
+                            <span class="dual-active-send-label">主发:</span>
+                            <div class="dual-send-toggle ctl-seg" id="serial-active-send" role="group" aria-label="选择主发送口">
+                                <button type="button" class="dual-send-btn active" data-sid="S" aria-label="单路串口">单</button>
+                                <button type="button" class="dual-send-btn" data-sid="A" aria-label="A路">A</button>
+                                <button type="button" class="dual-send-btn" data-sid="B" aria-label="B路">B</button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 串口预设：单路 / 双路都显示 -->
+                    <div class="connect-bar-section connect-bar-preset">
+                        <!-- 串口预设：单路存参数 + 协议，双路存两路参数 + 协议 + 路标签，一键套用(js/dual-config.js) -->
+                        <div class="dropdown dual-preset" id="serial-dual-preset">
+                            <button type="button" class="dual-preset-btn" id="serial-dual-preset-btn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="串口预设：保存或套用串口参数与协议（双路含两路与路标签，不含设备）">
+                                <i class="icon icon-bookmark-plus"></i><span>预设</span>
+                            </button>
+                            <div class="dropdown-menu dual-preset-menu" id="serial-dual-preset-menu">
+                                <div class="dual-preset-title">串口预设<span id="serial-dual-preset-sub">参数 · 协议，不含设备</span></div>
+                                <div class="dual-preset-list" id="serial-dual-preset-list" role="list"></div>
+                                <form class="dual-preset-save" id="serial-dual-preset-form">
+                                    <input type="text" class="form-control form-control-sm" id="serial-dual-preset-name" maxlength="24" placeholder="给当前串口配置起个名字" aria-label="预设名称" autocomplete="off">
+                                    <button type="submit" class="btn btn-sm btn-primary">保存当前</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 右侧：当前协议(全局唯一的协议选择) + 命令面板入口 -->
+                    <div class="connect-bar-section connect-bar-tools">
+                        <label class="connect-bar-proto" title="当前协议：决定日志解析、协议下发与测试面板使用的协议">
+                            <span class="connect-bar-proto-label">协议</span>
+                            <select class="form-select form-select-sm" id="serial-protocol-select" aria-label="当前协议">
+                                <option value="sek">SEK（默认）</option>
+                            </select>
+                        </label>
+                        <button type="button" class="btn connect-bar-palette" id="wb-palette-btn" title="命令面板（Ctrl/⌘+K）">
+                            <i class="icon icon-command"></i><span class="connect-bar-palette-text">命令</span><kbd>K</kbd>
+                        </button>
+                    </div>
+                    <input type="file" id="serial-import-file" style="display: none;" accept="application/json" />
+                </div>
+                <div id="main">
+                    <!--中间串口日志-->
+                    <div id="log-main">
+                        <!-- 日志标题行本身不显示：里面的控件启动时由 js/modern-shell.js 搬进日志工具条 #mdn-logbar -->
+                        <div class="serial-log-header d-flex justify-content-between flex-wrap align-items-center pt-1 pb-1 mb-1 flex-shrink-0">
+                            <div class="serial-log-headline">
+                                <div class="ctl-seg" id="serial-log-view-seg" role="group" aria-label="日志视图">
+                                    <button type="button" id="serial-log-view-row" aria-pressed="true">行日志</button>
+                                    <button type="button" id="serial-log-view-term" aria-pressed="false">终端</button>
+                                </div>
+                                <span class="serial-log-legend" id="serial-log-legend" aria-hidden="true">
+                                    <span class="serial-log-legend-item" data-leg="left" id="serial-log-legend-left">TX</span>
+                                    <span class="serial-log-legend-item" data-leg="right" id="serial-log-legend-right">RX</span>
+                                </span>
+                                <!-- 仅行日志时显示(见 css 日志工具条段)：列表 / 聊天两种视图，单双路共用 -->
+                                <div class="ctl-seg" id="serial-dual-view-seg" role="group" aria-label="日志视图方式">
+                                    <button type="button" id="serial-dual-view-list" aria-pressed="true">列表</button>
+                                    <button type="button" id="serial-dual-view-bubble" aria-pressed="false">聊天</button>
+                                </div>
+                            </div>
+
+                            <div class="btn-toolbar">
+                                <div class="dropdown me-2" id="serial-log-settings">
+                                    <button type="button" class="serial-log-settings-summary" id="serial-log-settings-btn"
+                                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                                        title="日志设置（格式 / 分包 / 行数）">
+                                        <i class="icon icon-sliders-horizontal"></i>
+                                        <i class="icon icon-chevron-down serial-log-settings-arrow"></i>
+                                    </button>
+                                    <div class="dropdown-menu" id="serial-log-settings-popover">
+                                        <div class="serial-settings-card">
+                                            <div class="serial-settings-title">
+                                                <i class="icon icon-notebook-text"></i> 日志设置
+                                            </div>
+                                            <div class="serial-field">
+                                                <span class="serial-field-label">格式</span>
+                                                <div class="serial-log-format-controls">
+                                                    <!-- 每路一行：上面一行是单路 / 双路 A，B 行与路名只在双路显示 -->
+                                                    <div class="serial-log-fmt-row" id="serial-log-fmt-row-a" role="group" aria-label="日志格式">
+                                                        <span class="serial-log-fmt-lane" id="serial-log-fmt-lane-a" hidden>A</span>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-fmt-hex" aria-pressed="true">HEX</button>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-fmt-text" aria-pressed="false">TEXT</button>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-ansi" aria-pressed="false">ANSI 彩色</button>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-fmt-parse" aria-pressed="false" title="按当前协议解析每一帧，可与 HEX/TEXT 同时显示或单独显示">解析</button>
+                                                    </div>
+                                                    <div class="serial-log-fmt-row" id="serial-log-fmt-row-b" role="group" aria-label="B 路日志格式" hidden>
+                                                        <span class="serial-log-fmt-lane" id="serial-log-fmt-lane-b">B</span>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-fmt-b-hex" aria-pressed="true">HEX</button>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-fmt-b-text" aria-pressed="false">TEXT</button>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-fmt-b-ansi" aria-pressed="false">ANSI 彩色</button>
+                                                        <button type="button" class="ctl-chip-btn" id="serial-log-fmt-b-parse" aria-pressed="false" title="按 B 路协议解析每一帧，可与 HEX/TEXT 同时显示或单独显示">解析</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="serial-field">
+                                                <label class="serial-field-label" for="serial-timer-out">分包</label>
+                                                <div class="ctl-seg serial-split-seg" role="group" aria-label="分包方式">
+                                                    <button type="button" id="serial-split-time" aria-pressed="true" title="按字节间隔超时分包">超时</button>
+                                                    <button type="button" id="serial-split-line" aria-pressed="false" title="按换行(\n / \r\n)分行，抓模组文本日志用；超时只兜底没有换行的残行">换行</button>
+                                                </div>
+                                                <input type="number" id="serial-timer-out" class="form-control serial-field-input"
+                                                    placeholder="0不分包" value="200" min="0" title="分包超时(ms)，0 表示不分包">
+                                            </div>
+                                            <div class="serial-field">
+                                                <label class="serial-field-label" for="serial-max-rows">行数</label>
+                                                <input type="number" id="serial-max-rows" class="form-control serial-field-input"
+                                                    min="100" step="100" value="10000" title="日志超过该行数后从顶部裁剪">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="btn-group serial-log-actions">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary ctl-toggle" id="serial-auto-scroll" aria-pressed="true" title="日志自动滚动到底部" aria-label="自动滚动"><i class="icon icon-chevrons-down"></i><span class="serial-log-action-text">自动滚动</span></button>
+                                    <button class="btn btn-sm btn-outline-secondary" id="serial-clear" title="清空日志" aria-label="清空"><i class="icon icon-trash-2"></i><span class="serial-log-action-text">清空</span></button>
+                                    <button class="btn btn-sm btn-outline-secondary" id="serial-copy" title="复制日志" aria-label="复制"><i class="icon icon-copy"></i><span class="serial-log-action-text">复制</span></button>
+                                    <button class="btn btn-sm btn-outline-secondary" id="serial-save" title="导出日志" aria-label="导出"><i class="icon icon-download"></i><span class="serial-log-action-text">导出</span></button>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- 单路/双路各一套日志，同时只显示当前模式；双路仍是一个合流窗（分色） -->
+                        <div id="serial-log-panes">
+                            <div id="serial-log-mode-single" class="serial-log-mode">
+                                <div id="serial-logs-single" class="serial-logs"></div>
+                                <div id="serial-term-single" class="serial-term-host" hidden></div>
+                            </div>
+                            <div id="serial-log-mode-dual" class="serial-log-mode" hidden>
+                                <div id="serial-logs-dual" class="serial-logs is-dual"></div>
+                                <div id="serial-term-dual" class="serial-term-host" hidden></div>
+                            </div>
+                        </div>
+                        <!--协议解析底部面板：顶缝拖高度，header 只负责折叠-->
+                        <div id="serial-parse-panel" class="is-empty collapsed">
+                            <div id="serial-parse-resizer" title="拖动调整高度"></div>
+                            <div id="serial-parse-header" title="点击折叠/展开">
+                                <span class="serial-parse-title">
+                                    <i class="icon icon-chevron-right serial-parse-chevron"></i>
+                                    <span class="wb-bottom-tabs" id="wb-bottom-tabs" role="tablist" aria-label="底部面板"></span>
+                                </span>
+                                <span class="serial-parse-actions">
+                                    <button class="wb-dock-action ctl-toggle" id="serial-parse-lock" type="button" aria-pressed="false"
+                                        title="锁定：点击日志行时不自动展开协议解析" aria-label="锁定协议解析面板">
+                                        <i class="icon icon-lock-open"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary" id="serial-parse-clear"
+                                        type="button">清空</button>
+                                    <button class="wb-dock-action" id="wb-bottom-move" type="button" title="移到右侧" hidden>
+                                        <i class="icon icon-panel-right"></i>
+                                    </button>
+                                    <button class="wb-dock-action" id="wb-bottom-close" type="button" title="收起底部面板">
+                                        <i class="icon icon-chevron-down"></i>
+                                    </button>
+                                </span>
+                            </div>
+                            <div id="serial-parse-body">
+                                <div id="serial-parse-input">
+                                    <div id="serial-protocol-hexview" class="sk-hex-dump is-empty" tabindex="0" role="button"
+                                        aria-label="协议 HEX 输入区，点击读取剪贴板">
+                                        <div class="sk-hex-empty" aria-hidden="true">
+                                            <div class="sk-hex-empty-main">
+                                                <i class="icon icon-clipboard-plus"></i>
+                                                <span>点击允许读取剪贴板</span>
+                                            </div>
+                                            <div class="sk-hex-empty-sub">首次需浏览器授权一次，之后点击不再弹窗 · 也可 Ctrl/Cmd+V</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="serial-protocol-output" class="rounded p-2 overflow-auto">
+                                </div>
+                            </div>
+                            <!-- 停靠到底部的其它面板挂在这里 -->
+                            <div id="wb-bottom-body" class="tab-content wb-dock-body"></div>
+                        </div>
+                        <div id="serial-send-panel" class="serial-send-area">
+                            <div id="serial-send-header" title="点击折叠/展开">
+                                <span class="serial-send-title">
+                                    <i class="icon icon-chevron-down serial-send-chevron"></i>
+                                    <i class="icon icon-send"></i> 串口发送
+                                </span>
+                            </div>
+                            <div id="serial-send-body">
+                                <div class="send-compose">
+                                    <textarea class="form-control serial-send-textarea" rows="2" id="serial-send-content"
+                                        spellcheck="false" placeholder="输入 HEX，如 41 54 0D 0A"></textarea>
+                                    <button id="serial-send" class="btn btn-primary serial-send-btn" type="button">
+                                        <span class="send-btn-main"><i class="icon icon-send"></i> 发送</span>
+                                        <span class="send-btn-kbd" id="serial-send-kbd">Ctrl+Enter</span>
+                                    </button>
+                                </div>
+                                <div class="send-options">
+                                    <label class="ctl-chip ctl-chip--mono" title="按 HEX 解析输入内容（空格可有可无）">
+                                        <input type="checkbox" id="serial-hex-send"><span>HEX</span>
+                                    </label>
+                                    <label class="ctl-chip ctl-chip--mono" title="发送时在末尾追加回车 0D；与 \n 同时勾选即追加 0D 0A">
+                                        <input type="checkbox" id="serial-add-cr"><span>+ \r</span>
+                                    </label>
+                                    <label class="ctl-chip ctl-chip--mono" title="发送时在末尾追加换行 0A；与 \r 同时勾选即追加 0D 0A">
+                                        <input type="checkbox" id="serial-add-lf"><span>+ \n</span>
+                                    </label>
+                                    <label class="ctl-chip ctl-chip--mono" title="发送时在末尾追加 NUL 00；追加顺序为 CR、LF、NUL">
+                                        <input type="checkbox" id="serial-add-nul"><span>+ \0</span>
+                                    </label>
+                                    <label class="ctl-chip ctl-chip--mono ctl-chip--run" title="勾选后立即按间隔重复发送，取消勾选即停止">
+                                        <input type="checkbox" id="serial-loop-send"><span><i class="icon icon-repeat"></i> 循环</span>
+                                    </label>
+                                    <div class="input-group input-group-sm send-loop-time" id="serial-loop-send-time-group">
+                                        <input type="number" id="serial-loop-send-time" class="form-control" min="10" value="1000" aria-label="循环发送间隔（毫秒）">
+                                        <span class="input-group-text">ms</span>
+                                    </div>
+                                    <span class="send-info" id="serial-send-info" aria-live="polite"></span>
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm send-tool" type="button" id="serial-send-history-btn" data-bs-toggle="dropdown"
+                                            aria-expanded="false" title="发送历史（输入框里按 ↑ / ↓ 翻阅）" aria-label="发送历史">
+                                            <i class="icon icon-history"></i>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end send-history-menu" id="serial-send-history-menu"></ul>
+                                    </div>
+                                    <button class="btn btn-sm send-tool" type="button" id="serial-send-clear" title="清空输入" aria-label="清空输入">
+                                        <i class="icon icon-x"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!--右侧串口工具-->
+                    <div id="serial-tools" class="sidebar">
+                        <button class="toggle-button" data-pane="right" title="拖动调整宽度 · 点击隐藏/打开边栏">
+                            <i class="icon icon-chevron-right"></i>
+                        </button>
+                        <div class="collapse show overflow-hidden sidebar-body">
+
+                            <!-- 右侧停靠区：标题栏 + 当前面板；面板由 js/workbench.js 注册与切换 -->
+                            <div class="wb-dock-head" id="wb-right-head">
+                                <span class="wb-dock-title" id="wb-right-title"></span>
+                                <button class="wb-dock-action" id="wb-right-move" type="button" title="移到底部">
+                                    <i class="icon icon-panel-bottom"></i>
+                                </button>
+                                <button class="wb-dock-action" id="wb-right-close" type="button" title="收起右侧面板">
+                                    <i class="icon icon-panel-right-close"></i>
+                                </button>
+                            </div>
+                            <div class="tab-content flex-fill wb-dock-body" id="nav-tabContent">
+                                <div class="tab-pane show active d-flex flex-column" id="nav-quick-send" role="tabpanel">
+                                    <div class="quick-send-toolbar">
+                                        <div class="input-group input-group-sm quick-send-group">
+                                            <span class="input-group-text">分组</span>
+                                            <select class="form-select" id="serial-quick-send">
+                                            </select>
+                                        </div>
+                                        <button id="serial-quick-send-add" class="btn btn-sm btn-outline-secondary" type="button" title="在当前分组末尾增加一条">
+                                            <i class="icon icon-plus"></i> 增加
+                                        </button>
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-outline-secondary quick-send-more" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="分组管理 / 导入导出" aria-label="分组管理">
+                                                <i class="icon icon-ellipsis"></i>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end quick-send-menu">
+                                                <li><button class="dropdown-item" type="button" id="serial-quick-send-add-group"><i class="icon icon-folder-plus"></i> 新建分组…</button></li>
+                                                <li><button class="dropdown-item" type="button" id="serial-quick-send-rename-group"><i class="icon icon-pencil"></i> 重命名分组…</button></li>
+                                                <li><button class="dropdown-item text-danger" type="button" id="serial-quick-send-remove-group"><i class="icon icon-trash-2"></i> 删除当前分组</button></li>
+                                                <li><hr class="dropdown-divider"></li>
+                                                <li><button class="dropdown-item" type="button" id="serial-quick-send-import-btn"><i class="icon icon-import"></i> 导入到当前分组…</button></li>
+                                                <li><button class="dropdown-item" type="button" id="serial-quick-send-export"><i class="icon icon-share"></i> 导出当前分组</button></li>
+                                            </ul>
+                                        </div>
+                                        <input type="file" id="serial-quick-send-import" style="display: none;"
+                                            accept="application/json" />
+                                    </div>
+                                    <div class="quick-send-head">
+                                        <span class="col-content">内容（单击编辑）</span>
+                                        <span class="col-name" title="双击发送按钮可改名">发送 · 双击改名</span>
+                                        <span class="col-hex" title="HEX 模式">HEX</span>
+                                    </div>
+                                    <div id="serial-quick-send-content"
+                                        class="flex-grow-1 overflow-auto">
+                                    </div>
+                                </div>
+                                <div class="tab-pane d-flex flex-column flex-grow-1" id="nav-protocol" role="tabpanel">
+                                    <div class="protocol-basic-card mb-2">
+                                        <div class="protocol-basic-row">
+                                            <div class="protocol-switch-inline">
+                                                <div class="form-check form-switch ctl-switch" title="开启后日志 HEX 视图的每个字节可悬停查看其协议字段含义,不展开文本">
+                                                    <input class="form-check-input" type="checkbox" id="serial-protocol-hover">
+                                                    <label class="form-check-label" for="serial-protocol-hover">悬停提示</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <details class="protocol-advanced" id="serial-protocol-advanced">
+                                            <summary class="protocol-advanced-summary">
+                                                <i class="icon icon-chevron-right protocol-advanced-chevron"></i>
+                                                高级 · 加解密与密钥
+                                            </summary>
+                                            <div class="protocol-advanced-body">
+                                                <div class="protocol-advanced-grid">
+                                                    <div class="input-group input-group-sm">
+                                                        <span class="input-group-text">加解密</span>
+                                                        <select class="form-select" id="serial-protocol-decrypt">
+                                                            <option value="auto">自动</option>
+                                                            <option value="always">强制解密</option>
+                                                            <option value="never">不解密</option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="input-group input-group-sm" title="报文加解密算法 AES128/256-ECB">
+                                                        <span class="input-group-text">加密方式</span>
+                                                        <select class="form-select" id="serial-protocol-enc-type">
+                                                            <option value="aes128">AES-128-ECB</option>
+                                                            <option value="aes256">AES-256-ECB</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div class="input-group input-group-sm mt-2" id="sk-key-ascii-group">
+                                                    <span class="input-group-text">密钥(ASCII)</span>
+                                                    <input type="text" class="form-control" id="serial-protocol-key-ascii"
+                                                        placeholder="解析/下发共用 · 16/32 字节">
+                                                </div>
+                                                <div class="input-group input-group-sm mt-2" id="sk-key-hex-group">
+                                                    <span class="input-group-text">密钥(HEX，优先)</span>
+                                                    <input type="text" class="form-control" id="serial-protocol-key-hex"
+                                                        placeholder="如 01020304… · 下发加密需勾选下方开关">
+                                                </div>
+                                            </div>
+                                        </details>
+                                    </div>
+                                    <div class="protocol-down-card mb-2" id="sk-down-card">
+                                        <h6 class="pane-section-title"><i class="icon icon-circle-arrow-down"></i> 下行下发</h6>
+                                        <div class="d-flex flex-wrap align-items-center mb-2 gap-2">
+                                            <div class="input-group input-group-sm" style="width: auto; flex-shrink: 0;">
+                                                <span class="input-group-text">功能码</span>
+                                                <select class="form-select" id="serial-protocol-down-func">
+                                                    <option value="0x03" selected>信息查询 0x03</option>
+                                                    <option value="0x01">参数设置 0x01</option>
+                                                    <option value="0x11">指令操作 0x11</option>
+                                                </select>
+                                            </div>
+                                            <div class="input-group input-group-sm" style="width: auto; min-width: 120px;">
+                                                <span class="input-group-text">常用指令</span>
+                                                <select class="form-select" id="serial-protocol-down-preset" title="选择常用指令">
+                                                </select>
+                                            </div>
+                                            <div class="input-group input-group-sm" id="serial-protocol-down-param-group" style="display:none;flex:0 0 100%;">
+                                                <span class="input-group-text" id="serial-protocol-down-param-label">参数</span>
+                                                <input type="text" class="form-control" id="serial-protocol-down-param-val" style="width:100px;" placeholder="值">
+                                                <select class="form-select form-select-sm" id="serial-protocol-down-param-sel" style="display:none;width:130px;"></select>
+                                                <span class="input-group-text" id="serial-protocol-down-param-unit" style="font-size:0.7rem;"></span>
+                                                <div id="serial-protocol-down-param-multi" style="display:none;flex:0 0 100%;margin-top:4px;"></div>
+                                            </div>
+                                        </div>
+                                        <textarea class="form-control form-control-sm" rows="4" id="serial-protocol-down-tlv"
+                                            placeholder='TLV JSON，例如：[{"tag":10,"items":[{"id":1,"value":[]}]}]，value 可为空数组(查询) 或 十六进制字符串 或 字节数组'></textarea>
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+                                            <div class="form-check form-switch ctl-switch" title="关闭时始终明文下发(ctrl 不置加密位)；开启后用上方密钥加密数据域。解析/解密密钥可单独保留。">
+                                                <input class="form-check-input" type="checkbox" id="serial-protocol-down-encrypt">
+                                                <label class="form-check-label" for="serial-protocol-down-encrypt">下发加密</label>
+                                            </div>
+                                            <button class="btn btn-sm btn-outline-secondary" id="serial-protocol-build">生成HEX</button>
+                                            <button class="btn btn-sm btn-primary flex-grow-1" id="serial-protocol-send">立即下发</button>
+                                        </div>
+                                        <textarea class="form-control form-control-sm mt-1 sk-hex-copyable" rows="3" id="serial-protocol-down-preview"
+                                            readonly placeholder="待发送的完整 HEX（空格分隔，点击可复制）" title="点击复制生成的 HEX"></textarea>
+                                    </div>
+                                    <div class="protocol-down-card mb-2" id="cjt188-down-card" style="display:none;">
+                                        <h6 class="pane-section-title"><i class="icon icon-circle-arrow-down"></i> <span id="cjt188-down-title">188协议下行下发</span></h6>
+                                        <p class="sk-rw-hint mb-2">68 10 表号7B 控制码 数据长度 数据标识 序号 数据 校验和 16 · 工具扮演平台/主机角色</p>
+                                        <div class="d-flex flex-wrap align-items-center mb-2 gap-2">
+                                            <div class="input-group input-group-sm" style="width: auto; min-width: 16rem; flex: 1 1 16rem;">
+                                                <span class="input-group-text">表号</span>
+                                                <input type="text" class="form-control" id="cjt188-down-addr" title="填 14 位表号(与日志解析显示的一致), 全 A = 广播, 所有设备都会应答" placeholder="14 位表号, 如 90040202264102; 全 A = 广播">
+                                                <button class="btn btn-outline-secondary" type="button" id="cjt188-down-addr-reset" title="重置为广播地址(全 AA)"><i class="icon icon-refresh-cw"></i></button>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex flex-wrap align-items-center mb-2 gap-2">
+                                            <div class="input-group input-group-sm" style="width: auto;">
+                                                <span class="input-group-text">序号</span>
+                                                <input type="number" class="form-control" id="cjt188-down-seq" min="0" max="255" style="width:5rem;" title="每次生成HEX/立即下发后自动+1(可手动改)">
+                                            </div>
+                                            <label class="ctl-chip" title="帧头前发送 FE FE FE, 不参与校验和">
+                                                <input type="checkbox" id="cjt188-down-preamble" checked>
+                                                <span>前导码 FE FE FE</span>
+                                            </label>
+                                            <div class="input-group input-group-sm" style="width: auto;">
+                                                <span class="input-group-text">功能码</span>
+                                                <select class="form-select" id="cjt188-down-cmd">
+                                                    <option value="0x01" selected>0x01 读数据</option>
+                                                    <option value="0x03">0x03 读表号</option>
+                                                    <option value="0x04">0x04 阀控</option>
+                                                    <option value="time" title="CJ/T 188 写标准时间, 地址全 AA 为广播校时">0x04 写标准时间 (A015)</option>
+                                                    <option value="0x15">0x15 写表号</option>
+                                                    <option value="0x16">0x16 写底度</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="input-group input-group-sm mb-2" id="cjt188-down-param-group" style="display:none;">
+                                            <span class="input-group-text" id="cjt188-down-param-label">参数</span>
+                                            <input type="text" class="form-control" id="cjt188-down-param-val" style="width:120px;" placeholder="值">
+                                            <select class="form-select" id="cjt188-down-param-sel" style="display:none;"></select>
+                                        </div>
+                                        <div class="small text-danger" id="cjt188-down-err"></div>
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mt-1">
+                                            <button class="btn btn-sm btn-outline-secondary" id="cjt188-down-build">生成HEX</button>
+                                            <button class="btn btn-sm btn-primary flex-grow-1" id="cjt188-down-send">立即下发</button>
+                                        </div>
+                                        <textarea class="form-control form-control-sm mt-1 sk-hex-copyable" rows="2" id="cjt188-down-preview"
+                                            readonly placeholder="待发送的完整 HEX（空格分隔，点击可复制）" title="点击复制生成的 HEX"></textarea>
+                                    </div>
+                                    <div class="protocol-down-card mb-2 sk-flow-card" id="sk-flow-card" data-dock-own="flow">
+                                        <h6 class="pane-section-title">
+                                            <i class="icon icon-list-check"></i> 测试流程
+                                            <span class="sk-rw-proto-badge" id="sk-flow-proto-name">SEK</span>
+                                        </h6>
+                                        <div class="ctl-seg sk-flow-mode" id="sk-flow-mode" role="group" aria-label="流程类型">
+                                            <button type="button" data-mode="batch" aria-pressed="true">批量配置</button>
+                                            <button type="button" data-mode="random" aria-pressed="false">随机读写</button>
+                                        </div>
+                                        <p class="sk-rw-hint mb-2" id="sk-flow-hint">跟随上方协议 · 批量配置逐台下发并回读，随机读写按字段量程随机取值</p>
+                                        <div id="sk-flow-batch-box">
+                                            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                                <select class="form-select form-select-sm" id="sk-flow-field-select" style="min-width:12rem;" aria-label="选择可写字段"></select>
+                                                <input type="text" class="form-control form-control-sm" id="sk-flow-value" placeholder="值，{n} 为台号" style="width:10rem;" title="支持 {n} 替换为产线计数；BCD 字段另有步进">
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">间隔ms</span>
+                                                    <input type="number" class="form-control" id="sk-flow-batch-gap" value="200" min="0" max="10000" style="width:5rem;">
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-secondary" id="sk-flow-add">添加</button>
+                                            </div>
+                                            <div class="sk-flow-list" id="sk-flow-list"></div>
+                                        </div>
+                                        <div id="sk-flow-random-box" hidden>
+                                            <div class="sk-rw-controls d-flex flex-wrap gap-2 mb-2">
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">步数</span>
+                                                    <input type="number" class="form-control" id="sk-flow-count" value="40" min="1" max="500" style="width:4.5rem;" title="随机指令步数">
+                                                </div>
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">间隔ms</span>
+                                                    <input type="number" class="form-control" id="sk-flow-gap" value="200" min="0" max="10000" style="width:5rem;">
+                                                </div>
+                                                <div class="input-group input-group-sm" style="width:auto;">
+                                                    <span class="input-group-text">超时ms</span>
+                                                    <input type="number" class="form-control" id="sk-flow-timeout" value="5000" min="200" max="120000" style="width:5.5rem;">
+                                                </div>
+                                                <div class="input-group input-group-sm" style="width:auto;" title="伪随机种子：相同 seed 生成相同指令序列，便于复现问题；留空自动生成">
+                                                    <span class="input-group-text">seed</span>
+                                                    <input type="number" class="form-control" id="sk-flow-seed" placeholder="自动" style="width:6rem;">
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-secondary" id="sk-flow-generate">生成步骤</button>
+                                            </div>
+                                            <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
+                                                <div class="form-check form-switch ctl-switch" title="默认只随机可回读的字段（有查询码、能读到原值、能恢复）">
+                                                    <input class="form-check-input" type="checkbox" id="sk-flow-noreadback">
+                                                    <label class="form-check-label" for="sk-flow-noreadback">包括无法回读的字段</label>
+                                                </div>
+                                            </div>
+                                            <div class="sk-flow-noread-warn" id="sk-flow-noread-warn" hidden>
+                                                <i class="icon icon-info"></i>
+                                                已包括无法回读的字段：这些字段写后不校验、也不恢复原值，请确认设备可接受
+                                            </div>
+                                            <div class="sk-flow-list" id="sk-flow-random-list"></div>
+                                        </div>
+                                        <div class="d-flex flex-wrap align-items-center gap-3 mb-2 mt-2">
+                                            <div class="input-group input-group-sm" style="width:auto;">
+                                                <span class="input-group-text">超时ms</span>
+                                                <input type="number" class="form-control" id="sk-flow-default-timeout" value="5000" min="200" max="120000" style="width:5.5rem;">
+                                            </div>
+                                            <div class="input-group input-group-sm" style="width:auto;">
+                                                <span class="input-group-text">重试</span>
+                                                <input type="number" class="form-control" id="sk-flow-retries" value="0" min="0" max="5" style="width:3.5rem;" title="每步失败后的重试次数">
+                                            </div>
+                                            <div class="form-check form-switch ctl-switch">
+                                                <input class="form-check-input" type="checkbox" id="sk-flow-continue" checked>
+                                                <label class="form-check-label" for="sk-flow-continue">失败继续</label>
+                                            </div>
+                                            <div class="form-check form-switch ctl-switch">
+                                                <input class="form-check-input" type="checkbox" id="sk-flow-restore" checked>
+                                                <label class="form-check-label" for="sk-flow-restore">写后恢复原值</label>
+                                            </div>
+                                            <div class="form-check form-switch ctl-switch">
+                                                <input class="form-check-input" type="checkbox" id="sk-flow-batch-verify" checked>
+                                                <label class="form-check-label" for="sk-flow-batch-verify">每步写后回读</label>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                            <select class="form-select form-select-sm" id="sk-flow-preset-select" style="min-width:11rem;" aria-label="已保存的流程"></select>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-load">载入</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-save">保存</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-delete">删除</button>
+                                            <label class="btn btn-sm btn-outline-secondary mb-0" title="导入流程 JSON">导入<input type="file" id="sk-flow-import" accept="application/json,.json" hidden></label>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-export" title="把当前流程导出为 JSON">导出</button>
+                                        </div>
+                                        <div class="d-flex gap-2 mb-2">
+                                            <button class="btn btn-sm btn-primary flex-grow-1" id="sk-flow-start">开始</button>
+                                            <button class="btn btn-sm btn-outline-danger" id="sk-flow-stop" disabled>停止</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-reset" title="产线计数归零（下一台从第 1 台开始）">重置计数</button>
+                                        </div>
+                                        <div class="sk-rw-progress mb-1">
+                                            <div class="sk-rw-progress-bar" id="sk-flow-progress-bar">0/0</div>
+                                        </div>
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                            <div class="sk-rw-status" id="sk-flow-status">就绪</div>
+                                            <span class="sk-flow-counter" id="sk-flow-counter">已配 0 台</span>
+                                        </div>
+                                        <div class="sk-rw-summary" id="sk-flow-summary"></div>
+                                        <div class="sk-flow-results" id="sk-flow-results"></div>
+                                        <div class="d-flex flex-wrap gap-2 mt-1 mb-1">
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-result-csv" title="结果导出为 CSV">结果 CSV</button>
+                                            <button class="btn btn-sm btn-outline-secondary" id="sk-flow-result-json" title="结果导出为 JSON">结果 JSON</button>
+                                        </div>
+                                        <div class="sk-rw-log" id="sk-flow-log"></div>
+                                    </div>
+                                </div>
+                                <div class="tab-pane d-flex flex-column" id="nav-firmware" role="tabpanel">
+                                    <div class="d-flex flex-column flex-grow-1 min-h-0">
+                                        <div class="fw-upgrade-card">
+                                            <h6 class="pane-section-title"><i class="icon icon-file-code"></i> 固件文件</h6>
+                                            <input type="file" id="fw-file" class="d-none" accept=".bin,.hex,.fw">
+                                            <div class="fw-upgrade-dropzone" id="fw-drop-zone">
+                                                <div class="fw-upgrade-dropzone-inner">
+                                                    <i class="icon icon-lg icon-cloud-upload fw-upgrade-drop-icon"></i>
+                                                    <div class="fw-upgrade-drop-text">拖拽固件文件到此处</div>
+                                                    <div class="fw-upgrade-drop-hint">或 <button class="fw-drop-browse" id="fw-select">点击浏览</button></div>
+                                                </div>
+                                            </div>
+                                            <div class="fw-upgrade-file d-none" id="fw-file-card">
+                                                <i class="icon icon-file-code fw-upgrade-file-icon"></i>
+                                                <div class="fw-upgrade-file-detail">
+                                                    <span id="fw-file-name" class="fw-upgrade-file-name">未选择固件文件</span>
+                                                    <span class="fw-upgrade-file-size" id="fw-file-size">--</span>
+                                                </div>
+                                                <button class="fw-upgrade-file-clear" id="fw-file-clear" title="清除"><i class="icon icon-circle-x"></i></button>
+                                            </div>
+                                            <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                                                <div class="input-group input-group-sm" style="width: auto;">
+                                                    <span class="input-group-text">分片大小(字节)</span>
+                                                    <input type="number" class="form-control" id="fw-chunk-size" value="128"
+                                                        min="32" max="500" step="32" style="width: 80px;">
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-secondary" id="fw-parse">解析固件</button>
+                                                <button class="btn btn-sm btn-outline-secondary" id="fw-diagnose">诊断固件</button>
+                                                <div class="form-check form-switch ctl-switch" title="关闭后不解析固件包头，直接整文件升级，版本号需手动填写">
+                                                    <input class="form-check-input" type="checkbox" id="fw-parse-info" checked>
+                                                    <label class="form-check-label" for="fw-parse-info">读取固件信息</label>
+                                                </div>
+                                            </div>
+                                            <div class="input-group input-group-sm mt-2 d-none" id="fw-version-row" style="width: auto;">
+                                                <span class="input-group-text">升级版本号</span>
+                                                <input type="text" class="form-control" id="fw-version" maxlength="16"
+                                                    placeholder="手动填写版本号" style="max-width: 220px;">
+                                            </div>
+                                            <pre id="fw-info"
+                                                class="p-2 mb-0 small text-monospace mt-2" style="min-height: 60px; white-space: pre-wrap;"></pre>
+                                            <div class="fw-library-row small text-muted mt-2" id="fw-library-row" title="导入过的原始固件存在本机，升级原始固件时按设备版本在这里找差分基准">
+                                                <i class="icon icon-archive"></i> <span id="fw-library-summary">本机固件库</span>
+                                                <button type="button" class="btn btn-link btn-sm p-0 ms-2 align-baseline" id="fw-library-clear">清空</button>
+                                            </div>
+                                        </div>
+                                        <div class="fw-upgrade-card mb-0">
+                                            <h6 class="pane-section-title"><i class="icon icon-upload"></i> 升级控制</h6>
+                                            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                                <button class="btn btn-sm btn-primary" id="fw-start" disabled><i
+                                                        class="icon icon-upload"></i> 开始升级</button>
+                                                <button class="btn btn-sm btn-outline-secondary" id="fw-stop" disabled>停止升级</button>
+                                                <button class="btn btn-sm btn-outline-secondary" id="fw-query">查询版本</button>
+                                                <button class="btn btn-sm btn-outline-secondary" id="fw-clear-log">清空日志</button>
+                                                <span id="fw-status" class="small text-muted ms-auto"></span>
+                                            </div>
+                                            <div class="progress mb-2" style="height: 18px;">
+                                                <div id="fw-progress" class="progress-bar" role="progressbar" style="width: 0%;"
+                                                    aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                                            </div>
+                                            <pre id="fw-log"
+                                                class="p-2 mb-0 small text-monospace flex-grow-1 overflow-auto" style="min-height: 100px; white-space: pre-wrap;"></pre>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!--最右侧停靠图标栏：每个已注册面板一个按钮-->
+                    <div id="wb-dock-bar" role="toolbar" aria-label="工具面板" aria-orientation="vertical"></div>
+                </div>
+                <!--底部状态栏：连接时长 / 收发字节 / 后台任务-->
+                <div id="serial-statusbar" role="status" aria-live="off"></div>
+            </div>
+
+            <!--USB BLE 桥视图-->
+            <div id="view-ble" class="app-view" data-feature="view.ble"><div id="ble-workbench"></div></div>
+
+            <!--固件打包视图（独立工具，与串口无关）-->
+            <div id="view-fw-pack" class="app-view">
+                <!--顶栏：与通信调试的连接条同高同样式；生成动作放右侧-->
+                <div class="view-bar">
+                    <div class="view-bar-title">
+                        <i class="icon icon-lg icon-package"></i>
+                        <span>固件打包</span>
+                        <span class="view-bar-sub">原始包 · 压缩包 · 双向差分包</span>
+                    </div>
+                    <div class="view-bar-actions">
+                        <div class="form-check form-switch ctl-switch fw-zip-switch" title="生成的所有文件打成一个 ZIP 下载">
+                            <input class="form-check-input" type="checkbox" id="fp-gen-zip" checked>
+                            <label class="form-check-label" for="fp-gen-zip">打包为 ZIP</label>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary fw-start-btn" id="fp-start">
+                            <i class="icon icon-play"></i> 开始生成
+                        </button>
+                    </div>
+                </div>
+                <div class="tool-view-inner fw-pack-wrapper">
+                    <div class="fw-drop-grid">
+                        <div class="fw-drop-card fw-drop-optional" id="fp-drop-old">
+                            <div class="fw-drop-card-header">
+                                <span class="fw-drop-badge optional">可选</span><span class="fw-drop-type">旧固件（差分用）</span>
+                            </div>
+                            <input type="file" id="fp-old-file" class="d-none" accept=".bin">
+                            <div class="fw-drop-zone" id="fp-old-zone">
+                                <i class="icon icon-lg icon-cloud-upload fw-drop-zone-icon"></i>
+                                <div class="fw-drop-zone-text">拖拽文件到此处</div>
+                                <div class="fw-drop-zone-hint">或 <button class="fw-drop-browse" id="fp-old-select">点击浏览</button></div>
+                            </div>
+                            <div class="fw-file-info d-none" id="fp-old-info">
+                                <div class="fw-file-icon"><i class="icon icon-file-code"></i></div>
+                                <div class="fw-file-detail">
+                                    <span class="fw-file-name" id="fp-old-name">--</span>
+                                    <span class="fw-file-size" id="fp-old-size">--</span>
+                                </div>
+                                <button class="fw-file-clear" id="fp-old-clear" title="清除文件"><i class="icon icon-circle-x"></i></button>
+                            </div>
+                        </div>
+                        <div class="fw-drop-card fw-drop-required" id="fp-drop-new">
+                            <div class="fw-drop-card-header">
+                                <span class="fw-drop-badge">必需</span><span class="fw-drop-type">新固件</span>
+                            </div>
+                            <input type="file" id="fp-new-file" class="d-none" accept=".bin">
+                            <div class="fw-drop-zone" id="fp-new-zone">
+                                <i class="icon icon-lg icon-cloud-upload fw-drop-zone-icon"></i>
+                                <div class="fw-drop-zone-text">拖拽文件到此处</div>
+                                <div class="fw-drop-zone-hint">或 <button class="fw-drop-browse" id="fp-new-select">点击浏览</button></div>
+                            </div>
+                            <div class="fw-file-info d-none" id="fp-new-info">
+                                <div class="fw-file-icon"><i class="icon icon-file-code"></i></div>
+                                <div class="fw-file-detail">
+                                    <span class="fw-file-name" id="fp-new-name">--</span>
+                                    <span class="fw-file-size" id="fp-new-size">--</span>
+                                </div>
+                                <button class="fw-file-clear" id="fp-new-clear" title="清除文件"><i class="icon icon-circle-x"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="fw-config-card">
+                        <div class="fw-config-grid">
+                            <div class="fw-config-item fw-config-wide">
+                                <label class="fw-config-label"><i class="icon icon-pencil"></i> 自定义信息（UserDefine）</label>
+                                <input type="text" class="form-control form-control-sm fw-input" id="fp-user-define" maxlength="48" placeholder="最长48字节，如设备SN号、备注信息等">
+                            </div>
+                            <div class="fw-config-item">
+                                <label class="fw-config-label"><i class="icon icon-settings"></i> 输出包类型</label>
+                                <div class="fw-output-types">
+                                    <label class="ctl-chip">
+                                        <input type="checkbox" id="fp-gen-origin">
+                                        <span><i class="icon icon-file"></i> 原始包</span>
+                                    </label>
+                                    <label class="ctl-chip">
+                                        <input type="checkbox" id="fp-gen-compress" checked>
+                                        <span><i class="icon icon-file-archive"></i> 压缩包</span>
+                                    </label>
+                                    <label class="ctl-chip">
+                                        <input type="checkbox" id="fp-gen-diff" checked>
+                                        <span><i class="icon icon-arrow-left-right"></i> 差分包</span>
+                                    </label>
+                                </div>
+                                <p class="fw-diff-hint"><i class="icon icon-info"></i> 差分包需要旧固件，未选择时会跳过</p>
+                            </div>
+                            <div class="fw-config-item" id="fp-blank-row">
+                                <label class="fw-config-label"><i class="icon icon-file-code"></i> BLANK.bin 参考文件</label>
+                                <div class="fw-blank-row">
+                                    <input type="file" id="fp-blank-file" class="d-none" accept=".bin">
+                                    <span class="fw-blank-name" id="fp-blank-name">内置 BLANK.BIN (32 B)</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="fp-blank-select"><i class="icon icon-refresh-cw"></i> 更换</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="fw-log-card">
+                        <div class="fw-log-header">
+                            <span><i class="icon icon-lg icon-terminal"></i> 生成日志</span>
+                            <button class="fw-log-clear" id="fp-log-clear"><i class="icon icon-trash-2"></i> 清空</button>
+                        </div>
+                        <pre id="fp-log" class="fw-log-body"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="model-tip" aria-hidden="true" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h1 class="modal-title fs-5" id="modal-title"></h1>
+                    <button class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="modal-message">
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" data-bs-dismiss="modal">好的</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="model-change-name" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h1 class="modal-title fs-5">名称</h1>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="model-change-name-form">
+                        <div class="mb-3">
+                            <label for="model-new-name" class="col-form-label">请输入新的名字:</label>
+                            <input type="text" class="form-control" id="model-new-name" autocomplete="off">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" form="model-change-name-form" class="btn btn-primary" id="model-save-name">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="js/version.js"></script>
+    <script src="js/release-config.js"></script>
+    <script src="js/app-boot.js"></script>
+    <script src="js/update-check.js"></script>
+    <script src="js/ansi_up.min.js"></script>
+    <script>
+        hideTop()
+    </script>
+    <script>
+        // 最左侧导航栏：切换工具视图
+        (function () {
+            var rail = document.getElementById('activity-rail')
+            if (!rail) return
+            var items = rail.querySelectorAll('.rail-item[data-view]')
+            var KEY = 'serial-debug-active-view'
+            var current = null
+            function allItems() {
+                return rail.querySelectorAll('.rail-item[data-view]')
+            }
+            function activate(id) {
+                if (!document.getElementById(id)) return
+                document.querySelectorAll('.app-view').forEach(function (v) {
+                    v.classList.toggle('active', v.id === id)
+                })
+                allItems().forEach(function (it) {
+                    it.classList.toggle('active', it.dataset.view === id)
+                })
+                localStorage.setItem(KEY, id)
+                current = id
+            }
+            // 视图入口带 data-feature 时，平台画像没开这项功能就回到通信调试(存下的视图可能来自别的平台)
+            function allowed(id) {
+                var it = Array.from(allItems()).find(function (item) { return item.dataset.view === id })
+                if (!it || !document.getElementById(id)) return false
+                var f = it.dataset.feature
+                if (!f || !window.AppPlatform) return true
+                return f.split(/\s+/).every(function (x) { return window.AppPlatform.has(x) })
+            }
+            function switchTo(id) {
+                // 存下的视图可能来自更早的版本或别的平台：入口不存在或功能没开就回通信调试
+                if (!allowed(id)) id = 'view-serial'
+                activate(id)
+            }
+            items.forEach(function (it) {
+                it.addEventListener('click', function () { switchTo(it.dataset.view) })
+            })
+            var saved = localStorage.getItem(KEY)
+            window.AppViews = { activate: activate, switchTo: switchTo, initialSaved: saved || '' }
+            if (saved) switchTo(saved)
+        })()
+    </script>
+    <script src="js/pcp.js"></script>
+    <script src="js/protocol-schema.js"></script>
+    <script src="js/protocol-crypto.js"></script>
+    <script src="js/parse-view.js"></script>
+    <script src="js/protocol.js"></script>
+    <script src="js/protocol-presets.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="js/serial-term.js"></script>
+    <script src="js/app-dialog.js"></script>
+    <script src="js/serial-adapter.js"></script>
+    <script src="js/transport-ble.js"></script>
+    <script src="js/transport-native-serial.js"></script>
+    <script src="js/platform-boot.js"></script>
+    <script src="js/ble-bridge.js"></script>
+    <script src="js/native-ble-bridge.js"></script>
+    <script src="js/native-classic.js"></script>
+    <script src="js/native-ble.js"></script>
+    <script src="js/native-shell.js"></script>
+    <script src="js/connection-source.js"></script>
+    <script src="js/dual-config.js"></script>
+    <script src="js/text-byte-encoder.js"></script>
+    <script src="js/protocol-contract.js"></script>
+    <script src="js/protocol-registry.js"></script>
+    <!-- 外部协议来源必须在 common.js 之前加载：它要先把已启用但还在加载的协议 id 登记成 pending，
+         common.js 的「未知协议回退 SEK」才不会再把它们清掉（解析器会在脚本之间让出，不能靠后面的脚本） -->
+    <script src="js/protocol-sources.js"></script>
+    <script src="js/common.js"></script>
+    <script src="js/cjt188-protocol.js"></script>
+    <script src="js/sek-transaction.js"></script>
+    <script src="js/sek-test-profile.js"></script>
+    <script src="js/protocol-sources-panel.js"></script>
+    <script src="js/test-flow.js"></script>
+    <script src="js/test-flow-panel.js"></script>
+    <script src="js/collapsible-cards.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
+    <script src="js/workbench.js"></script>
+    <script src="js/curves-core.js"></script>
+    <script src="js/curves.js"></script>
+    <script src="js/curves-panel.js"></script>
+    <script src="js/modern-timeline.js"></script>
+    <script src="js/modern-inspector.js"></script>
+    <script src="js/command-palette.js"></script>
+    <script src="js/modern-shell.js"></script>
+    <script src="js/firmware-core.js"></script>
+    <script src="js/firmware-library.js"></script>
+    <script src="js/firmware-upgrade.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="js/firmware-packager.js"></script>
+    <script src="js/modern-firmware.js"></script>
+    <script src="js/app-update.js"></script>
+    <script src="js/mcp-ring.js"></script>
+    <script src="js/ble-panel.js"></script>
+    <script src="js/mcp-bridge.js"></script>
+    <script src="js/mcp-service.js"></script>
+    <script src="js/plugin-rpc.js"></script>
+    <script src="js/plugin-api.js"></script>
+    <script src="js/plugin-host.js"></script>
+    <script src="js/plugins-panel.js"></script>
+
+</body>
+
+</html>

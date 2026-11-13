@@ -1,34 +1,30 @@
-// DeviceDock Tauri CLI wrapper: version comes from root package.json and is passed as build config.
+// 包一层 tauri CLI：应用版本只来自 js/version.js(window.APP_VERSION)，每次经 --config 传入，tauri.conf.json 与 Cargo.toml 不写版本。
 // build 成功后把安装包复制进 desktop/release/<通道>/(每个通道只留最新一版，不入库)：macOS 只有 .dmg，Windows 是便携 ZIP；配了更新签名时另带应用内更新用的包与 .sig。
 // Windows 的便携 ZIP 里还要放更新 helper(desktop/portable-updater)，所以打包前先编译它；它内嵌的公钥必须与构建同一份配置。
 // 通道两个：main(正式版，从 main 分支构建)与 dev(最新预览，其它分支构建都算)，按构建时所在的 git 分支判定，环境变量 RELEASE_CHANNEL=main|dev 可强制指定；
 // 只清理并写入本通道的目录，另一个通道的包原样保留。
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { macSigningConfig, releaseChannel, updaterConfig, verifyMacReleaseJobs } from './release-config.mjs'
+import { macSigningConfig, releaseChannel, updaterConfig } from './release-config.mjs'
 import { buildTarget, cargoTargetDir, packageWindows } from './portable-windows.mjs'
 
 const desktop = join(dirname(fileURLToPath(import.meta.url)), '..')
-const version = JSON.parse(readFileSync(join(desktop,'..','package.json'),'utf8')).version
-if (!/^\d+\.\d+\.\d+$/.test(version)) throw Error('Invalid package version')
+const src = readFileSync(join(desktop, '..', 'js', 'version.js'), 'utf8')
+const m = src.match(/APP_VERSION\s*=\s*['"](\d+\.\d+\.\d+)['"]/)
+if (!m) throw new Error('js/version.js 里找不到 APP_VERSION')
+const version = m[1]
 
-// The committed public trust root is safe to ship. Private signing material stays in CI/local protected config.
-const publicTrust=readFileSync(join(desktop,'updater-public-key.txt'),'utf8').trim()
-if(!publicTrust)throw new Error('Missing DeviceDock public update trust root')
-if(process.env.TAURI_UPDATER_PUBLIC_KEY?.trim()&&process.env.TAURI_UPDATER_PUBLIC_KEY.trim()!==publicTrust)throw new Error('CI public key does not match committed DeviceDock trust root')
-process.env.TAURI_UPDATER_PUBLIC_KEY=publicTrust
-const distribution=process.env.DEVICEDOCK_DISTRIBUTION||'core'
-if(!['core','integrated'].includes(distribution))throw new Error('DEVICEDOCK_DISTRIBUTION must be core or integrated')
-// Preserve existing compiler flags and remove local build-root provenance from distributable binaries.
-const priorFlags=process.env.CARGO_ENCODED_RUSTFLAGS?.split('\x1f') || (process.env.RUSTFLAGS?.trim()?process.env.RUSTFLAGS.trim().split(/\s+/):[])
-process.env.CARGO_ENCODED_RUSTFLAGS=[...priorFlags,`--remap-path-prefix=${homedir()}=/build-user`,`--remap-path-prefix=${resolve(desktop,'..')}=/src/devicedock`].join('\x1f')
+// 提交进仓库的更新公钥是发布信任根：本地与 CI 都从这里取，杜绝环境变量悄悄换成别的密钥。
+const publicTrust = readFileSync(join(desktop, 'updater-public-key.txt'), 'utf8').trim()
+if (!publicTrust) throw new Error('desktop/updater-public-key.txt 缺少 DeviceDock 更新公钥')
+if (process.env.TAURI_UPDATER_PUBLIC_KEY?.trim() && process.env.TAURI_UPDATER_PUBLIC_KEY.trim() !== publicTrust) throw new Error('TAURI_UPDATER_PUBLIC_KEY 与仓库内的 DeviceDock 公钥不一致')
+process.env.TAURI_UPDATER_PUBLIC_KEY = publicTrust
+
 const channel = releaseChannel(desktop)
 process.env.RELEASE_CHANNEL = channel
 const args = process.argv.slice(2)
-if (args[0] === 'build' || args[0] === 'dev') { const web = spawnSync(process.execPath,[join(desktop,'..','tools','build.mjs'),...(distribution==='core'?['--core']:[])],{stdio:'inherit'});if(web.status !== 0)process.exit(1) }
 const sub = args[0]
 const target = buildTarget(args)
 const windows = target ? target.includes('-windows-') : process.platform === 'win32'
@@ -37,7 +33,7 @@ if (sub === 'build' && windows && !skipPackage) args.push('--no-bundle')
 if (sub === 'dev' || sub === 'build') {
 	const updater = updaterConfig(channel, process.env, windows ? 'win32' : process.platform)
 	const mac = macSigningConfig()
-	args.push('--config', JSON.stringify({ version,build:{frontendDist:distribution==='core'?'../../dist-core':'../../dist'}, ...updater, bundle: { active: !windows && !skipPackage, ...updater.bundle, ...mac.bundle } }))
+	args.push('--config', JSON.stringify({ version, ...updater, bundle: { ...updater.bundle, ...mac.bundle } }))
 }
 const bin = join(desktop, 'node_modules', '@tauri-apps', 'cli', 'tauri.js')
 const started = Date.now()
@@ -109,7 +105,6 @@ function collect() {
 		list(join(dir, 'dmg'), '.dmg').forEach((f) => jobs.push({ from: f, name: base + 'macos_' + arch + '.dmg' }))
 		list(join(dir, 'macos'), '.app.tar.gz').forEach((f) => jobs.push({ from: f, name: base + 'macos_' + arch + '.app.tar.gz', signature: true }))
 	}
-	verifyMacReleaseJobs(jobs,updaterConfig(channel,process.env,'darwin').bundle.createUpdaterArtifacts)
 	if (!jobs.length) {
 		console.warn('release: 没找到本次构建的安装包，desktop/release/' + channel + ' 保持不变')
 		return

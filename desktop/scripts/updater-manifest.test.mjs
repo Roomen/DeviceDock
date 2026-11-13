@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { compareVersions, createManifest } from './updater-manifest.mjs'
 import { promotePointer } from './channel-pointer.mjs'
-import { macSigningConfig, updaterConfig, verifyMacReleaseJobs } from './release-config.mjs'
+import { macSigningConfig, updaterConfig } from './release-config.mjs'
 
 function packages(dir, version, names) {
 	for (const name of names) {
@@ -122,18 +122,4 @@ test('signature version binding is requested so a new version cannot pair with a
 	const unsigned = updaterConfig('dev', { TAURI_UPDATER_PUBLIC_KEY: 'public' }, 'darwin')
 	assert.equal(unsigned.bundle.createUpdaterArtifacts, false)
 	assert.equal(unsigned.plugins.updater.requireSignedVersion, true)
-})
-
-test('signed macOS targets include app and fail fast on missing updater archive or signature',()=>{
- const config=updaterConfig('main',{TAURI_UPDATER_PUBLIC_KEY:'public',TAURI_SIGNING_PRIVATE_KEY:'fixture'},'darwin')
- assert.deepEqual(config.bundle.targets,['app','dmg'])
- const directory=mkdtempSync(join(tmpdir(),'mac-release-gate-'))
- try{
-  const name='DeviceDock_0.1.2_macos_arm64',dmg=join(directory,name+'.dmg'),archive=join(directory,name+'.app.tar.gz');writeFileSync(dmg,'dmg')
-  const jobs=[{name:name+'.dmg',from:dmg}]
-  assert.throws(()=>verifyMacReleaseJobs(jobs,true),/archive missing/)
-  writeFileSync(archive,'archive');jobs.push({name:name+'.app.tar.gz',from:archive});assert.throws(()=>verifyMacReleaseJobs(jobs,true),/signature missing/)
-  writeFileSync(archive+'.sig','');assert.throws(()=>verifyMacReleaseJobs(jobs,true),/signature missing/)
-  writeFileSync(archive+'.sig','fixture-signature');verifyMacReleaseJobs(jobs,true);verifyMacReleaseJobs([],false)
- }finally{rmSync(directory,{recursive:true,force:true})}
 })

@@ -341,6 +341,10 @@ fn shutdown(h: Arc<Handle>, deadline: Option<Instant>) {
 	}
 }
 
+// Updater already freezes and drains device operations before calling this.
+pub fn release_owner(state: &SerialState, owner: &str) {
+	state.begin_release(owner).finish();
+}
 
 // Invalidate synchronously, but never join a reader on the window event thread.
 pub fn release_destroyed(state: &SerialState, owner: &str) {

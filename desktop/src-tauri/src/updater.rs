@@ -144,7 +144,11 @@ fn ready_to_install(inner: &Inner) -> bool {
 
 const SESSION_LIMIT: usize = 25 * 1024 * 1024;
 const HANDOFF_LIMIT: u64 = 100 * 1024 * 1024;
-const SESSION_KEYS: &[&str] = &["devicedock.runtime"];
+const SESSION_KEYS: &[&str] = &[
+    "appInstanceId", "serialHubMode", "serialActiveSendId", "serialSessionLabelA", "serialSessionLabelB",
+    "serialLogCache", "serialWantOpen", "serialWantOpenS", "serialWantOpenA", "serialWantOpenB",
+    "serialWantPortKeyA", "serialWantPortKeyS", "serialWantPortKeyDualA", "serialWantPortKeyB",
+];
 fn sanitize_session(session: HashMap<String, String>) -> Option<HashMap<String, String>> {
     if session.len() > 64 { return None; }
     let filtered: HashMap<_, _> = session.into_iter().filter(|(k, _)| SESSION_KEYS.contains(&k.as_str())).collect();
@@ -234,16 +238,26 @@ pub async fn app_update_install(app: AppHandle, state: State<'_, UpdateState>, v
         if portable_mode() && !portable::payload_supported(&bytes) {
             return Err("更新包不是便携版格式，请到发布页下载新版 ZIP".into());
         }
-        prepare_windows(&app,id).await?;
+        {
+            let mut inner = state.inner.lock().unwrap();
+            inner.frozen = true;
+            inner.sessions.clear();
+            inner.acknowledgments = app.webview_windows().into_keys().map(|label| (label, None)).collect();
+        }
+        // MCP 桥上的在飞请求一并作废(给出终态)，避免升级准备期间还有设备操作继续
+        crate::mcp::quiesce(&app, &app.state::<crate::mcp::McpState>());
+        progress(&app, id, "preparing", received, Some(received));
+        app.emit("app-update-prepare", serde_json::json!({ "operationId": id }))
+            .map_err(|_| "无法通知窗口准备升级".to_string())?;
+        let ready_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || wait_ready(&ready_app, id)).await
+            .map_err(|_| "升级准备失败".to_string())??;
         save_handoff(&app, &state)?;
-        app.state::<crate::native_plugins::NativePluginState>().release_all().await;
         // 前端已保存日志、停止任务并关闭流；再收回窗口可能残留的原生句柄。
         for label in app.webview_windows().into_keys() {
-            crate::serial::release_destroyed(&app.state::<crate::serial::SerialState>(), &label);
-            #[cfg(feature="native-spp")]
-            crate::classic::release_destroyed(&app.state::<crate::classic::ClassicState>(), &label);
-            #[cfg(feature="native-ble")]
-            crate::ble::release_destroyed(&app.state::<crate::ble::BleState>(), &label);
+            crate::serial::release_owner(&app.state::<crate::serial::SerialState>(), &label);
+            crate::classic::release_owner(&app.state::<crate::classic::ClassicState>(), &label)?;
+            crate::ble::release_owner(&app.state::<crate::ble::BleState>(), &label)?;
         }
         progress(&app, id, "installing", received, Some(received));
         if portable_mode() {
@@ -268,7 +282,15 @@ pub async fn app_update_install(app: AppHandle, state: State<'_, UpdateState>, v
         }
         return Ok(());
     }
-    resume_after_failure(&app,id);
+    {
+        let mut inner = state.inner.lock().unwrap();
+        inner.busy = false;
+        inner.frozen = false;
+        inner.acknowledgments.clear();
+        inner.sessions.clear();
+    }
+    remove_handoff(&app);
+    let _ = app.emit("app-update-finished", serde_json::json!({ "operationId": id, "success": false }));
     result
 }
 
@@ -315,38 +337,19 @@ mod tests {
 
     #[test]
     fn session_handoff_only_keeps_allowed_runtime_keys_and_checks_size() {
-        let input = HashMap::from([("devicedock.runtime".into(), "dual".into()), ("unrelated".into(), "discard".into())]);
+        let input = HashMap::from([("serialHubMode".into(), "dual".into()), ("unrelated".into(), "discard".into())]);
         let saved = sanitize_session(input).unwrap();
         assert_eq!(saved.len(), 1);
-        assert_eq!(saved["devicedock.runtime"], "dual");
-        assert!(sanitize_session(HashMap::from([("devicedock.runtime".into(), "x".repeat(SESSION_LIMIT))])).is_none());
+        assert_eq!(saved["serialHubMode"], "dual");
+        assert!(sanitize_session(HashMap::from([("serialLogCache".into(), "x".repeat(SESSION_LIMIT))])).is_none());
     }
 
     #[test]
     fn initialization_script_serializes_session_values_as_data() {
         let value = "</script>\u{2028}'\\\"";
-        let script = session_script(&HashMap::from([("devicedock.runtime".into(), value.into())]));
+        let script = session_script(&HashMap::from([("serialLogCache".into(), value.into())]));
         assert!(!script.contains("</script>"));
         assert!(!script.contains('\u{2028}'));
         assert!(script.contains("\\u003c/script>"));
     }
-}
-
-async fn prepare_windows(app:&AppHandle,id:u64)->Result<(),String>{
- let state=app.state::<UpdateState>();{
-  let mut inner=state.inner.lock().unwrap();inner.frozen=true;inner.sessions.clear();inner.acknowledgments=app.webview_windows().into_keys().map(|label|(label,None)).collect();
- }
- crate::mcp::quiesce(&app.state::<crate::mcp::McpState>());
- app.emit("app-update-prepare",serde_json::json!({"operationId":id})).map_err(|_|"无法通知窗口准备升级".to_string())?;
- let ready_app=app.clone();tauri::async_runtime::spawn_blocking(move||wait_ready(&ready_app,id)).await.map_err(|_|"升级准备失败".to_string())?
-}
-fn resume_after_failure(app:&AppHandle,id:u64){
- let state=app.state::<UpdateState>();{let mut inner=state.inner.lock().unwrap();inner.busy=false;inner.frozen=false;inner.acknowledgments.clear();inner.sessions.clear();}
- crate::mcp::resume(&app.state::<crate::mcp::McpState>());remove_handoff(app);let _=app.emit("app-update-finished",serde_json::json!({"operationId":id,"success":false}));
-}
-#[cfg(feature="native-smoke")]
-#[tauri::command]
-pub async fn native_smoke_update_cycle(app:AppHandle)->Result<(),String>{
- let id={let state=app.state::<UpdateState>();let mut inner=state.inner.lock().unwrap();if inner.busy{return Err("busy".into())}inner.busy=true;inner.operation+=1;inner.operation};
- let result=prepare_windows(&app,id).await;resume_after_failure(&app,id);result
 }

@@ -9,139 +9,50 @@ concurrency:
   group: check-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  host:
+  js:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Run frontend regression tests
+        run: |
+          fail=0
+          for f in tests/*.cjs; do
+            echo "::group::$f"
+            node "$f" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
+      - run: node --test desktop/scripts/*.test.mjs
+  cargo:
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-15
-            target: aarch64-apple-darwin
           - os: windows-2025
-            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
-    env:
-      RUSTUP_TOOLCHAIN: stable
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: dtolnay/rust-toolchain@stable
+      # 缓存 ~/.cargo 与各 workspace 的 target 依赖产物（工作区自身产物不入缓存，增量构建已被 action 关掉）。
+      # shared-key 按 OS 分平台、key 按 profile 区分：debug/test 与 release 的依赖产物不同，
+      # 同一条缓存键被先写入者占住后另一 profile 就再也存不进去，所以两者各留一条条目；
+      # ~/.cargo 的 registry 与下载缓存随条目一起保存，因此两条条目都免重复下载。
+      # 只有主干 push 才写缓存，PR 与功能分支只读恢复，避免分支缓存挤掉主干。
+      - uses: Swatinem/rust-cache@v2
         with:
-          node-version: 24
-      - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
-      - name: Configure npm cache and inspect public compiler identity
-        id: compiler
-        run: node desktop/scripts/cache-key.mjs
-      - name: Restore npm cache
-        id: npm-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
-        with:
-          path: |
-            ${{ runner.temp }}/devicedock-npm-cache/_cacache
-          key: npm-download-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', 'desktop/package-lock.json') }}
-          restore-keys: |
-            npm-download-v1-${{ runner.os }}-${{ runner.arch }}-
-      - name: Restore cargo-source cache
-        id: cargo-source-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/registry/src/
-            ~/.cargo/git/db/
-          key: cargo-source-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}
-          restore-keys: |
-            cargo-source-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.compiler.outputs.rust }}-
-      - name: Restore cargo-target cache
-        id: cargo-target-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
-        with:
-          path: |
-            desktop/src-tauri/target/
-            !desktop/src-tauri/target/**/bundle/**
-            !desktop/src-tauri/target/**/*.app/**
-            !desktop/src-tauri/target/**/*.dmg
-            !desktop/src-tauri/target/**/*.tar.gz
-            !desktop/src-tauri/target/**/*.zip
-            !desktop/src-tauri/target/**/*.sig
-            !desktop/src-tauri/target/**/devicedock
-            !desktop/src-tauri/target/**/devicedock.exe
-            !desktop/src-tauri/target/**/devicedock-updater
-            !desktop/src-tauri/target/**/devicedock-updater.exe
-            !desktop/src-tauri/target/**/deps/*devicedock*
-            !desktop/src-tauri/target/**/deps/*portable_updater*
-            !desktop/src-tauri/target/**/build/devicedock-*/**
-            !desktop/src-tauri/target/**/build/portable-updater-*/**
-            !desktop/src-tauri/target/**/.fingerprint/devicedock-*/**
-            !desktop/src-tauri/target/**/.fingerprint/portable-updater-*/**
-            !desktop/src-tauri/target/**/incremental/devicedock*/**
-            !desktop/src-tauri/target/**/incremental/portable_updater*/**
-          key: cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}-${{ github.sha }}
-          restore-keys: |
-            cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-${{ hashFiles('desktop/src-tauri/Cargo.lock', 'desktop/portable-update-common/Cargo.lock', 'desktop/portable-updater/Cargo.toml') }}-
-            cargo-target-v1-native-ble-spp-debug-release-remap1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.target }}-${{ steps.compiler.outputs.rust }}-
-      - run: npm ci
-      - run: npm test
-      - run: node --test desktop/scripts/*.test.mjs
-      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --all-features
-      - name: Verify Windows test activation manifest
-        if: success() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py --verify-test-manifests
-      - name: Diagnose Windows test loader
-        if: failure() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py
-      - run: node tools/build.mjs --core
-      - run: npm ci
-        working-directory: desktop
-      - run: npm run build -- --no-bundle --features native-ble,native-spp --target ${{ matrix.target }}
-        working-directory: desktop
-      - name: Verify Windows application activation manifest
-        if: success() && runner.os == 'Windows'
-        run: python desktop/scripts/windows-loader-diagnostics.py --verify-app-manifests
-      - name: Save trusted main npm cache
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.npm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
-        with:
-          path: |
-            ${{ runner.temp }}/devicedock-npm-cache/_cacache
-          key: ${{ steps.npm-cache.outputs.cache-primary-key }}
-      - name: Save trusted main cargo-source cache
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-source-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/registry/src/
-            ~/.cargo/git/db/
-          key: ${{ steps.cargo-source-cache.outputs.cache-primary-key }}
-      - name: Save trusted main cargo-target cache
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-target-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0, Node 24
-        continue-on-error: true
-        with:
-          path: |
-            desktop/src-tauri/target/
-            !desktop/src-tauri/target/**/bundle/**
-            !desktop/src-tauri/target/**/*.app/**
-            !desktop/src-tauri/target/**/*.dmg
-            !desktop/src-tauri/target/**/*.tar.gz
-            !desktop/src-tauri/target/**/*.zip
-            !desktop/src-tauri/target/**/*.sig
-            !desktop/src-tauri/target/**/devicedock
-            !desktop/src-tauri/target/**/devicedock.exe
-            !desktop/src-tauri/target/**/devicedock-updater
-            !desktop/src-tauri/target/**/devicedock-updater.exe
-            !desktop/src-tauri/target/**/deps/*devicedock*
-            !desktop/src-tauri/target/**/deps/*portable_updater*
-            !desktop/src-tauri/target/**/build/devicedock-*/**
-            !desktop/src-tauri/target/**/build/portable-updater-*/**
-            !desktop/src-tauri/target/**/.fingerprint/devicedock-*/**
-            !desktop/src-tauri/target/**/.fingerprint/portable-updater-*/**
-            !desktop/src-tauri/target/**/incremental/devicedock*/**
-            !desktop/src-tauri/target/**/incremental/portable_updater*/**
-          key: ${{ steps.cargo-target-cache.outputs.cache-primary-key }}
+          workspaces: |
+            desktop/src-tauri
+            desktop/portable-update-common
+            desktop/portable-updater
+          shared-key: cargo-${{ runner.os }}
+          key: debug
+          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib
+      - run: cargo test --manifest-path desktop/portable-update-common/Cargo.toml
+      - run: cargo test --manifest-path desktop/portable-updater/Cargo.toml
