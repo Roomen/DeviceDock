@@ -10611,7 +10611,8 @@ html[data-layout='modern'] .mdn-curve-legend-lane {
 
 html[data-layout='modern'] .mdn-curve-legend-label {
 	color: var(--text-secondary);
-=======
+}
+
 /* 客户端插件宿主(仅桌面客户端)：左栏「插件」目录、沙箱 iframe 视图与插件管理面板 */
 html[data-layout='modern'] #activity-rail .rail-plugins {
 	display: flex;

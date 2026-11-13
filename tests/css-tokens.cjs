@@ -89,4 +89,20 @@ iconClasses.forEach(cls => {
 	})
 })
 
+// ---- 6. 结构：样式表里不得残留合并冲突标记，花括号必须配对 ----
+// 一条多余的 `=======` 会顶掉上一段规则缺失的 `}`，浏览器按 CSS 嵌套继续解析，把后面几十条规则
+// 变成死规则（插件视图的 iframe 高度、左栏「插件」分组样式就是这么静默失效的），页面只是少了一部分
+// 样式，肉眼不看那一屏根本发现不了。这里静态拦住。
+const CSS_FILES = ['../css/style.css', '../css/icons.css', '../css/fonts.css']
+CSS_FILES.forEach(function (rel) {
+	const src = fs.readFileSync(path.join(__dirname, rel), 'utf8')
+	const markers = src.split('\n').map(function (line, i) { return { line: i + 1, text: line } })
+		.filter(function (l) { return /^(<{7}|={7}|>{7})/.test(l.text) })
+	assert.deepEqual(markers.map(function (m) { return rel + ':' + m.line + ': ' + m.text.trim() }), [],
+		rel + ' 里不得残留合并冲突标记：上一条规则会缺 `}`，后面的规则会被当成嵌套规则整段失效')
+	const open = (src.match(/\{/g) || []).length
+	const close = (src.match(/\}/g) || []).length
+	assert.equal(open, close, rel + ' 的花括号必须配对（多/少一个都会让后续规则静默失效）：{ ' + open + ' 个，} ' + close + ' 个')
+})
+
 console.log('css token checks passed')
