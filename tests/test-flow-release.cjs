@@ -37,11 +37,12 @@ function makeWorld(opts) {
 	const calls = { cancelWaiters: [], close: [], status: [] }
 	const errors = []
 	// 真实门控用到的上下文：单路、当前主发口物理 S、可见、无其它占用
-	const sessions = { S: { open: true, opening: false, releaseFailed: false } }
+	const sessions = { S: { open: true, opening: false, releaseFailed: false }, A: { open: true, opening: false, releaseFailed: false }, B: { open: true, opening: false, releaseFailed: false } }
 	const hub = {
-		mode: 'single',
-		activeSendPhys: () => 'S',
-		uiSid: sid => (sid === 'A' ? 'S' : sid), // 单路下 UI 的 A 映射到物理 S（与真实 SerialHub.uiSid 一致）
+		mode: o.mode || 'single',
+		activePhys: o.activePhys || 'S',
+		activeSendPhys: function () { return hub.activePhys },
+		uiSid: sid => (hub.mode === 'single' && sid === 'A' ? 'S' : sid), // 单路下 UI 的 A 映射到物理 S（与真实 SerialHub.uiSid 一致）
 		isVisible: () => true,
 		isOpening: sid => sessions[sid].opening,
 		isOpen: sid => sessions[sid].open,
@@ -76,13 +77,14 @@ function makeWorld(opts) {
 	ctx.window.serialLanes = ctx.serialLanes
 	ctx.serialApi = ctx.window.serialApi = {
 		isPinned: function () { return ctx.pinSid != null },
-		getActiveSendSid: function () { return 'A' },
+		getActiveSendSid: function () { return hub.activePhys === 'S' ? 'A' : hub.activePhys },
 		pinSession: function (sid, owner, token) { return ctx.pinSession(sid, owner, token) },
 		unpinSession: function (token) { return ctx.unpinSession(token) },
 		forceReleaseTransaction: function (owner, token) { return ctx.forceReleaseTransaction(owner, token) },
 	}
 	// 旧版 stopAll（26ef690）会用到 runAllGen：给它一个初值，让同一份测试能跑新旧两版
 	ctx.runAllGen = 0
+	ctx.running = true
 	ctx.pinSid = null
 	ctx.pinOwner = ''
 	ctx.pinDepth = 0
@@ -92,12 +94,16 @@ function makeWorld(opts) {
 	ctx.cancelWaiters = ctx.cancelWaiters
 	ctx.logLine = ctx.logLine
 	vm.createContext(ctx)
-	vm.runInContext(physSrc + '\n' + gateSrc + '\n' + pinSrc + '\n' + unpinSrc + '\n' + forceSrc + '\n' + panelSrc + '\nglobalThis.api = { stopAll, pinSession, forceReleaseTransaction, setToken: function (t) { flowTxToken = t }, get state() { return { running: running, flowTxToken: flowTxToken, writeTask: pump.writeTask, writeUnclosed: pump.writeUnclosed, unclosedTask: pump.unclosedTask } }, get calls() { return calls } }', ctx)
-	const token = ctx.api.pinSession('A', 'flow')
-	assert.ok(token, '单路 UI A 钉扎成功（解析为物理 S）')
-	// 与 runAll 一致：面板持有的就是这次钉扎的令牌
+	vm.runInContext(physSrc + '\n' + gateSrc + '\n' + pinSrc + '\n' + unpinSrc + '\n' + forceSrc + '\n' + panelSrc + '\nglobalThis.api = { stopAll, pinSession, forceReleaseTransaction, setToken: function (t) { flowTxToken = t }, get state() { return { running: running, flowTxToken: flowTxToken, writeTask: pump.writeTask, writeUnclosed: pump.writeUnclosed, unclosedTask: pump.unclosedTask, faultSid: pump.faultSid, pinSid: pinSid, pinOwner: pinOwner, pinToken: pinToken } }, get calls() { return calls } }', ctx)
+	// 与 runAll 一致：钉扎当前主发路（单路下 UI 的 A → 物理 S），面板持有这个令牌
+	const token = ctx.api.pinSession(hub.activePhys, 'flow')
+	assert.ok(token, '钉扎成功')
 	ctx.api.setToken(token)
-	return { ctx: ctx, api: ctx.api, pump: pump, calls: calls, el: el, errors: errors, token: token, sessions: sessions }
+	// 与 settleWriteTask 一致：进入故障终态时记下当次的物理路（26ef690 没有这个字段，测试自行补）
+	if (o.faultSid !== false) pump.faultSid = o.faultSid || hub.activePhys
+	ctx.initialToken = token
+	ctx.hub = hub
+	return { ctx: ctx, api: ctx.api, pump: pump, calls: calls, el: el, errors: errors, token: token, sessions: sessions, hub: hub }
 }
 
 ;(async function () {
@@ -124,6 +130,33 @@ function makeWorld(opts) {
 		assert.equal(w.pump.writeUnclosed, true, '关闭失败保持占用')
 		assert.ok(w.pump.writeTask !== null, '旧写任务不清')
 		assert.ok(w.el.status.textContent.indexOf('保持占用') !== -1, '有提示：' + w.el.status.textContent)
+	}
+
+	// 回修 9 · 2：故障在 A、之后主发路切到 B，再点停止 → 只关 A，B 不动
+	{
+		const w = makeWorld({ mode: 'dual', activePhys: 'A', writeTask: new Promise(function () {}) })
+		assert.equal(w.api.state.pinSid, 'A', '前置：钉扎在物理 A')
+		assert.equal(w.pump.faultSid, 'A', '前置：故障路记为 A')
+		// 用户把主发路切到 B（不切钉扎：钉扎锁住主发口，这里模拟切换后的状态）
+		w.hub.activePhys = 'B'
+		await w.api.stopAll()
+		assert.deepEqual(w.calls.close, ['A'], '只尝试关闭故障路 A（26ef690 会去关当前主发路 B）')
+		assert.equal(w.sessions.B.open, true, 'B 路不被关闭')
+		assert.equal(w.sessions.A.open, false, 'A 路已关闭')
+		assert.equal(w.pump.faultSid, null, '成功释放后清掉故障路')
+		assert.equal(w.api.state.pinSid, null, '解锁')
+	}
+
+	// 回修 9 · 1：关闭始终失败 → 提示「保持占用」必须与实际一致：钉扎仍在、属 flow、令牌非空
+	{
+		const w = makeWorld({ writeTask: new Promise(function () {}) })
+		w.ctx.closePort = function () { return { ok: false, code: 'close_failed', message: '串口未确认释放' } }
+		await w.api.stopAll()
+		assert.equal(w.api.state.pinSid, 'S', '钉扎仍在（26ef690 会解掉钉扎却说保持占用）')
+		assert.equal(w.api.state.pinOwner, 'flow', '占用归属仍是 flow')
+		assert.ok(w.api.state.pinToken, '面板拿回了非空令牌')
+		assert.equal(w.pump.writeUnclosed, true, '故障占用保持')
+		assert.ok(w.el.status.textContent.indexOf('保持占用') !== -1, '提示与实际一致')
 	}
 
 	console.log('test-flow-release: ok')

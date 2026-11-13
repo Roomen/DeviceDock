@@ -139,7 +139,7 @@
 
 	// ---------- 串口 io：写原始字节 + 按当前协议等应答 ----------
 	// 只在主发路（事务钉扎）上跑：send 前由 runAll 钉扎，RX 也只订阅主发语义（onReceive 跟随钉扎口）
-	const pump = { buf: [], waiters: [], writeTask: null, writeUnclosed: false, late: 0 }
+	const pump = { buf: [], waiters: [], writeTask: null, writeUnclosed: false, unclosedTask: null, faultSid: null, late: 0 }
 	let unsubscribeRx = null
 
 	function parseOpts() {
@@ -244,6 +244,8 @@
 				if (settled) return
 				settled = true
 				pump.writeUnclosed = true
+				// 故障路固定：此时钉扎的物理路（faultSid）——之后主发路切换不影响释放哪一路
+				pump.faultSid = window.serialApi.getActiveSendSid()
 				// 未收尾任务保留引用：故障占用期间 send() 一律拒绝，手动释放后清掉
 				pump.unclosedTask = task
 				resolve(false)
@@ -930,9 +932,10 @@
 			// 失败时如实提示（钉扎已解，用户可重试关闭或手动断开）
 			stopFlag = true
 			cancelWaiters('已停止')
-			const sid = window.serialApi.getActiveSendSid()
+			// 故障路固定：用进入故障终态时记下的物理路，不读当前主发路（用户可能已经切走）
+			const sid = pump.faultSid || window.serialApi.getActiveSendSid()
 			// 先沿现有关闭路径关闭并确认释放（closeLane 自带 3s 释放上限）；
-			// 本事务的钉扎会让关闭被拒（lane_blocked / lane_busy），这时按归属与令牌释放后再试一次
+			// 本事务的钉扎会让关闭被拒，这时按归属与令牌释放后再试一次
 			let closed = false
 			let res = null
 			try { res = await window.serialLanes.close(sid) } catch (e) { res = null }
@@ -946,7 +949,8 @@
 				closed = !!(res && res.ok)
 			}
 			if (!closed) {
-				// 端口没确认释放：保持故障占用（任务与标记都不清），只如实提示
+				// 端口没确认释放：重新取回该路占用（提示必须与实际一致），任务与标记都不清
+				try { flowTxToken = window.serialApi.pinSession(sid, 'flow') } catch (e) { flowTxToken = null }
 				setStatus('端口未确认释放，保持占用；请重试关闭或手动断开该路', 'err')
 				return
 			}
@@ -954,6 +958,7 @@
 			pump.writeTask = null
 			pump.unclosedTask = null
 			pump.writeUnclosed = false
+			pump.faultSid = null
 			if (flowTxToken) {
 				try { window.serialApi.forceReleaseTransaction('flow', flowTxToken) } catch (e) { /* */ }
 				flowTxToken = null
